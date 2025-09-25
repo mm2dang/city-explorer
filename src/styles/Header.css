@@ -1,0 +1,360 @@
+.header {
+  background: linear-gradient(90deg, #0891b2 0%, #14b8a6 100%);
+  height: 80px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+  z-index: 100;
+}
+
+.header-content {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 100%;
+  padding: 0 32px;
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+.app-title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: white;
+}
+
+.app-title i {
+  font-size: 28px;
+}
+
+.app-title h1 {
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: -0.5px;
+}
+
+.header-controls {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.city-selector {
+  position: relative;
+}
+
+.city-selector-btn {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 20px;
+  background: rgba(255, 255, 255, 0.15);
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  border-radius: 12px;
+  color: white;
+  font-size: 16px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+  backdrop-filter: blur(10px);
+  min-width: 200px;
+  justify-content: space-between;
+}
+
+.city-selector-btn:hover {
+  background: rgba(255, 255, 255, 0.25);
+  border-color: rgba(255, 255, 255, 0.4);
+  transform: translateY(-1px);
+}
+
+.city-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  margin-top: 8px;
+  background: white;
+  border-radius: 12px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.15);
+  border: 1px solid #e2e8f0;
+  max-height: 400px;
+  overflow-y: auto;
+  z-index: 1000;
+}
+
+.dropdown-item-container {
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.dropdown-item-container:last-child {
+  border-bottom: none;
+}
+
+.dropdown-item {
+  padding: 16px 20px;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.dropdown-item.disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  background: #f8f9fa;
+}
+
+.dropdown-item:not(.disabled):hover {
+  background: #f0f9ff;
+}
+
+.dropdown-item.selected {
+  background: #e0f2fe;
+  border-left: 4px solid #0891b2;
+}
+
+.dropdown-item.loading,
+.dropdown-item.empty {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: #64748b;
+  font-style: italic;
+  cursor: default;
+}
+
+.city-info {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.city-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.city-name {
+  font-weight: 600;
+  color: #1a202c;
+  font-size: 15px;
+}
+
+.city-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.action-btn {
+  background: none;
+  border: none;
+  padding: 6px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+}
+
+.edit-btn {
+  color: #0891b2;
+}
+
+.edit-btn:hover {
+  background: #e0f2fe;
+  transform: scale(1.1);
+}
+
+.delete-btn {
+  color: #ef4444;
+}
+
+.delete-btn:hover {
+  background: #fef2f2;
+  transform: scale(1.1);
+}
+
+.city-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.city-details {
+  font-size: 12px;
+  color: #64748b;
+}
+
+/* Updated status labels for simplified display logic */
+.status-label {
+  font-size: 12px;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.status-label.ready {
+  color: #10b981;
+}
+
+.status-label.no-data {
+  color: #6b7280;
+}
+
+/* City description */
+.city-description {
+  margin-top: 4px;
+}
+
+.status-description {
+  font-size: 11px;
+  color: #6b7280;
+  font-style: italic;
+}
+
+/* Processing Monitor Button */
+.processing-monitor-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 20px;
+  background: rgba(255, 255, 255, 0.15);
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  border-radius: 12px;
+  color: white;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  backdrop-filter: blur(10px);
+}
+
+.processing-monitor-btn:hover {
+  background: rgba(255, 255, 255, 0.25);
+  border-color: rgba(255, 255, 255, 0.4);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 25px rgba(0, 0, 0, 0.2);
+}
+
+.processing-monitor-btn i {
+  font-size: 18px;
+}
+
+.add-city-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 24px;
+  background: rgba(255, 255, 255, 0.2);
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-radius: 12px;
+  color: white;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  backdrop-filter: blur(10px);
+}
+
+.add-city-btn:hover {
+  background: rgba(255, 255, 255, 0.3);
+  border-color: rgba(255, 255, 255, 0.5);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 25px rgba(0, 0, 0, 0.2);
+}
+
+.add-city-btn i {
+  font-size: 18px;
+}
+
+/* Custom scrollbar for dropdown */
+.city-dropdown::-webkit-scrollbar {
+  width: 6px;
+}
+
+.city-dropdown::-webkit-scrollbar-track {
+  background: #f1f5f9;
+}
+
+.city-dropdown::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 3px;
+}
+
+.city-dropdown::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+/* Responsive design */
+@media (max-width: 1024px) {
+  .header-controls {
+    gap: 12px;
+  }
+  
+  .processing-monitor-btn {
+    padding: 10px 16px;
+    font-size: 14px;
+  }
+  
+  .processing-monitor-btn span {
+    display: none;
+  }
+  
+  .add-city-btn {
+    padding: 10px 16px;
+    font-size: 14px;
+  }
+}
+
+@media (max-width: 768px) {
+  .header-content {
+    padding: 0 20px;
+  }
+  
+  .app-title h1 {
+    font-size: 24px;
+  }
+  
+  .header-controls {
+    gap: 8px;
+  }
+  
+  .city-selector-btn {
+    min-width: 150px;
+    padding: 10px 16px;
+    font-size: 14px;
+  }
+  
+  .processing-monitor-btn {
+    padding: 10px 12px;
+  }
+  
+  .processing-monitor-btn i {
+    font-size: 16px;
+  }
+  
+  .add-city-btn {
+    padding: 10px 16px;
+    font-size: 14px;
+  }
+  
+  .city-dropdown {
+    max-height: 300px;
+  }
+  
+  .city-name {
+    font-size: 14px;
+  }
+  
+  .action-btn {
+    width: 24px;
+    height: 24px;
+  }
+  
+  .status-description {
+    font-size: 10px;
+  }
+}
