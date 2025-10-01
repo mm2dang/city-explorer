@@ -52,7 +52,7 @@ const Sidebar = ({
     ],
     culture: [
       { name: 'tourist_attractions', icon: 'fas fa-camera' },
-      { name: 'theme_parks', icon: 'fas fa-ferris-wheel' },
+      { name: 'theme_parks', icon: 'fas fa-ticket' },
       { name: 'gyms', icon: 'fas fa-dumbbell' },
       { name: 'theatres', icon: 'fas fa-theater-masks' },
       { name: 'stadiums', icon: 'fas fa-futbol' },

@@ -15,6 +15,7 @@
     "framer-motion": "^10.0.0",
     "leaflet": "^1.9.0",
     "leaflet-draw": "^1.0.4",
+    "leaflet.markercluster": "^1.5.3",
     "lodash": "^4.17.21",
     "pako": "^2.1.0",
     "papaparse": "^5.4.1",

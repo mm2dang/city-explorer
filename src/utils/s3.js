@@ -1,6 +1,6 @@
 import { S3Client, ListObjectsV2Command, GetObjectCommand, PutObjectCommand, DeleteObjectsCommand } from '@aws-sdk/client-s3';
 import { readParquet, writeParquet, Table, WriterPropertiesBuilder, Compression } from 'parquet-wasm';
-import { tableFromArrays, tableToIPC } from 'apache-arrow';
+import { tableFromArrays, tableToIPC, tableFromIPC } from 'apache-arrow';
 import * as turf from '@turf/turf';
 
 // Proper WASM initialization for parquet-wasm
@@ -17,6 +17,31 @@ const initializeWasm = async () => {
       throw new Error(`WASM initialization failed: ${error.message}`);
     }
   }
+};
+
+// Helper function to convert Arrow Table to JavaScript objects
+const arrowTableToObjects = (arrowTable) => {
+  const data = [];
+  const numRows = arrowTable.numRows;
+  
+  if (numRows === 0) {
+    return data;
+  }
+  
+  // Get column names from schema
+  const columnNames = arrowTable.schema.fields.map(field => field.name);
+  
+  // Extract data row by row
+  for (let i = 0; i < numRows; i++) {
+    const row = {};
+    for (const colName of columnNames) {
+      const column = arrowTable.getChild(colName);
+      row[colName] = column.get(i);
+    }
+    data.push(row);
+  }
+  
+  return data;
 };
 
 // Helper function to create a Table from JavaScript data using Apache Arrow
@@ -61,6 +86,9 @@ const s3Client = new S3Client({
   credentials: {
     accessKeyId: process.env.REACT_APP_AWS_ACCESS_KEY_ID,
     secretAccessKey: process.env.REACT_APP_AWS_SECRET_ACCESS_KEY,
+    ...(process.env.REACT_APP_AWS_SESSION_TOKEN && {
+      sessionToken: process.env.REACT_APP_AWS_SESSION_TOKEN
+    }),
   },
 });
 
@@ -167,10 +195,10 @@ const scanS3Directory = async (prefix, targetFileName = null) => {
   return foundFiles;
 };
 
-// Get all cities from BOTH population and data buckets - FIXED
+// Get all cities from BOTH population and data buckets
 export const getAllCities = async () => {
   try {
-    console.log('=== Scanning S3 buckets for cities (COMPLETELY FIXED) ===');
+    console.log('=== Scanning S3 buckets for cities ===');
     
     const cities = new Map();
     
@@ -264,11 +292,40 @@ export const getAllCities = async () => {
 };
 
 // Get city metadata from population bucket
+// Get city metadata from population bucket
 const getCityData = async (country, province, city) => {
   try {
     await initializeWasm();
-    
     console.log(`=== Loading city data for: ${country}/${province}/${city} ===`);
+    
+    // Helper function to convert stream to ArrayBuffer
+    const streamToArrayBuffer = async (stream) => {
+      const reader = stream.getReader();
+      const chunks = [];
+      
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+        }
+      } finally {
+        reader.releaseLock();
+      }
+      
+      // Calculate total length
+      const totalLength = chunks.reduce((acc, chunk) => acc + chunk.length, 0);
+      const result = new Uint8Array(totalLength);
+      
+      // Combine chunks
+      let offset = 0;
+      for (const chunk of chunks) {
+        result.set(chunk, offset);
+        offset += chunk.length;
+      }
+      
+      return result.buffer;
+    };
     
     // Load city metadata from population bucket
     const cityMetaKey = `population/country=${country}/province=${province}/city=${city}/city_data.snappy.parquet`;
@@ -280,12 +337,24 @@ const getCityData = async (country, province, city) => {
       });
       
       const fileResponse = await s3Client.send(getCommand);
-      const arrayBuffer = await fileResponse.Body.arrayBuffer();
       
-      const data = readParquet(new Uint8Array(arrayBuffer));
+      // Convert stream to ArrayBuffer for browser environment
+      const arrayBuffer = await streamToArrayBuffer(fileResponse.Body);
+      const uint8Array = new Uint8Array(arrayBuffer);
       
-      if (data && data.length > 0) {
-        const row = data[0];
+      // Read as WASM Table, convert to Arrow Table
+      const wasmTable = readParquet(uint8Array);
+      const ipcBytes = wasmTable.intoIPCStream();
+      const arrowTable = tableFromIPC(ipcBytes);
+      
+      if (arrowTable.numRows > 0) {
+        // Extract first row data
+        const row = {};
+        for (const field of arrowTable.schema.fields) {
+          const column = arrowTable.getChild(field.name);
+          row[field.name] = column.get(0);
+        }
+        
         const cityData = {
           name: row.name,
           longitude: parseFloat(row.longitude) || 0,
@@ -295,6 +364,7 @@ const getCityData = async (country, province, city) => {
           size: row.size ? parseFloat(row.size) : null,
           sdg_region: row.sdg_region,
         };
+        
         console.log(`Successfully loaded city data for: ${cityData.name}`);
         return cityData;
       }
@@ -404,12 +474,17 @@ export const getAvailableLayersForCity = async (cityName) => {
   }
 };
 
-// Load city features for display - FIXED to properly handle GeoJSON geometry
+// Load city features for display
 export const loadCityFeatures = async (cityName, activeLayers) => {
   try {
     await initializeWasm();
+    console.log('=== S3: loadCityFeatures called ===', { cityName, activeLayers });
+    
     const parts = cityName.split(',').map(p => p.trim());
-    if (parts.length < 2) return [];
+    if (parts.length < 2) {
+      console.error('Invalid city name format:', cityName);
+      return [];
+    }
     
     // Handle different city name formats
     let city, province, country;
@@ -424,27 +499,143 @@ export const loadCityFeatures = async (cityName, activeLayers) => {
     const normalizedProvince = normalizeName(province);
     const normalizedCountry = normalizeName(country);
     
+    console.log('=== S3: Normalized names ===', { normalizedCity, normalizedProvince, normalizedCountry });
+    
     const features = [];
     const activeLayerNames = Object.keys(activeLayers).filter(layer => activeLayers[layer]);
+    console.log('=== S3: Active layer names ===', activeLayerNames);
+    
+    if (activeLayerNames.length === 0) {
+      console.log('=== S3: No active layers selected ===');
+      return [];
+    }
+    
+    // Helper function to convert stream to ArrayBuffer
+    const streamToArrayBuffer = async (stream) => {
+      const reader = stream.getReader();
+      const chunks = [];
+      
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+        }
+      } finally {
+        reader.releaseLock();
+      }
+      
+      // Calculate total length
+      const totalLength = chunks.reduce((acc, chunk) => acc + chunk.length, 0);
+      const result = new Uint8Array(totalLength);
+      
+      // Combine chunks
+      let offset = 0;
+      for (const chunk of chunks) {
+        result.set(chunk, offset);
+        offset += chunk.length;
+      }
+      
+      return result.buffer;
+    };
     
     // Load features from individual layer files in data bucket
     for (const [domain, layers] of Object.entries(layerDefinitions)) {
       for (const layer of layers) {
         if (activeLayerNames.includes(layer.filename)) {
+          const key = `data/country=${normalizedCountry}/province=${normalizedProvince}/city=${normalizedCity}/domain=${domain}/${layer.filename}.snappy.parquet`;
+          
           try {
-            const key = `data/country=${normalizedCountry}/province=${normalizedProvince}/city=${normalizedCity}/domain=${domain}/${layer.filename}.snappy.parquet`;
+            console.log(`=== S3: Attempting to load layer ${layer.filename} from ${key} ===`);
             
+            // First, check if the object exists
+            const listCommand = new ListObjectsV2Command({
+              Bucket: BUCKET_NAME,
+              Prefix: key,
+              MaxKeys: 1,
+            });
+            
+            const listResponse = await s3Client.send(listCommand);
+            
+            if (!listResponse.Contents || listResponse.Contents.length === 0) {
+              console.log(`=== S3: Layer file does not exist: ${key} ===`);
+              continue;
+            }
+            
+            console.log(`=== S3: File exists, size: ${listResponse.Contents[0].Size} bytes ===`);
+            
+            // Now fetch the object
             const command = new GetObjectCommand({
               Bucket: BUCKET_NAME,
               Key: key,
             });
             
             const response = await s3Client.send(command);
-            const arrayBuffer = await response.Body.arrayBuffer();
             
-            const data = readParquet(new Uint8Array(arrayBuffer));
+            if (!response.Body) {
+              console.error(`=== S3: No body in response for ${key} ===`);
+              continue;
+            }
             
-            for (const row of data) {
+            // Convert stream to ArrayBuffer
+            console.log(`=== S3: Converting stream to buffer for ${layer.filename} ===`);
+            const arrayBuffer = await streamToArrayBuffer(response.Body);
+            const uint8Array = new Uint8Array(arrayBuffer);
+            
+            console.log(`=== S3: Buffer size: ${uint8Array.length} bytes ===`);
+            
+            if (uint8Array.length === 0) {
+              console.error(`=== S3: Empty buffer for ${key} ===`);
+              continue;
+            }
+            
+            // Read parquet file
+            console.log(`=== S3: Parsing parquet data for ${layer.filename} ===`);
+            const wasmTable = readParquet(uint8Array);
+            
+            // Convert WASM Table to IPC Stream, then to Arrow Table
+            console.log(`=== S3: Converting WASM Table to Arrow Table ===`);
+            const ipcBytes = wasmTable.intoIPCStream();
+            const arrowTable = tableFromIPC(ipcBytes);
+            
+            console.log(`=== S3: Arrow Table info ===`, {
+              numRows: arrowTable.numRows,
+              numCols: arrowTable.numCols,
+              columnNames: arrowTable.schema.fields.map(f => f.name)
+            });
+            
+            if (arrowTable.numRows === 0) {
+              console.log(`=== S3: No rows in Arrow table for ${layer.filename} ===`);
+              continue;
+            }
+            
+            // Convert Arrow Table to JavaScript objects
+            const data = [];
+            for (let i = 0; i < arrowTable.numRows; i++) {
+              const row = {};
+              for (const field of arrowTable.schema.fields) {
+                const column = arrowTable.getChild(field.name);
+                row[field.name] = column.get(i);
+              }
+              data.push(row);
+            }
+            
+            console.log(`=== S3: Loaded ${data.length} rows for layer ${layer.filename} ===`);
+            
+            if (data.length === 0) {
+              console.log(`=== S3: No data rows in ${layer.filename} ===`);
+              continue;
+            }
+            
+            // Log first row structure for debugging
+            console.log(`=== S3: First row structure for ${layer.filename} ===`, Object.keys(data[0]));
+            
+            let validFeatureCount = 0;
+            let invalidGeometryCount = 0;
+            let parseErrorCount = 0;
+            
+            for (let i = 0; i < data.length; i++) {
+              const row = data[i];
               let geometry = null;
               
               // Handle different geometry types with proper GeoJSON parsing
@@ -452,54 +643,96 @@ export const loadCityFeatures = async (cityName, activeLayers) => {
                 try {
                   // Parse the stored GeoJSON geometry
                   const geoJsonGeometry = JSON.parse(row.geometry_coordinates);
+                  
                   if (geoJsonGeometry && geoJsonGeometry.type && geoJsonGeometry.coordinates) {
-                    geometry = geoJsonGeometry;
+                    // For display purposes, we need Point geometry for markers
+                    if (geoJsonGeometry.type === 'Point') {
+                      geometry = geoJsonGeometry;
+                    } else {
+                      // Use turf to get centroid for non-point geometries
+                      try {
+                        const turfFeature = { type: 'Feature', geometry: geoJsonGeometry, properties: {} };
+                        const centroid = turf.centroid(turfFeature);
+                        geometry = centroid.geometry;
+                      } catch (centroidError) {
+                        console.warn(`S3: Could not compute centroid for row ${i}:`, centroidError.message);
+                        invalidGeometryCount++;
+                      }
+                    }
+                  } else {
+                    console.warn(`S3: Invalid GeoJSON structure in row ${i}`);
+                    invalidGeometryCount++;
                   }
                 } catch (parseError) {
-                  console.warn('Error parsing stored GeoJSON geometry:', parseError);
-                  // Fallback to point if we have lat/lon
-                  if (row.longitude && row.latitude) {
-                    geometry = {
-                      type: 'Point',
-                      coordinates: [parseFloat(row.longitude), parseFloat(row.latitude)],
-                    };
-                  }
+                  console.warn(`S3: Error parsing stored GeoJSON geometry in row ${i}:`, parseError.message);
+                  parseErrorCount++;
                 }
-              } else if (row.longitude && row.latitude) {
-                // Fallback to point geometry
-                geometry = {
-                  type: 'Point',
-                  coordinates: [parseFloat(row.longitude), parseFloat(row.latitude)],
-                };
               }
               
-              if (geometry) {
+              // Fallback to stored longitude/latitude if no geometry or centroid failed
+              if (!geometry && row.longitude != null && row.latitude != null) {
+                const lon = parseFloat(row.longitude);
+                const lat = parseFloat(row.latitude);
+                
+                if (!isNaN(lon) && !isNaN(lat)) {
+                  geometry = {
+                    type: 'Point',
+                    coordinates: [lon, lat],
+                  };
+                }
+              }
+              
+              // Only add feature if we have valid point geometry
+              if (geometry && geometry.type === 'Point' &&
+                  geometry.coordinates && geometry.coordinates.length === 2 &&
+                  !isNaN(geometry.coordinates[0]) && !isNaN(geometry.coordinates[1])) {
+                
                 features.push({
                   type: 'Feature',
                   geometry,
                   properties: {
                     feature_name: row.feature_name || 'Unnamed',
-                    layer_name: row.layer_name,
-                    domain_name: row.domain_name,
+                    layer_name: row.layer_name || layer.filename,
+                    domain_name: row.domain_name || domain,
                   },
                 });
+                validFeatureCount++;
+              } else {
+                invalidGeometryCount++;
               }
             }
+            
+            console.log(`=== S3: Layer ${layer.filename} summary ===`, {
+              totalRows: data.length,
+              validFeatures: validFeatureCount,
+              invalidGeometry: invalidGeometryCount,
+              parseErrors: parseErrorCount
+            });
+            
           } catch (error) {
-            console.warn(`No data found for layer ${layer.filename}:`, error);
+            console.error(`=== S3: Error loading layer ${layer.filename} ===`, {
+              error: error.message,
+              stack: error.stack,
+              key: key
+            });
           }
         }
       }
     }
     
+    console.log(`=== S3: Returning total of ${features.length} features ===`);
     return features;
+    
   } catch (error) {
-    console.error('Error loading city features:', error);
+    console.error('=== S3: Fatal error in loadCityFeatures ===', {
+      error: error.message,
+      stack: error.stack
+    });
     return [];
   }
-};
+}
 
-// Save individual layer - FIXED to store proper GeoJSON geometry
+// Save individual layer
 export const saveLayerFeatures = async (features, country, province, city, domain, layerName) => {
   try {
     await initializeWasm();

@@ -146,14 +146,8 @@ const App = () => {
       
       setAvailableLayers(availableLayers);
       
-      // Auto-enable all available layers by default
-      const autoActiveLayers = {};
-      Object.keys(availableLayers).forEach(layerName => {
-        if (availableLayers[layerName]) {
-          autoActiveLayers[layerName] = true;
-        }
-      });
-      setActiveLayers(autoActiveLayers);
+      // Disenable all available layers by default
+      setActiveLayers({});
       
       if (layerCount === 0) {
         console.log(`=== APP: No layers found for ${city.name} - may still be processing ===`);
