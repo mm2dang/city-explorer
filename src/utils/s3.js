@@ -1131,3 +1131,33 @@ export const deleteCityData = async (cityName) => {
     throw error;
   }
 };
+
+// Check if a city already exists in the population bucket
+export const checkCityExists = async (country, province, city) => {
+  try {
+    await initializeWasm();
+    
+    const normalizedCountry = normalizeName(country);
+    const normalizedProvince = normalizeName(province);
+    const normalizedCity = normalizeName(city);
+    
+    const cityMetaKey = `population/country=${normalizedCountry}/province=${normalizedProvince}/city=${normalizedCity}/city_data.snappy.parquet`;
+    
+    try {
+      const listCommand = new ListObjectsV2Command({
+        Bucket: BUCKET_NAME,
+        Prefix: cityMetaKey,
+        MaxKeys: 1,
+      });
+      
+      const response = await s3Client.send(listCommand);
+      return response.Contents && response.Contents.length > 0;
+    } catch (error) {
+      console.log(`City does not exist: ${city}`);
+      return false;
+    }
+  } catch (error) {
+    console.error(`Error checking if city exists:`, error);
+    return false;
+  }
+};

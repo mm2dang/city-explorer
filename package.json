@@ -25,7 +25,8 @@
     "react-leaflet": "^4.2.0",
     "react-leaflet-draw": "^0.20.0",
     "react-router-dom": "^7.9.1",
-    "react-scripts": "5.0.1"
+    "react-scripts": "5.0.1",
+    "shapefile": "^0.6.6"
   },
   "scripts": {
     "start": "react-scripts start",
@@ -50,5 +51,8 @@
       "last 1 firefox version",
       "last 1 safari version"
     ]
+  },
+  "devDependencies": {
+    "@types/shapefile": "^0.6.4"
   }
 }

@@ -3,8 +3,9 @@ import { motion } from 'framer-motion';
 import { MapContainer, TileLayer, FeatureGroup, useMap } from 'react-leaflet';
 import { EditControl } from 'react-leaflet-draw';
 import L from 'leaflet';
+import * as shp from 'shapefile'
 import { searchOSM, fetchWikipediaData, fetchOSMBoundary } from '../utils/osm';
-import { saveCityData, processCityFeatures } from '../utils/s3';
+import { saveCityData, processCityFeatures, checkCityExists } from '../utils/s3';
 import { getSDGRegion } from '../utils/regions';
 import 'leaflet-draw/dist/leaflet.draw.css';
 
@@ -46,6 +47,7 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel }) => {
   const [country, setCountry] = useState('');
   const [osmSuggestions, setOsmSuggestions] = useState([]);
   const [selectedCity, setSelectedCity] = useState(null);
+  const [uploadError, setUploadError] = useState('');
   const [wikiData, setWikiData] = useState({ population: null, size: null });
   const [boundary, setBoundary] = useState(null);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -194,26 +196,120 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel }) => {
     }
   }, [boundary]);
 
-  const handleGeoJSONUpload = (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
+  const handleFileUpload = async (e) => {
+    const files = Array.from(e.target.files);
+    if (!files || files.length === 0) return;
 
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      try {
-        const geojson = JSON.parse(event.target.result);
-        const geometry = geojson.type === 'Feature' ? geojson.geometry : geojson;
-        if (!['Polygon', 'MultiPolygon'].includes(geometry.type)) {
-          alert('Please upload a valid Polygon or MultiPolygon GeoJSON');
-          return;
-        }
-        setBoundary(geometry);
-      } catch (error) {
-        console.error('Error parsing GeoJSON:', error);
-        alert('Invalid GeoJSON file. Please check the format.');
+    setUploadError('');
+    setIsProcessing(true);
+
+    try {
+      const file = files[0];
+      const fileName = file.name.toLowerCase();
+      const fileExt = fileName.split('.').pop();
+
+      // Handle GeoJSON files
+      if (fileExt === 'geojson' || fileExt === 'json') {
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          try {
+            const geojson = JSON.parse(event.target.result);
+            let geometry;
+
+            // Handle FeatureCollection
+            if (geojson.type === 'FeatureCollection') {
+              if (!geojson.features || geojson.features.length === 0) {
+                setUploadError('FeatureCollection is empty');
+                setIsProcessing(false);
+                return;
+              }
+              // Use the first feature's geometry
+              geometry = geojson.features[0].geometry;
+            } 
+            // Handle Feature
+            else if (geojson.type === 'Feature') {
+              geometry = geojson.geometry;
+            } 
+            // Handle direct geometry
+            else if (['Polygon', 'MultiPolygon'].includes(geojson.type)) {
+              geometry = geojson;
+            } else {
+              setUploadError('Please upload a valid Polygon or MultiPolygon GeoJSON');
+              setIsProcessing(false);
+              return;
+            }
+
+            if (!['Polygon', 'MultiPolygon'].includes(geometry.type)) {
+              setUploadError('Please upload a valid Polygon or MultiPolygon GeoJSON');
+              setIsProcessing(false);
+              return;
+            }
+            setBoundary(geometry);
+            setIsProcessing(false);
+          } catch (error) {
+            console.error('Error parsing GeoJSON:', error);
+            setUploadError('Invalid GeoJSON file. Please check the format.');
+            setIsProcessing(false);
+          }
+        };
+        reader.readAsText(file);
       }
-    };
-    reader.readAsText(file);
+      // Handle Shapefile formats
+      else if (fileExt === 'shp') {
+        try {
+          const arrayBuffer = await file.arrayBuffer();
+          
+          // Try to find associated .dbf file if multiple files were selected
+          let dbfBuffer = null;
+          const dbfFile = files.find(f => f.name.toLowerCase().endsWith('.dbf'));
+          if (dbfFile) {
+            dbfBuffer = await dbfFile.arrayBuffer();
+          }
+
+          // Read the shapefile
+          const geojson = await shp.read(arrayBuffer, dbfBuffer);
+          
+          if (!geojson || !geojson.features || geojson.features.length === 0) {
+            setUploadError('Shapefile is empty or invalid');
+            setIsProcessing(false);
+            return;
+          }
+
+          // Extract geometry from first feature
+          const geometry = geojson.features[0].geometry;
+          
+          if (!['Polygon', 'MultiPolygon'].includes(geometry.type)) {
+            setUploadError('Shapefile must contain Polygon or MultiPolygon geometry');
+            setIsProcessing(false);
+            return;
+          }
+
+          setBoundary(geometry);
+          setIsProcessing(false);
+        } catch (error) {
+          console.error('Error parsing Shapefile:', error);
+          setUploadError('Error parsing Shapefile. Please ensure the file is valid.');
+          setIsProcessing(false);
+        }
+      }
+      // Handle other Shapefile component files
+      else if (['shx', 'dbf', 'prj', 'cpg', 'qmd'].includes(fileExt)) {
+        setUploadError(
+          `You've selected a .${fileExt} file. Please select the .shp file instead. `
+        );
+        setIsProcessing(false);
+      } else {
+        setUploadError(`Unsupported file format: .${fileExt}. Please upload a GeoJSON (.geojson, .json) or Shapefile (.shp).`);
+        setIsProcessing(false);
+      }
+    } catch (error) {
+      console.error('Error processing file:', error);
+      setUploadError('Error processing file. Please try again.');
+      setIsProcessing(false);
+    }
+
+    // Clear the input so the same file can be selected again
+    e.target.value = '';
   };
 
   const handleSubmit = async () => {
@@ -221,12 +317,21 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel }) => {
       alert('Please complete all required fields');
       return;
     }
-
+  
     setIsProcessing(true);
     try {
       const fullName = [cityName, province, country].filter(Boolean).join(', ');
+      
+      // Check for duplicate city
+      const existingCity = await checkCityExists(country, province, cityName);
+      if (existingCity && !editingCity) {
+        alert(`A city with this name already exists: ${fullName}\n\nPlease use a different name or edit the existing city.`);
+        setIsProcessing(false);
+        return;
+      }
+      
       const sdgRegion = getSDGRegion(country);
-
+  
       const cityData = {
         name: fullName,
         longitude: parseFloat(selectedCity.lon),
@@ -236,10 +341,10 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel }) => {
         size: wikiData.size ? parseFloat(wikiData.size) : null,
         sdg_region: sdgRegion
       };
-
+  
       // Save city data to population bucket
       await saveCityData(cityData, country, province, cityName);
-
+  
       // Call onComplete with city data and a callback setter function
       await onComplete(cityData, (progressHandler) => {
         // Start background processing with progress updates
@@ -258,7 +363,7 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel }) => {
           }
         }, 1000);
       });
-
+  
     } catch (error) {
       console.error('Error saving city:', error);
       alert('Error saving city. Please try again.');
@@ -266,7 +371,7 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel }) => {
       setIsProcessing(false);
     }
   };
-
+  
   const nextStep = () => setStep(step + 1);
   const prevStep = () => setStep(step - 1);
 
@@ -401,14 +506,26 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel }) => {
         {step === 3 && selectedCity && (
           <div className="step-content">
             <h3>Define City Boundary</h3>
+            {uploadError && (
+              <div className="error-message" style={{ 
+                backgroundColor: '#fee', 
+                border: '1px solid #fcc',
+                borderRadius: '4px',
+                padding: '10px',
+                marginBottom: '15px',
+                color: '#c33'
+              }}>
+                <i className="fas fa-exclamation-circle"></i> {uploadError}
+              </div>
+            )}
             <div className="boundary-controls">
               <label className="upload-btn">
                 <i className="fas fa-upload"></i>
-                Upload GeoJSON
+                Upload File
                 <input
                   type="file"
-                  accept=".geojson,.json"
-                  onChange={handleGeoJSONUpload}
+                  accept=".geojson,.json,.shp"
+                  onChange={handleFileUpload}
                   style={{ display: 'none' }}
                 />
               </label>

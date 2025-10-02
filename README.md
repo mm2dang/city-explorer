@@ -29,7 +29,7 @@ cityexplorer/
 │   ├── App.js                 # Main application component
 │   └── index.js               # React entry point
 ├── package.json
-├── .env                       # Environment variables (not committed)
+├── .env                       # Environment variables
 └── README.md
 ```
 
@@ -72,7 +72,7 @@ npm install
 REACT_APP_AWS_REGION=us-east-1
 REACT_APP_AWS_ACCESS_KEY_ID=your_access_key
 REACT_APP_AWS_SECRET_ACCESS_KEY=your_secret_key
-REACT_APP_AWS_SESSION_TOKEN=your_session_token  # Optional
+REACT_APP_AWS_SESSION_TOKEN=your_session_token
 
 # S3 Bucket Configuration
 REACT_APP_S3_BUCKET_NAME=your-bucket-name
@@ -91,6 +91,31 @@ REACT_APP_MAX_FEATURES_PER_DOMAIN=10000
 npm start
 ```
 5. Open http://localhost:3000 in your browser
+
+## Development
+
+1. Clone the repo
+```bash
+git clone https://github.com/mm2dang/osm-processor.git
+cd osm-processor
+```
+2. Edit the code locally
+3. Check changes
+```bash
+git status
+```
+4. Stage the changes
+```bash
+git add .
+```
+5. Commit changes
+```bash
+git commit -m "Describe update here"
+```
+6. Push to GitHub
+```bash
+git push origin main
+```
 
 ## Usage
 

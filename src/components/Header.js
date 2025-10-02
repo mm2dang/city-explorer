@@ -4,6 +4,8 @@ import '../styles/Header.css';
 
 const Header = ({ cities, selectedCity, onCitySelect, onAddCity, onEditCity, onDeleteCity, isLoading, cityDataStatus, processingProgress }) => {
   const [showDropdown, setShowDropdown] = useState(false);
+  const [sortBy, setSortBy] = useState('name');
+  const [sortOrder, setSortOrder] = useState('asc');
 
   const handleCityAction = (e, action, city) => {
     e.stopPropagation();
@@ -16,8 +18,15 @@ const Header = ({ cities, selectedCity, onCitySelect, onAddCity, onEditCity, onD
   };
 
   const handleCitySelect = (city) => {
-    onCitySelect(city);
-    setShowDropdown(false);
+    const hasDataLayers = cityDataStatus[city.name];
+    const progress = processingProgress?.[city.name];
+    const isProcessing = progress && progress.status === 'processing';
+    
+    // Only allow selection if city has data and is not processing
+    if (hasDataLayers && !isProcessing) {
+      onCitySelect(city);
+      setShowDropdown(false);
+    }
   };
 
   const getStatusCounts = () => {
@@ -28,6 +37,63 @@ const Header = ({ cities, selectedCity, onCitySelect, onAddCity, onEditCity, onD
   };
 
   const statusCounts = getStatusCounts();
+
+  const handleSortChange = (field) => {
+    if (sortBy === field) {
+      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortBy(field);
+      setSortOrder('asc');
+    }
+  };
+
+  const parseCityName = (cityName) => {
+    // Parse "City, Province, Country" format
+    const parts = cityName.split(',').map(part => part.trim());
+    return {
+      city: parts[0] || '',
+      province: parts[1] || '',
+      country: parts[2] || ''
+    };
+  };
+
+  const sortCities = (citiesToSort) => {
+    return [...citiesToSort].sort((a, b) => {
+      let compareA, compareB;
+
+      switch (sortBy) {
+        case 'name':
+          compareA = parseCityName(a.name).city.toLowerCase();
+          compareB = parseCityName(b.name).city.toLowerCase();
+          break;
+        case 'province':
+          compareA = parseCityName(a.name).province.toLowerCase();
+          compareB = parseCityName(b.name).province.toLowerCase();
+          break;
+        case 'country':
+          compareA = parseCityName(a.name).country.toLowerCase();
+          compareB = parseCityName(b.name).country.toLowerCase();
+          break;
+        case 'population':
+          compareA = a.population || 0;
+          compareB = b.population || 0;
+          break;
+        case 'size':
+          compareA = a.size || 0;
+          compareB = b.size || 0;
+          break;
+        default:
+          compareA = a.name.toLowerCase();
+          compareB = b.name.toLowerCase();
+      }
+
+      if (compareA < compareB) return sortOrder === 'asc' ? -1 : 1;
+      if (compareA > compareB) return sortOrder === 'asc' ? 1 : -1;
+      return 0;
+    });
+  };
+
+  const sortedCities = sortCities(cities);
 
   return (
     <header className="header">
@@ -83,7 +149,40 @@ const Header = ({ cities, selectedCity, onCitySelect, onAddCity, onEditCity, onD
                     <div className="dropdown-header">
                       <span>Available Cities ({cities.length})</span>
                     </div>
-                    {cities.map((city) => {
+                    <div className="sort-controls">
+                      <span className="sort-label">Sort by:</span>
+                      <button
+                        className={`sort-btn ${sortBy === 'name' ? 'active' : ''}`}
+                        onClick={() => handleSortChange('name')}
+                      >
+                        City {sortBy === 'name' && <i className={`fas fa-chevron-${sortOrder === 'asc' ? 'up' : 'down'}`}></i>}
+                      </button>
+                      <button
+                        className={`sort-btn ${sortBy === 'province' ? 'active' : ''}`}
+                        onClick={() => handleSortChange('province')}
+                      >
+                        Province {sortBy === 'province' && <i className={`fas fa-chevron-${sortOrder === 'asc' ? 'up' : 'down'}`}></i>}
+                      </button>
+                      <button
+                        className={`sort-btn ${sortBy === 'country' ? 'active' : ''}`}
+                        onClick={() => handleSortChange('country')}
+                      >
+                        Country {sortBy === 'country' && <i className={`fas fa-chevron-${sortOrder === 'asc' ? 'up' : 'down'}`}></i>}
+                      </button>
+                      <button
+                        className={`sort-btn ${sortBy === 'population' ? 'active' : ''}`}
+                        onClick={() => handleSortChange('population')}
+                      >
+                        Population {sortBy === 'population' && <i className={`fas fa-chevron-${sortOrder === 'asc' ? 'up' : 'down'}`}></i>}
+                      </button>
+                      <button
+                        className={`sort-btn ${sortBy === 'size' ? 'active' : ''}`}
+                        onClick={() => handleSortChange('size')}
+                      >
+                        Size {sortBy === 'size' && <i className={`fas fa-chevron-${sortOrder === 'asc' ? 'up' : 'down'}`}></i>}
+                      </button>
+                    </div>
+                    {sortedCities.map((city) => {
                       const hasDataLayers = cityDataStatus[city.name];
                       const progress = processingProgress?.[city.name];
                       const isProcessing = progress && progress.status === 'processing';
@@ -91,9 +190,10 @@ const Header = ({ cities, selectedCity, onCitySelect, onAddCity, onEditCity, onD
                       return (
                         <div key={city.name} className="dropdown-item-container">
                           <motion.div
-                            className={`dropdown-item ${selectedCity?.name === city.name ? 'selected' : ''}`}
+                            className={`dropdown-item ${selectedCity?.name === city.name ? 'selected' : ''} ${!hasDataLayers || isProcessing ? 'disabled' : ''}`}
                             onClick={() => handleCitySelect(city)}
-                            whileHover={{ backgroundColor: '#f0f9ff' }}
+                            whileHover={hasDataLayers && !isProcessing ? { backgroundColor: '#f0f9ff' } : {}}
+                            style={{ cursor: hasDataLayers && !isProcessing ? 'pointer' : 'not-allowed', opacity: hasDataLayers && !isProcessing ? 1 : 0.6 }}
                           >
                             <div className="city-info">
                               <div className="city-header">
