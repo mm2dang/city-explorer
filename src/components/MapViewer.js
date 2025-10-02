@@ -112,48 +112,48 @@ const MapViewer = ({
   }, []);
 
   // Update map when city is selected
-  useEffect(() => {
-    if (!mapInstanceRef.current) return;
+useEffect(() => {
+  if (!mapInstanceRef.current) return;
 
-    // Clear existing layers when city changes
-    clearAllLayers();
+  // Clear existing layers when city changes
+  clearAllLayers();
 
-    if (!selectedCity) return;
+  if (!selectedCity) return;
 
-    try {
-      console.log('MapViewer: Updating map for city:', selectedCity.name);
+  try {
+    console.log('MapViewer: Updating map for city:', selectedCity.name);
+    
+    // Parse and display city boundary
+    if (selectedCity.boundary) {
+      const boundary = JSON.parse(selectedCity.boundary);
       
-      // Parse and display city boundary
-      if (selectedCity.boundary) {
-        const boundary = JSON.parse(selectedCity.boundary);
-        
-        // Create boundary layer
-        const boundaryLayer = L.geoJSON(boundary, {
-          style: {
-            color: '#0891b2',
-            weight: 3,
-            opacity: 0.8,
-            fillOpacity: 0.1
-          }
-        });
-        
-        boundaryLayer.addTo(mapInstanceRef.current);
-        boundaryLayerRef.current = boundaryLayer;
-        
-        // Fit map to boundary with padding
-        const bounds = boundaryLayer.getBounds();
-        mapInstanceRef.current.fitBounds(bounds, { padding: [50, 50] });
-      } else if (selectedCity.latitude && selectedCity.longitude) {
-        // Fallback to city coordinates
-        mapInstanceRef.current.setView([selectedCity.latitude, selectedCity.longitude], 12);
-      }
-    } catch (error) {
-      console.error('Error updating map for selected city:', error);
-      if (selectedCity.latitude && selectedCity.longitude) {
-        mapInstanceRef.current.setView([selectedCity.latitude, selectedCity.longitude], 12);
-      }
+      // Create boundary layer
+      const boundaryLayer = L.geoJSON(boundary, {
+        style: {
+          color: '#0891b2',
+          weight: 3,
+          opacity: 0.8,
+          fillOpacity: 0.1
+        }
+      });
+      
+      boundaryLayer.addTo(mapInstanceRef.current);
+      boundaryLayerRef.current = boundaryLayer;
+      
+      // Fit map to boundary with padding
+      const bounds = boundaryLayer.getBounds();
+      mapInstanceRef.current.fitBounds(bounds, { padding: [50, 50] });
+    } else if (selectedCity.latitude && selectedCity.longitude) {
+      // Fallback to city coordinates
+      mapInstanceRef.current.setView([selectedCity.latitude, selectedCity.longitude], 12);
     }
-  }, [selectedCity?.name, clearAllLayers]);
+  } catch (error) {
+    console.error('Error updating map for selected city:', error);
+    if (selectedCity.latitude && selectedCity.longitude) {
+      mapInstanceRef.current.setView([selectedCity.latitude, selectedCity.longitude], 12);
+    }
+  }
+}, [selectedCity, clearAllLayers]);
 
   // Load and display features when active layers change
   const loadAndDisplayFeatures = useCallback(async () => {

@@ -30,7 +30,15 @@ const App = () => {
   const [availableLayers, setAvailableLayers] = useState({});
   const [isLoading, setIsLoading] = useState(true);
   const [cityDataStatus, setCityDataStatus] = useState({});
+  const [processingProgress, setProcessingProgress] = useState({});
   const [error, setError] = useState(null);
+
+  // Request notification permission on mount
+  useEffect(() => {
+    if ('Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission();
+    }
+  }, []);
 
   // Load cities from both population and data buckets with status
   const loadAllCities = useCallback(async () => {
@@ -81,11 +89,10 @@ const App = () => {
       }
     };
     fetchCities();
-  }, []); // Removed loadAllCities from dependency array to prevent infinite loop
-
-  // Periodic refresh with better error handling - stabilized with useCallback
+  }, [loadAllCities]);
+ 
   useEffect(() => {
-    if (!selectedCity?.name) return; // Only refresh when city is selected
+    if (!selectedCity?.name) return;
 
     const interval = setInterval(async () => {
       try {
@@ -119,21 +126,20 @@ const App = () => {
       } catch (error) {
         console.warn('=== APP: Error in periodic refresh ===', error);
       }
-    }, 10000); // Check every 10 seconds
+    }, 10000);
 
     return () => clearInterval(interval);
-  }, [selectedCity?.name]); // Only depend on city name, not the full object
+  }, [selectedCity?.name, loadAllCities]);
 
   const handleCitySelect = useCallback(async (city) => {
     try {
       console.log(`=== APP: City selection requested: ${city.name} ===`);
       
       setSelectedCity(city);
-      setActiveLayers({}); // Reset active layers when selecting new city
+      setActiveLayers({});
       setAvailableLayers({});
       setError(null);
       
-      // Load available layers for this city from data bucket
       console.log(`=== APP: Loading available layers for ${city.name} ===`);
       const availableLayers = await getAvailableLayersForCity(city.name);
       const layerCount = Object.keys(availableLayers).length;
@@ -145,8 +151,6 @@ const App = () => {
       });
       
       setAvailableLayers(availableLayers);
-      
-      // Disenable all available layers by default
       setActiveLayers({});
       
       if (layerCount === 0) {
@@ -175,17 +179,22 @@ const App = () => {
         console.log(`=== APP: Deleting city: ${cityName} ===`);
         await deleteCityData(cityName);
         
-        // Refresh cities list after deletion
         const { cities: updatedCities, statusMap } = await loadAllCities();
         setCities(updatedCities);
         setCityDataStatus(statusMap);
         
-        // Clear selected city if it was deleted
         if (selectedCity?.name === cityName) {
           setSelectedCity(null);
           setActiveLayers({});
           setAvailableLayers({});
         }
+        
+        // Remove from processing progress
+        setProcessingProgress(prev => {
+          const updated = { ...prev };
+          delete updated[cityName];
+          return updated;
+        });
         
         console.log(`=== APP: City ${cityName} deleted successfully ===`);
       } catch (error) {
@@ -193,7 +202,7 @@ const App = () => {
         setError(`Failed to delete city: ${error.message}`);
       }
     }
-  }, [selectedCity?.name, loadAllCities]); // Use selectedCity.name instead of full object
+  }, [selectedCity?.name, loadAllCities]);
 
   const handleLayerToggle = useCallback((layerName, enabled) => {
     console.log(`=== APP: Layer ${layerName} toggled: ${enabled} ===`);
@@ -203,11 +212,10 @@ const App = () => {
     }));
   }, []);
 
-  const handleWizardComplete = useCallback(async (newCity) => {
+  const handleWizardComplete = useCallback(async (newCity, onProgressUpdate) => {
     console.log(`=== APP: Wizard completed for city: ${newCity.name} ===`);
     
     try {
-      // Show success feedback
       confetti({
         particleCount: 100,
         spread: 70,
@@ -218,18 +226,93 @@ const App = () => {
       setIsWizardOpen(false);
       setEditingCity(null);
       
-      // Refresh cities list to show new city
+      const layerDefinitions = {
+        mobility: 8,
+        governance: 3,
+        health: 6,
+        economy: 4,
+        environment: 5,
+        culture: 6,
+        education: 4,
+        housing: 2,
+        social: 3
+      };
+      const totalLayers = Object.values(layerDefinitions).reduce((sum, count) => sum + count, 0);
+      
+      // Initialize progress tracking
+      const progressHandler = (cityName, progress) => {
+        console.log(`=== APP: Progress update for ${cityName}: ${progress.processed}/${progress.total} ===`);
+        
+        setProcessingProgress(prev => ({
+          ...prev,
+          [cityName]: progress
+        }));
+        
+        if (progress.status === 'complete') {
+          setCityDataStatus(prev => ({
+            ...prev,
+            [cityName]: true
+          }));
+          
+          if ('Notification' in window && Notification.permission === 'granted') {
+            const notification = new Notification('City Processing Complete!', {
+              body: `${cityName} is ready to explore. ${progress.saved} layers with data.`,
+              icon: '/logo192.png',
+              tag: `complete-${cityName}`,
+              requireInteraction: true
+            });
+            
+            notification.onclick = () => {
+              window.focus();
+              notification.close();
+            };
+          }
+          
+          confetti({
+            particleCount: 150,
+            spread: 100,
+            origin: { y: 0.6 },
+            colors: ['#10b981', '#34d399']
+          });
+          
+          setTimeout(() => {
+            setProcessingProgress(prev => {
+              const updated = { ...prev };
+              delete updated[cityName];
+              return updated;
+            });
+          }, 5000);
+        }
+      };
+      
+      // Call the callback passed from wizard with our progress handler
+      if (onProgressUpdate) {
+        onProgressUpdate(progressHandler);
+      }
+      
+      // Initial progress state
+      setProcessingProgress(prev => ({
+        ...prev,
+        [newCity.name]: { processed: 0, saved: 0, total: totalLayers, status: 'processing' }
+      }));
+      
       console.log('=== APP: Refreshing cities list after wizard completion ===');
       const { cities: updatedCities, statusMap } = await loadAllCities();
       setCities(updatedCities);
       setCityDataStatus(statusMap);
       
-      // Inform user
+      if ('Notification' in window && Notification.permission === 'granted') {
+        new Notification('City Processing Started', {
+          body: `Processing ${newCity.name}... Keep this tab open.`,
+          icon: '/logo192.png',
+          tag: `processing-${newCity.name}`
+        });
+      }
+      
       setTimeout(() => {
-        alert(`${newCity.name} has been added successfully!\n\n` +
-              `• The city is now available for selection\n` +
-              `• Data processing is running in the background\n` +
-              `• Layers will become available as processing completes`);
+        alert(`${newCity.name} added successfully!\n\n` +
+              `• Processing ${totalLayers} layers\n` +
+              `• Please keep this browser tab open until complete\n`);
       }, 1000);
       
     } catch (error) {
@@ -238,7 +321,6 @@ const App = () => {
     }
   }, [loadAllCities]);
 
-  // Clear error handler
   const clearError = () => {
     setError(null);
   };
@@ -284,6 +366,7 @@ const App = () => {
         onDeleteCity={handleDeleteCity}
         isLoading={isLoading}
         cityDataStatus={cityDataStatus}
+        processingProgress={processingProgress}
       />
       
       <div className="main-content" style={{ marginTop: error ? '60px' : '0' }}>

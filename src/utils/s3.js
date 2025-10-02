@@ -19,31 +19,6 @@ const initializeWasm = async () => {
   }
 };
 
-// Helper function to convert Arrow Table to JavaScript objects
-const arrowTableToObjects = (arrowTable) => {
-  const data = [];
-  const numRows = arrowTable.numRows;
-  
-  if (numRows === 0) {
-    return data;
-  }
-  
-  // Get column names from schema
-  const columnNames = arrowTable.schema.fields.map(field => field.name);
-  
-  // Extract data row by row
-  for (let i = 0; i < numRows; i++) {
-    const row = {};
-    for (const colName of columnNames) {
-      const column = arrowTable.getChild(colName);
-      row[colName] = column.get(i);
-    }
-    data.push(row);
-  }
-  
-  return data;
-};
-
 // Helper function to create a Table from JavaScript data using Apache Arrow
 const createParquetTable = (data) => {
   try {
@@ -96,7 +71,7 @@ const BUCKET_NAME = 'veraset-data-qoli-dev';
 
 // Helper function to normalize names (lowercase, replace spaces with underscores)
 const normalizeName = (name) => {
-  return name.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
+  return name.toLowerCase().replace(/\s+/g, '_');
 };
 
 // Layer definitions
@@ -210,7 +185,7 @@ export const getAllCities = async () => {
       console.log(`Processing population file: ${filePath}`);
       
       // Extract city info from path: population/country=canada/province=ontario/city=toronto/city_data.snappy.parquet
-      const pathMatch = filePath.match(/population\/country=([^\/]+)\/province=([^\/]*)\/city=([^\/]+)\/city_data\.snappy\.parquet$/);
+      const pathMatch = filePath.match(/population\/country=([^/]+)\/province=([^/]*)\/city=([^/]+)\/city_data\.snappy\.parquet$/);
       if (pathMatch) {
         const [, country, province, city] = pathMatch;
         
@@ -238,7 +213,7 @@ export const getAllCities = async () => {
     const dataCities = new Set();
     for (const filePath of dataFiles) {
       // Match pattern: data/country=X/province=Y/city=Z/domain=D/layer.snappy.parquet
-      const pathMatch = filePath.match(/data\/country=([^\/]+)\/province=([^\/]*)\/city=([^\/]+)\//);
+      const pathMatch = filePath.match(/data\/country=([^/]+)\/province=([^/]*)\/city=([^/]+)\//);
       if (pathMatch) {
         const [, country, province, city] = pathMatch;
         const cityKey = `${city}|${province}|${country}`;
@@ -829,8 +804,8 @@ export const saveLayerFeatures = async (features, country, province, city, domai
   }
 };
 
-// Background processing function - FIXED to properly handle worker results
-export const processCityFeatures = async (cityData, country, province, city) => {
+// Background processing function
+export const processCityFeatures = async (cityData, country, province, city, onProgressUpdate) => {
   try {
     console.log(`Starting background processing for ${cityData.name}`);
     
@@ -848,6 +823,7 @@ export const processCityFeatures = async (cityData, country, province, city) => 
     });
 
     let processedCount = 0;
+    let savedCount = 0;
     const totalLayers = allLayers.length;
 
     // Process in smaller batches to avoid worker timeouts
@@ -910,42 +886,76 @@ export const processCityFeatures = async (cityData, country, province, city) => 
           layerGroups[layerName].features.push(feature);
         });
         
-        // Save each layer group
-        for (const [layerName, layerData] of Object.entries(layerGroups)) {
-          if (layerData.features.length > 0) {
+        // Process each layer in the batch
+        for (const layerInfo of batch) {
+          const layerData = layerGroups[layerInfo.filename];
+          
+          if (layerData && layerData.features && layerData.features.length > 0) {
+            // Save layers that have features
             await saveLayerFeatures(
               layerData.features,
               country,
               province,
               city,
               layerData.domain,
-              layerName
+              layerInfo.filename
             );
+            savedCount++;
+            console.log(`Saved layer ${layerInfo.filename} with ${layerData.features.length} features`);
+          } else {
+            // Layer processed but has no features - don't save, but count as complete
+            console.log(`Layer ${layerInfo.filename} processed with 0 features (not saving to S3)`);
           }
+          
+          // Increment counter for ALL layers (with or without features)
           processedCount++;
-        }
-        
-        // Add any layers that had no features
-        batch.forEach(layerInfo => {
-          if (!layerGroups[layerInfo.filename]) {
-            processedCount++;
+          
+          // Emit progress update after each layer
+          if (onProgressUpdate) {
+            onProgressUpdate(cityData.name, {
+              processed: processedCount,
+              saved: savedCount,
+              total: totalLayers,
+              status: 'processing'
+            });
           }
-        });
+        }
 
-        console.log(`Completed batch processing (${processedCount}/${totalLayers} layers processed)`);
+        console.log(`Completed batch processing (${processedCount}/${totalLayers} layers processed, ${savedCount} saved)`);
 
         // Small delay between batches
         await new Promise(resolve => setTimeout(resolve, 2000));
 
       } catch (batchError) {
         console.warn(`Error processing batch:`, batchError);
-        // Still increment counter for failed batch
+        // Still increment counter for failed batch layers
         processedCount += batch.length;
+        
+        // Update progress even on error
+        if (onProgressUpdate) {
+          onProgressUpdate(cityData.name, {
+            processed: processedCount,
+            saved: savedCount,
+            total: totalLayers,
+            status: 'processing'
+          });
+        }
       }
     }
 
-    console.log(`Completed background processing for ${cityData.name}: ${processedCount}/${totalLayers} layers processed`);
-    return { processedLayers: processedCount, totalLayers };
+    console.log(`Completed background processing for ${cityData.name}: ${processedCount}/${totalLayers} layers processed, ${savedCount} saved`);
+    
+    // Final completion update
+    if (onProgressUpdate) {
+      onProgressUpdate(cityData.name, {
+        processed: processedCount,
+        saved: savedCount,
+        total: totalLayers,
+        status: 'complete'
+      });
+    }
+    
+    return { processedLayers: processedCount, savedLayers: savedCount, totalLayers };
   } catch (error) {
     console.error('Error in background processing:', error);
     throw error;
@@ -1017,7 +1027,9 @@ export const getAllCitiesWithDataStatus = async () => {
 export const deleteCityData = async (cityName) => {
   try {
     const parts = cityName.split(',').map(p => p.trim());
-    if (parts.length < 2) return;
+    if (parts.length < 2) {
+      throw new Error('Invalid city name format');
+    }
 
     let city, province, country;
     if (parts.length === 2) {
@@ -1031,41 +1043,88 @@ export const deleteCityData = async (cityName) => {
     const normalizedProvince = normalizeName(province);
     const normalizedCountry = normalizeName(country);
 
+    console.log(`Deleting city data for: ${cityName}`);
+    console.log(`Normalized: country=${normalizedCountry}, province=${normalizedProvince}, city=${normalizedCity}`);
+
     const objectsToDelete = [];
 
-    // List population data files
-    const populationListCommand = new ListObjectsV2Command({
-      Bucket: BUCKET_NAME,
-      Prefix: `population/country=${normalizedCountry}/province=${normalizedProvince}/city=${normalizedCity}/`,
-    });
-    const populationResponse = await s3Client.send(populationListCommand);
-    if (populationResponse.Contents) {
-      populationResponse.Contents.forEach(obj => {
-        objectsToDelete.push({ Key: obj.Key });
+    // List and collect population data files
+    const populationPrefix = `population/country=${normalizedCountry}/province=${normalizedProvince}/city=${normalizedCity}/`;
+    console.log(`Scanning population prefix: ${populationPrefix}`);
+    
+    let populationContinuationToken = null;
+    do {
+      const populationListCommand = new ListObjectsV2Command({
+        Bucket: BUCKET_NAME,
+        Prefix: populationPrefix,
+        ContinuationToken: populationContinuationToken,
       });
-    }
+      const populationResponse = await s3Client.send(populationListCommand);
+      
+      if (populationResponse.Contents && populationResponse.Contents.length > 0) {
+        populationResponse.Contents.forEach(obj => {
+          objectsToDelete.push({ Key: obj.Key });
+          console.log(`Found population file: ${obj.Key}`);
+        });
+      }
+      
+      populationContinuationToken = populationResponse.NextContinuationToken;
+    } while (populationContinuationToken);
 
-    // List data layer files
-    const dataListCommand = new ListObjectsV2Command({
-      Bucket: BUCKET_NAME,
-      Prefix: `data/country=${normalizedCountry}/province=${normalizedProvince}/city=${normalizedCity}/`,
-    });
-    const dataResponse = await s3Client.send(dataListCommand);
-    if (dataResponse.Contents) {
-      dataResponse.Contents.forEach(obj => {
-        objectsToDelete.push({ Key: obj.Key });
+    // List and collect data layer files
+    const dataPrefix = `data/country=${normalizedCountry}/province=${normalizedProvince}/city=${normalizedCity}/`;
+    console.log(`Scanning data prefix: ${dataPrefix}`);
+    
+    let dataContinuationToken = null;
+    do {
+      const dataListCommand = new ListObjectsV2Command({
+        Bucket: BUCKET_NAME,
+        Prefix: dataPrefix,
+        ContinuationToken: dataContinuationToken,
       });
-    }
+      const dataResponse = await s3Client.send(dataListCommand);
+      
+      if (dataResponse.Contents && dataResponse.Contents.length > 0) {
+        dataResponse.Contents.forEach(obj => {
+          objectsToDelete.push({ Key: obj.Key });
+          console.log(`Found data file: ${obj.Key}`);
+        });
+      }
+      
+      dataContinuationToken = dataResponse.NextContinuationToken;
+    } while (dataContinuationToken);
+
+    console.log(`Total files to delete: ${objectsToDelete.length}`);
 
     if (objectsToDelete.length > 0) {
-      const deleteCommand = new DeleteObjectsCommand({
-        Bucket: BUCKET_NAME,
-        Delete: {
-          Objects: objectsToDelete,
-        },
-      });
-      await s3Client.send(deleteCommand);
-      console.log('City data deleted successfully from both population and data buckets');
+      // S3 DeleteObjects has a limit of 1000 objects per request
+      const BATCH_SIZE = 1000;
+      
+      for (let i = 0; i < objectsToDelete.length; i += BATCH_SIZE) {
+        const batch = objectsToDelete.slice(i, i + BATCH_SIZE);
+        
+        const deleteCommand = new DeleteObjectsCommand({
+          Bucket: BUCKET_NAME,
+          Delete: {
+            Objects: batch,
+            Quiet: false,
+          },
+        });
+        
+        const deleteResponse = await s3Client.send(deleteCommand);
+        
+        if (deleteResponse.Deleted) {
+          console.log(`Deleted ${deleteResponse.Deleted.length} objects in batch ${Math.floor(i / BATCH_SIZE) + 1}`);
+        }
+        
+        if (deleteResponse.Errors && deleteResponse.Errors.length > 0) {
+          console.error('Errors during deletion:', deleteResponse.Errors);
+        }
+      }
+      
+      console.log(`Successfully deleted all data for ${cityName} from both population and data folders`);
+    } else {
+      console.log(`No files found to delete for ${cityName}`);
     }
   } catch (error) {
     console.error('Error deleting city data:', error);

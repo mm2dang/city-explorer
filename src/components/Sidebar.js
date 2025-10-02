@@ -110,7 +110,7 @@ const Sidebar = ({
     if (selectedCity && Object.keys(availableLayersByDomain).length > 0) {
       setExpandedDomains(new Set(Object.keys(availableLayersByDomain)));
     }
-  }, [selectedCity?.name, availableLayersByDomain]); // Use selectedCity.name to prevent object reference issues
+  }, [selectedCity, availableLayersByDomain]);
 
   const toggleDomain = (domain) => {
     const newExpanded = new Set(expandedDomains);

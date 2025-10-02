@@ -237,20 +237,28 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel }) => {
         sdg_region: sdgRegion
       };
 
-      // Save city data to data bucket
+      // Save city data to population bucket
       await saveCityData(cityData, country, province, cityName);
 
-      // Start background processing
-      setTimeout(async () => {
-        try {
-          await processCityFeatures(cityData, country, province, cityName);
-          console.log('Background processing completed for', fullName);
-        } catch (error) {
-          console.error('Background processing error:', error);
-        }
-      }, 1000);
+      // Call onComplete with city data and a callback setter function
+      await onComplete(cityData, (progressHandler) => {
+        // Start background processing with progress updates
+        setTimeout(async () => {
+          try {
+            await processCityFeatures(
+              cityData, 
+              country, 
+              province, 
+              cityName,
+              progressHandler
+            );
+            console.log('Background processing completed for', fullName);
+          } catch (error) {
+            console.error('Background processing error:', error);
+          }
+        }, 1000);
+      });
 
-      onComplete(cityData);
     } catch (error) {
       console.error('Error saving city:', error);
       alert('Error saving city. Please try again.');

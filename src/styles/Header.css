@@ -56,7 +56,7 @@
   cursor: pointer;
   transition: all 0.2s;
   backdrop-filter: blur(10px);
-  min-width: 200px;
+  min-width: 300px;
   justify-content: space-between;
 }
 
@@ -180,6 +180,11 @@
   justify-content: space-between;
   align-items: center;
   margin-bottom: 4px;
+}
+
+.city-meta-row {
+  display: flex;
+  gap: 16px;
 }
 
 .city-details {
@@ -357,4 +362,65 @@
   .status-description {
     font-size: 10px;
   }
+}
+
+.processing-status {
+  margin-top: 8px;
+}
+
+.progress-bar {
+  width: 100%;
+  height: 6px;
+  background-color: #e5e7eb;
+  border-radius: 3px;
+  overflow: hidden;
+  margin-bottom: 4px;
+}
+
+.progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #0891b2, #06b6d4);
+  transition: width 0.5s ease;
+  animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.8;
+  }
+}
+
+.progress-text {
+  display: block;
+  font-size: 10px;
+  color: #6b7280;
+  text-align: center;
+}
+
+.status-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.status-label.pending {
+  background-color: #fef3c7;
+  color: #92400e;
+}
+
+.status-label.processing {
+  background-color: #dbeafe;
+  color: #1e40af;
+}
+
+.status-label.ready {
+  background-color: #d1fae5;
+  color: #065f46;
 }
