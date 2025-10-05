@@ -4,7 +4,14 @@ import Header from './components/Header';
 import Sidebar from './components/Sidebar';
 import MapViewer from './components/MapViewer';
 import AddCityWizard from './components/AddCityWizard';
-import { getAllCitiesWithDataStatus, getAvailableLayersForCity, loadCityFeatures, deleteCityData } from './utils/s3';
+import { 
+  getAllCitiesWithDataStatus, 
+  getAvailableLayersForCity, 
+  loadCityFeatures, 
+  deleteCityData,
+  saveCustomLayer,
+  deleteLayer
+} from './utils/s3';
 import confetti from 'canvas-confetti';
 import '@fortawesome/fontawesome-free/css/all.min.css';
 import './styles/App.css';
@@ -325,6 +332,63 @@ const App = () => {
     setError(null);
   };
 
+  const handleLayerSave = useCallback(async (layerData) => {
+    if (!selectedCity) return;
+    
+    try {
+      console.log('=== APP: Saving layer ===', layerData);
+      
+      // Save the layer to S3
+      await saveCustomLayer(selectedCity.name, layerData);
+      
+      // Refresh available layers
+      const updatedLayers = await getAvailableLayersForCity(selectedCity.name);
+      setAvailableLayers(updatedLayers);
+      
+      console.log('=== APP: Layer saved successfully ===');
+      
+      // Show success message
+      confetti({
+        particleCount: 100,
+        spread: 70,
+        origin: { y: 0.6 },
+        colors: ['#10b981', '#34d399']
+      });
+      
+    } catch (error) {
+      console.error('=== APP: Error saving layer ===', error);
+      throw error;
+    }
+  }, [selectedCity]);
+
+  const handleLayerDelete = useCallback(async (domain, layerName) => {
+    if (!selectedCity) return;
+    
+    try {
+      console.log(`=== APP: Deleting layer ${layerName} from domain ${domain} ===`);
+      
+      // Delete the layer from S3
+      await deleteLayer(selectedCity.name, domain, layerName);
+      
+      // Remove from active layers if it was active
+      setActiveLayers(prev => {
+        const updated = { ...prev };
+        delete updated[layerName];
+        return updated;
+      });
+      
+      // Refresh available layers
+      const updatedLayers = await getAvailableLayersForCity(selectedCity.name);
+      setAvailableLayers(updatedLayers);
+      
+      console.log('=== APP: Layer deleted successfully ===');
+      
+    } catch (error) {
+      console.error('=== APP: Error deleting layer ===', error);
+      throw error;
+    }
+  }, [selectedCity]);
+
   return (
     <div className="app">
       {error && (
@@ -341,7 +405,7 @@ const App = () => {
           borderBottom: '1px solid #fecaca'
         }}>
           <strong>Error:</strong> {error}
-          <button 
+          <button
             onClick={clearError}
             style={{
               marginLeft: '12px',
@@ -356,8 +420,8 @@ const App = () => {
           </button>
         </div>
       )}
-      
-      <Header 
+
+      <Header
         cities={cities}
         selectedCity={selectedCity}
         onCitySelect={handleCitySelect}
@@ -368,19 +432,21 @@ const App = () => {
         cityDataStatus={cityDataStatus}
         processingProgress={processingProgress}
       />
-      
+
       <div className="main-content" style={{ marginTop: error ? '60px' : '0' }}>
         {selectedCity && (
-          <Sidebar 
+          <Sidebar
             selectedCity={selectedCity}
             activeLayers={activeLayers}
             availableLayers={availableLayers}
             onLayerToggle={handleLayerToggle}
             domainColors={domainColors}
+            onLayerSave={handleLayerSave}
+            onLayerDelete={handleLayerDelete}
           />
         )}
-        
-        <MapViewer 
+
+        <MapViewer
           selectedCity={selectedCity}
           activeLayers={activeLayers}
           domainColors={domainColors}

@@ -267,7 +267,6 @@ export const getAllCities = async () => {
 };
 
 // Get city metadata from population bucket
-// Get city metadata from population bucket
 const getCityData = async (country, province, city) => {
   try {
     await initializeWasm();
@@ -705,7 +704,7 @@ export const loadCityFeatures = async (cityName, activeLayers) => {
     });
     return [];
   }
-}
+};
 
 // Save individual layer
 export const saveLayerFeatures = async (features, country, province, city, domain, layerName) => {
@@ -800,6 +799,211 @@ export const saveLayerFeatures = async (features, country, province, city, domai
     console.log(`Layer ${layerName} saved successfully with ${features.length} features`);
   } catch (error) {
     console.error(`Error saving layer ${layerName}:`, error);
+    throw error;
+  }
+};
+
+// Save custom layer
+export const saveCustomLayer = async (cityName, layerData) => {
+  try {
+    await initializeWasm();
+    
+    const parts = cityName.split(',').map(p => p.trim());
+    if (parts.length < 2) {
+      throw new Error('Invalid city name format');
+    }
+    
+    let city, province, country;
+    if (parts.length === 2) {
+      [city, country] = parts;
+      province = '';
+    } else {
+      [city, province, country] = parts;
+    }
+    
+    const normalizedCity = normalizeName(city);
+    const normalizedProvince = normalizeName(province);
+    const normalizedCountry = normalizeName(country);
+
+    console.log(`Saving custom layer: ${layerData.name} for ${cityName}`);
+
+    // Prepare features with proper structure
+    const features = layerData.features.map(f => ({
+      type: 'Feature',
+      geometry: f.geometry,
+      properties: {
+        feature_name: f.properties?.name || f.properties?.feature_name || layerData.name,
+        layer_name: layerData.name,
+        domain_name: layerData.domain
+      }
+    }));
+
+    // Save using existing function
+    await saveLayerFeatures(
+      features,
+      country,
+      province,
+      city,
+      layerData.domain,
+      layerData.name
+    );
+
+    console.log(`Custom layer ${layerData.name} saved successfully with ${features.length} features`);
+    return true;
+  } catch (error) {
+    console.error('Error saving custom layer:', error);
+    throw error;
+  }
+};
+
+// Delete a specific layer
+export const deleteLayer = async (cityName, domain, layerName) => {
+  try {
+    const parts = cityName.split(',').map(p => p.trim());
+    if (parts.length < 2) {
+      throw new Error('Invalid city name format');
+    }
+    
+    let city, province, country;
+    if (parts.length === 2) {
+      [city, country] = parts;
+      province = '';
+    } else {
+      [city, province, country] = parts;
+    }
+    
+    const normalizedCity = normalizeName(city);
+    const normalizedProvince = normalizeName(province);
+    const normalizedCountry = normalizeName(country);
+
+    const key = `data/country=${normalizedCountry}/province=${normalizedProvince}/city=${normalizedCity}/domain=${domain}/${layerName}.snappy.parquet`;
+
+    console.log(`Deleting layer: ${key}`);
+
+    const deleteCommand = new DeleteObjectsCommand({
+      Bucket: BUCKET_NAME,
+      Delete: {
+        Objects: [{ Key: key }],
+        Quiet: false,
+      },
+    });
+
+    const response = await s3Client.send(deleteCommand);
+    
+    if (response.Deleted && response.Deleted.length > 0) {
+      console.log(`Successfully deleted layer: ${layerName}`);
+      return true;
+    } else if (response.Errors && response.Errors.length > 0) {
+      throw new Error(`Failed to delete layer: ${response.Errors[0].Message}`);
+    }
+    
+    return true;
+  } catch (error) {
+    console.error('Error deleting layer:', error);
+    throw error;
+  }
+};
+
+// Load layer features for editing
+export const loadLayerForEditing = async (cityName, domain, layerName) => {
+  try {
+    await initializeWasm();
+    
+    const parts = cityName.split(',').map(p => p.trim());
+    if (parts.length < 2) {
+      throw new Error('Invalid city name format');
+    }
+    
+    let city, province, country;
+    if (parts.length === 2) {
+      [city, country] = parts;
+      province = '';
+    } else {
+      [city, province, country] = parts;
+    }
+    
+    const normalizedCity = normalizeName(city);
+    const normalizedProvince = normalizeName(province);
+    const normalizedCountry = normalizeName(country);
+
+    const key = `data/country=${normalizedCountry}/province=${normalizedProvince}/city=${normalizedCity}/domain=${domain}/${layerName}.snappy.parquet`;
+
+    console.log(`Loading layer for editing: ${key}`);
+
+    const streamToArrayBuffer = async (stream) => {
+      const reader = stream.getReader();
+      const chunks = [];
+      
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+        }
+      } finally {
+        reader.releaseLock();
+      }
+      
+      const totalLength = chunks.reduce((acc, chunk) => acc + chunk.length, 0);
+      const result = new Uint8Array(totalLength);
+      
+      let offset = 0;
+      for (const chunk of chunks) {
+        result.set(chunk, offset);
+        offset += chunk.length;
+      }
+      
+      return result.buffer;
+    };
+
+    const command = new GetObjectCommand({
+      Bucket: BUCKET_NAME,
+      Key: key,
+    });
+
+    const response = await s3Client.send(command);
+    const arrayBuffer = await streamToArrayBuffer(response.Body);
+    const uint8Array = new Uint8Array(arrayBuffer);
+
+    const wasmTable = readParquet(uint8Array);
+    const ipcBytes = wasmTable.intoIPCStream();
+    const arrowTable = tableFromIPC(ipcBytes);
+
+    const features = [];
+    for (let i = 0; i < arrowTable.numRows; i++) {
+      const row = {};
+      for (const field of arrowTable.schema.fields) {
+        const column = arrowTable.getChild(field.name);
+        row[field.name] = column.get(i);
+      }
+
+      let geometry = null;
+      if (row.geometry_coordinates) {
+        try {
+          geometry = JSON.parse(row.geometry_coordinates);
+        } catch (error) {
+          console.warn('Could not parse geometry:', error);
+        }
+      }
+
+      if (geometry) {
+        features.push({
+          type: 'Feature',
+          geometry: geometry,
+          properties: {
+            name: row.feature_name || layerName,
+            feature_name: row.feature_name,
+            layer_name: row.layer_name || layerName,
+            domain_name: row.domain_name || domain
+          }
+        });
+      }
+    }
+
+    console.log(`Loaded ${features.length} features for editing`);
+    return features;
+  } catch (error) {
+    console.error('Error loading layer for editing:', error);
     throw error;
   }
 };

@@ -20,7 +20,8 @@ cityexplorer/
 │   ├── utils/
 │   │   ├── s3.js              # AWS S3 operations and data processing
 │   │   ├── osm.js             # OpenStreetMap and Wikipedia API calls
-│   │   └── regions.js         # UN SDG region mapping
+│   │   ├── regions.js         # UN SDG region mapping
+│   │   └── exportUtils.js     # Export layers to local computer
 │   ├── styles/
 │   │   ├── App.css
 │   │   ├── Header.css
