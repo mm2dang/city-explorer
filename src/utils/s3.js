@@ -397,13 +397,12 @@ export const saveCityData = async (cityData, country, province, city) => {
   }
 };
 
-// Get available layers for a city
+// Get available layers for a city with metadata
 export const getAvailableLayersForCity = async (cityName) => {
   try {
     const parts = cityName.split(',').map(p => p.trim());
     if (parts.length < 2) return {};
     
-    // Handle different city name formats
     let city, province, country;
     if (parts.length === 2) {
       [city, country] = parts;
@@ -418,28 +417,79 @@ export const getAvailableLayersForCity = async (cityName) => {
     
     const availableLayers = {};
     
-    // Check each layer individually in data bucket
-    for (const [domain, layers] of Object.entries(layerDefinitions)) {
-      for (const layer of layers) {
-        try {
-          const key = `data/country=${normalizedCountry}/province=${normalizedProvince}/city=${normalizedCity}/domain=${domain}/${layer.filename}.snappy.parquet`;
-          
-          const listCommand = new ListObjectsV2Command({
-            Bucket: BUCKET_NAME,
-            Prefix: key,
-            MaxKeys: 1,
-          });
-          
-          const response = await s3Client.send(listCommand);
-          
-          if (response.Contents && response.Contents.length > 0) {
-            availableLayers[layer.filename] = true;
+    // Scan all domains in the data bucket
+    const dataPrefix = `data/country=${normalizedCountry}/province=${normalizedProvince}/city=${normalizedCity}/`;
+    
+    let continuationToken = null;
+    do {
+      const listCommand = new ListObjectsV2Command({
+        Bucket: BUCKET_NAME,
+        Prefix: dataPrefix,
+        ContinuationToken: continuationToken,
+      });
+      
+      const response = await s3Client.send(listCommand);
+      
+      if (response.Contents) {
+        for (const obj of response.Contents) {
+          // Parse: data/country=X/province=Y/city=Z/domain=DOMAIN/LAYER_NAME.snappy.parquet
+          const match = obj.Key.match(/domain=([^/]+)\/([^/]+)\.snappy\.parquet$/);
+          if (match) {
+            const [, domain, layerName] = match;
+            
+            // Find icon from layerDefinitions (for predefined layers)
+            let icon = 'fas fa-map-marker-alt'; // default
+            const domainLayers = layerDefinitions[domain];
+            if (domainLayers) {
+              const layerDef = domainLayers.find(l => l.filename === layerName);
+              if (layerDef) {
+                // This is a predefined layer - get icon from definitions
+                const domainIconMap = {
+                  mobility: { roads: 'fas fa-road', sidewalks: 'fas fa-walking', parking: 'fas fa-parking', 
+                             transit_stops: 'fas fa-bus', subways: 'fas fa-subway', railways: 'fas fa-train', 
+                             airports: 'fas fa-plane', bicycle_parking: 'fas fa-bicycle' },
+                  governance: { police: 'fas fa-shield-alt', government_offices: 'fas fa-landmark', 
+                               fire_stations: 'fas fa-fire-extinguisher' },
+                  health: { hospitals: 'fas fa-hospital', doctor_offices: 'fas fa-user-md', 
+                           dentists: 'fas fa-tooth', clinics: 'fas fa-clinic-medical', 
+                           pharmacies: 'fas fa-pills', acupuncture: 'fas fa-hand-holding-heart' },
+                  economy: { factories: 'fas fa-industry', banks: 'fas fa-university', 
+                            shops: 'fas fa-store', restaurants: 'fas fa-utensils' },
+                  environment: { parks: 'fas fa-tree', open_green_spaces: 'fas fa-leaf', 
+                                nature: 'fas fa-mountain', waterways: 'fas fa-water', lakes: 'fas fa-tint' },
+                  culture: { tourist_attractions: 'fas fa-camera', theme_parks: 'fas fa-ticket', 
+                            gyms: 'fas fa-dumbbell', theatres: 'fas fa-theater-masks', 
+                            stadiums: 'fas fa-futbol', places_of_worship: 'fas fa-pray' },
+                  education: { schools: 'fas fa-school', universities: 'fas fa-university', 
+                              colleges: 'fas fa-graduation-cap', libraries: 'fas fa-book' },
+                  housing: { houses: 'fas fa-home', apartments: 'fas fa-building' },
+                  social: { bars: 'fas fa-wine-glass-alt', cafes: 'fas fa-coffee', 
+                           leisure_facilities: 'fas fa-dice' }
+                };
+                icon = domainIconMap[domain]?.[layerName] || 'fas fa-map-marker-alt';
+              } else {
+                // Custom layer - try to load metadata from the parquet file
+                try {
+                  const layerFeatures = await loadLayerForEditing(cityName, domain, layerName);
+                  if (layerFeatures.length > 0 && layerFeatures[0].properties?.icon) {
+                    icon = layerFeatures[0].properties.icon;
+                  }
+                } catch (error) {
+                  console.warn(`Could not load metadata for custom layer ${layerName}:`, error);
+                }
+              }
+            }
+            
+            availableLayers[layerName] = {
+              domain: domain,
+              icon: icon
+            };
           }
-        } catch (error) {
-          console.warn(`Error checking layer ${layer.filename}:`, error);
         }
       }
-    }
+      
+      continuationToken = response.NextContinuationToken;
+    } while (continuationToken);
     
     return availableLayers;
   } catch (error) {
@@ -773,9 +823,10 @@ export const saveLayerFeatures = async (features, country, province, city, domai
         geometry_type: geometryType,
         longitude: longitude,
         latitude: latitude,
-        geometry_coordinates: geometryCoordinates, // This will be the full GeoJSON geometry object
+        geometry_coordinates: geometryCoordinates,
         layer_name: feature.layer_name || layerName,
         domain_name: feature.domain_name || domain,
+        icon: feature.icon || feature.properties?.icon || null
       };
     });
 

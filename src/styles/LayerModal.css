@@ -84,16 +84,19 @@
   font-size: 14px;
 }
 
-.form-group input[type="text"] {
+.form-group input[type="text"],
+.form-group select {
   width: 100%;
   padding: 12px 16px;
   border: 2px solid #e2e8f0;
   border-radius: 8px;
   font-size: 14px;
+  background: white;
   transition: all 0.2s;
 }
 
-.form-group input[type="text"]:focus {
+.form-group input[type="text"]:focus,
+.form-group select:focus {
   outline: none;
   border-color: #0891b2;
   box-shadow: 0 0 0 3px rgba(8, 145, 178, 0.1);
@@ -104,6 +107,20 @@
   margin-top: 6px;
   color: #64748b;
   font-size: 12px;
+}
+
+.form-group small.error {
+  color: #dc2626;
+}
+
+.selected-icon-preview {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px;
+  background: #f8fafc;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
 }
 
 .icon-selector {
@@ -284,7 +301,7 @@
 .uploaded-file {
   margin-top: 12px;
   font-weight: 600;
-  color: #10b981 !important;
+  color: #10b981;
 }
 
 .processing-indicator {
@@ -292,10 +309,14 @@
   text-align: center;
   color: #0891b2;
   font-weight: 500;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
 }
 
 .processing-indicator i {
-  margin-right: 8px;
+  font-size: 24px;
 }
 
 .draw-section {
@@ -323,6 +344,8 @@
 
 .review-summary i {
   margin-bottom: 16px;
+  font-size: 48px;
+  color: #10b981;
 }
 
 .review-summary h4 {
@@ -338,30 +361,88 @@
   color: #64748b;
 }
 
-/* Leaflet overrides for modal */
-.modal-content .leaflet-container {
-  z-index: 1;
+.map-container {
+  height: 500px !important;
+  width: 100% !important;
+  position: relative !important;
+  border-radius: 8px;
+  z-index: 1 !important;
+  background: #f8fafc; /* Fallback background if tiles fail to load */
 }
 
-.modal-content .leaflet-draw-toolbar {
+.leaflet-draw-toolbar {
   margin-top: 10px;
 }
 
-.modal-content .leaflet-draw-toolbar a {
+.leaflet-draw-toolbar a {
   background-color: white;
   border: 1px solid #e2e8f0;
+  border-radius: 4px;
 }
 
-.modal-content .leaflet-draw-toolbar a:hover {
+.leaflet-draw-toolbar a:hover {
   background-color: #f8fafc;
 }
 
-.modal-content .leaflet-draw-actions {
+.leaflet-draw-actions {
   background: white;
   border: 1px solid #e2e8f0;
   border-radius: 8px;
 }
 
-.modal-content .leaflet-draw-actions a {
+.leaflet-draw-actions a {
   color: #0891b2;
+}
+
+.feature-name-editor {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: white;
+  padding: 20px;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  z-index: 10001;
+  min-width: 300px;
+}
+
+.feature-name-editor h4 {
+  margin: 0 0 12px;
+  font-size: 16px;
+  font-weight: 600;
+  color: #1a202c;
+}
+
+.feature-name-editor input {
+  width: 100%;
+  padding: 12px 16px;
+  margin-bottom: 12px;
+  border: 2px solid #e2e8f0;
+  border-radius: 8px;
+  font-size: 14px;
+  transition: all 0.2s;
+}
+
+.feature-name-editor input:focus {
+  outline: none;
+  border-color: #0891b2;
+  box-shadow: 0 0 0 3px rgba(8, 145, 178, 0.1);
+}
+
+.feature-name-editor .form-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
+}
+
+.feature-name-editor .btn-secondary {
+  border: 2px solid #e2e8f0;
+}
+
+.feature-name-editor .btn-primary {
+  border: 2px solid transparent;
 }

@@ -16,7 +16,8 @@ cityexplorer/
 │   │   ├── Sidebar.js         # Domain and layer controls
 │   │   ├── MapViewer.js       # Leaflet map with clustering
 │   │   ├── AddCityWizard.js   # Multi-step city creation wizard
-│   │   └── LayerToggle.js     # Individual layer toggle component
+│   │   ├── LayerToggle.js     # Individual layer toggle component
+│   │   └── LayerModal.js      # Add / edit layer wizard
 │   ├── utils/
 │   │   ├── s3.js              # AWS S3 operations and data processing
 │   │   ├── osm.js             # OpenStreetMap and Wikipedia API calls
@@ -26,6 +27,8 @@ cityexplorer/
 │   │   ├── App.css
 │   │   ├── Header.css
 │   │   ├── Sidebar.css
+│   │   ├── LayerModal.css
+│   │   ├── leaflet.css
 │   │   └── MapViewer.css
 │   ├── App.js                 # Main application component
 │   └── index.js               # React entry point

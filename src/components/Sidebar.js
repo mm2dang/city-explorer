@@ -125,6 +125,30 @@ const Sidebar = ({
       }
     });
     
+    // Add custom layers that aren't in layerDefinitions
+    Object.keys(availableLayers).forEach(layerName => {
+      const layer = availableLayers[layerName];
+      if (layer && layer.domain) {
+        const domain = layer.domain;
+        const isInDefinitions = layerDefinitions[domain]?.some(l => l.name === layerName);
+        
+        if (!isInDefinitions) {
+          // This is a custom layer
+          if (!layersByDomain[domain]) {
+            layersByDomain[domain] = [];
+          }
+          
+          // Check if not already added
+          if (!layersByDomain[domain].some(l => l.name === layerName)) {
+            layersByDomain[domain].push({
+              name: layerName,
+              icon: layer.icon || 'fas fa-map-marker-alt'
+            });
+          }
+        }
+      }
+    });
+    
     return layersByDomain;
   }, [layerDefinitions, availableLayers]);
 
@@ -245,7 +269,7 @@ const Sidebar = ({
 
   const hasAvailableLayers = Object.keys(availableLayersByDomain).length > 0;
   const totalLayers = Object.values(availableLayersByDomain).reduce((sum, layers) => sum + layers.length, 0);
-  const activeLaeyrsCount = Object.values(activeLayers).filter(Boolean).length;
+  const activeLayersCount = Object.values(activeLayers).filter(Boolean).length;
 
   return (
     <div className="sidebar">
@@ -277,7 +301,7 @@ const Sidebar = ({
               <div className="layers-summary">
                 <div className="summary-item">
                   <span className="summary-label">Active</span>
-                  <span className="summary-value">{activeLaeyrsCount}</span>
+                  <span className="summary-value">{activeLayersCount}</span>
                 </div>
                 <div className="summary-divider"></div>
                 <div className="summary-item">
@@ -429,6 +453,7 @@ const Sidebar = ({
         existingLayers={selectedDomain ? availableLayersByDomain[selectedDomain] || [] : []}
         onSave={handleModalSave}
         cityBoundary={selectedCity?.boundary}
+        cityName={selectedCity?.name} 
       />
     </div>
   );
