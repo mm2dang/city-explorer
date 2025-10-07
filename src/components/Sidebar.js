@@ -7,6 +7,7 @@ import '../styles/Sidebar.css';
 
 const Sidebar = ({ 
   selectedCity, 
+  cityBoundary,
   availableLayers, 
   activeLayers, 
   onLayerToggle, 
@@ -115,14 +116,18 @@ const Sidebar = ({
   const availableLayersByDomain = useMemo(() => {
     const layersByDomain = {};
     
+    // Initialize all domains with empty arrays
+    Object.keys(layerDefinitions).forEach(domain => {
+      layersByDomain[domain] = [];
+    });
+    
+    // Add available layers from definitions
     Object.entries(layerDefinitions).forEach(([domain, layers]) => {
       const availableDomainLayers = layers.filter(layer => 
         availableLayers[layer.name]
       );
       
-      if (availableDomainLayers.length > 0) {
-        layersByDomain[domain] = availableDomainLayers;
-      }
+      layersByDomain[domain] = availableDomainLayers;
     });
     
     // Add custom layers that aren't in layerDefinitions
@@ -452,7 +457,7 @@ const Sidebar = ({
         domainColor={selectedDomain ? domainColors[selectedDomain] : '#666666'}
         existingLayers={selectedDomain ? availableLayersByDomain[selectedDomain] || [] : []}
         onSave={handleModalSave}
-        cityBoundary={selectedCity?.boundary}
+        cityBoundary={cityBoundary}
         cityName={selectedCity?.name} 
       />
     </div>

@@ -470,12 +470,19 @@ export const getAvailableLayersForCity = async (cityName) => {
               } else {
                 // Custom layer - try to load metadata from the parquet file
                 try {
+                  console.log(`Loading icon for custom layer: ${layerName}`);
                   const layerFeatures = await loadLayerForEditing(cityName, domain, layerName);
-                  if (layerFeatures.length > 0 && layerFeatures[0].properties?.icon) {
-                    icon = layerFeatures[0].properties.icon;
+                  if (layerFeatures.length > 0) {
+                    // Check for icon in properties first, then fallback
+                    const storedIcon = layerFeatures[0].properties?.icon || 
+                                      layerFeatures[0].icon ||
+                                      'fas fa-map-marker-alt';
+                    icon = storedIcon;
+                    console.log(`Found icon for ${layerName}: ${icon}`);
                   }
                 } catch (error) {
                   console.warn(`Could not load metadata for custom layer ${layerName}:`, error);
+                  icon = 'fas fa-map-marker-alt';
                 }
               }
             }
@@ -669,20 +676,8 @@ export const loadCityFeatures = async (cityName, activeLayers) => {
                   const geoJsonGeometry = JSON.parse(row.geometry_coordinates);
                   
                   if (geoJsonGeometry && geoJsonGeometry.type && geoJsonGeometry.coordinates) {
-                    // For display purposes, we need Point geometry for markers
-                    if (geoJsonGeometry.type === 'Point') {
-                      geometry = geoJsonGeometry;
-                    } else {
-                      // Use turf to get centroid for non-point geometries
-                      try {
-                        const turfFeature = { type: 'Feature', geometry: geoJsonGeometry, properties: {} };
-                        const centroid = turf.centroid(turfFeature);
-                        geometry = centroid.geometry;
-                      } catch (centroidError) {
-                        console.warn(`S3: Could not compute centroid for row ${i}:`, centroidError.message);
-                        invalidGeometryCount++;
-                      }
-                    }
+                    // Use the geometry directly - it's already valid GeoJSON
+                    geometry = geoJsonGeometry;
                   } else {
                     console.warn(`S3: Invalid GeoJSON structure in row ${i}`);
                     invalidGeometryCount++;
@@ -693,34 +688,70 @@ export const loadCityFeatures = async (cityName, activeLayers) => {
                 }
               }
               
-              // Fallback to stored longitude/latitude if no geometry or centroid failed
+              // Fallback to stored longitude/latitude if no geometry
               if (!geometry && row.longitude != null && row.latitude != null) {
                 const lon = parseFloat(row.longitude);
                 const lat = parseFloat(row.latitude);
                 
-                if (!isNaN(lon) && !isNaN(lat)) {
+                if (!isNaN(lon) && !isNaN(lat) && lon >= -180 && lon <= 180 && lat >= -90 && lat <= 90) {
                   geometry = {
                     type: 'Point',
                     coordinates: [lon, lat],
                   };
+                } else {
+                  console.warn(`S3: Invalid fallback coordinates in row ${i}: [${lon}, ${lat}]`);
+                  invalidGeometryCount++;
                 }
               }
               
-              // Only add feature if we have valid point geometry
-              if (geometry && geometry.type === 'Point' &&
-                  geometry.coordinates && geometry.coordinates.length === 2 &&
-                  !isNaN(geometry.coordinates[0]) && !isNaN(geometry.coordinates[1])) {
+              // Add feature if we have valid geometry with proper coordinates
+              if (geometry && geometry.type && geometry.coordinates) {
+                // Validate coordinates based on geometry type
+                let isValid = false;
                 
-                features.push({
-                  type: 'Feature',
-                  geometry,
-                  properties: {
-                    feature_name: row.feature_name || 'Unnamed',
-                    layer_name: row.layer_name || layer.filename,
-                    domain_name: row.domain_name || domain,
-                  },
-                });
-                validFeatureCount++;
+                if (geometry.type === 'Point') {
+                  const [lon, lat] = geometry.coordinates;
+                  isValid = !isNaN(lon) && !isNaN(lat) && 
+                           lon >= -180 && lon <= 180 && 
+                           lat >= -90 && lat <= 90;
+                } else if (geometry.type === 'LineString' || geometry.type === 'MultiPoint') {
+                  isValid = Array.isArray(geometry.coordinates) && geometry.coordinates.length > 0;
+                } else if (geometry.type === 'Polygon' || geometry.type === 'MultiLineString') {
+                  isValid = Array.isArray(geometry.coordinates) && 
+                           geometry.coordinates.length > 0 &&
+                           Array.isArray(geometry.coordinates[0]);
+                } else if (geometry.type === 'MultiPolygon') {
+                  isValid = Array.isArray(geometry.coordinates) && 
+                           geometry.coordinates.length > 0 &&
+                           Array.isArray(geometry.coordinates[0]) &&
+                           Array.isArray(geometry.coordinates[0][0]);
+                }
+                
+                if (isValid) {
+                  features.push({
+                    type: 'Feature',
+                    geometry,
+                    properties: {
+                      feature_name: row.feature_name || 'Unnamed',
+                      layer_name: row.layer_name || layer.filename,
+                      domain_name: row.domain_name || domain,
+                      icon: row.icon || null
+                    },
+                  });
+                  validFeatureCount++;
+                  
+                  // Log first few valid features for debugging
+                  if (validFeatureCount <= 3) {
+                    console.log(`=== S3: Valid feature ${validFeatureCount} ===`, {
+                      type: geometry.type,
+                      coordinates: geometry.type === 'Point' ? geometry.coordinates : 'complex',
+                      properties: { feature_name: row.feature_name, layer_name: row.layer_name }
+                    });
+                  }
+                } else {
+                  console.warn(`S3: Invalid geometry validation in row ${i}:`, geometry.type);
+                  invalidGeometryCount++;
+                }
               } else {
                 invalidGeometryCount++;
               }
@@ -744,6 +775,118 @@ export const loadCityFeatures = async (cityName, activeLayers) => {
       }
     }
     
+    // Also check for custom layers that might not be in layerDefinitions
+    try {
+      const customLayersPrefix = `data/country=${normalizedCountry}/province=${normalizedProvince}/city=${normalizedCity}/`;
+      
+      let continuationToken = null;
+      do {
+        const listCommand = new ListObjectsV2Command({
+          Bucket: BUCKET_NAME,
+          Prefix: customLayersPrefix,
+          ContinuationToken: continuationToken,
+        });
+        
+        const response = await s3Client.send(listCommand);
+        
+        if (response.Contents) {
+          for (const obj of response.Contents) {
+            // Parse: data/country=X/province=Y/city=Z/domain=DOMAIN/LAYER_NAME.snappy.parquet
+            const match = obj.Key.match(/domain=([^/]+)\/([^/]+)\.snappy\.parquet$/);
+            if (match) {
+              const [, domain, layerName] = match;
+              
+              // Check if this layer is active and not already processed
+              if (activeLayerNames.includes(layerName)) {
+                // Check if it's a custom layer (not in layerDefinitions)
+                const domainLayers = layerDefinitions[domain];
+                const isPredefined = domainLayers && domainLayers.some(l => l.filename === layerName);
+                
+                if (!isPredefined) {
+                  console.log(`=== S3: Found custom layer ${layerName} in domain ${domain} ===`);
+                  
+                  // Load the custom layer using the same logic
+                  try {
+                    const command = new GetObjectCommand({
+                      Bucket: BUCKET_NAME,
+                      Key: obj.Key,
+                    });
+                    
+                    const response = await s3Client.send(command);
+                    const arrayBuffer = await streamToArrayBuffer(response.Body);
+                    const uint8Array = new Uint8Array(arrayBuffer);
+                    
+                    const wasmTable = readParquet(uint8Array);
+                    const ipcBytes = wasmTable.intoIPCStream();
+                    const arrowTable = tableFromIPC(ipcBytes);
+                    
+                    const data = [];
+                    for (let i = 0; i < arrowTable.numRows; i++) {
+                      const row = {};
+                      for (const field of arrowTable.schema.fields) {
+                        const column = arrowTable.getChild(field.name);
+                        row[field.name] = column.get(i);
+                      }
+                      data.push(row);
+                    }
+                    
+                    console.log(`=== S3: Loaded ${data.length} rows for custom layer ${layerName} ===`);
+                    
+                    for (const row of data) {
+                      let geometry = null;
+                      
+                      if (row.geometry_coordinates) {
+                        try {
+                          const geoJsonGeometry = JSON.parse(row.geometry_coordinates);
+                          if (geoJsonGeometry && geoJsonGeometry.type && geoJsonGeometry.coordinates) {
+                            geometry = geoJsonGeometry;
+                          }
+                        } catch (parseError) {
+                          console.warn(`S3: Error parsing geometry for custom layer:`, parseError.message);
+                        }
+                      }
+                      
+                      if (!geometry && row.longitude != null && row.latitude != null) {
+                        const lon = parseFloat(row.longitude);
+                        const lat = parseFloat(row.latitude);
+                        
+                        if (!isNaN(lon) && !isNaN(lat) && lon >= -180 && lon <= 180 && lat >= -90 && lat <= 90) {
+                          geometry = {
+                            type: 'Point',
+                            coordinates: [lon, lat],
+                          };
+                        }
+                      }
+                      
+                      if (geometry && geometry.type && geometry.coordinates) {
+                        features.push({
+                          type: 'Feature',
+                          geometry,
+                          properties: {
+                            feature_name: row.feature_name || 'Unnamed',
+                            layer_name: row.layer_name || layerName,
+                            domain_name: row.domain_name || domain,
+                            icon: row.icon || null
+                          },
+                        });
+                      }
+                    }
+                  } catch (customLayerError) {
+                    console.error(`=== S3: Error loading custom layer ${layerName} ===`, customLayerError);
+                  }
+                }
+              }
+            }
+          }
+        }
+        
+        continuationToken = response.NextContinuationToken;
+      } while (continuationToken);
+      
+    } catch (customLayersError) {
+      console.warn('=== S3: Error scanning for custom layers ===', customLayersError);
+    }
+    
     console.log(`=== S3: Returning total of ${features.length} features ===`);
     return features;
     
@@ -756,8 +899,103 @@ export const loadCityFeatures = async (cityName, activeLayers) => {
   }
 };
 
+const cropFeaturesByBoundary = (features, boundary) => {
+  try {
+    if (!boundary || features.length === 0) {
+      return features;
+    }
+
+    // Parse boundary if it's a string
+    const boundaryGeometry = typeof boundary === 'string' ? JSON.parse(boundary) : boundary;
+    
+    // Create a Turf polygon from the boundary
+    const boundaryPolygon = turf.polygon(boundaryGeometry.coordinates);
+    
+    const croppedFeatures = [];
+    
+    for (const feature of features) {
+      try {
+        const geometry = feature.geometry || (feature.type === 'Feature' ? feature.geometry : null);
+        
+        if (!geometry || !geometry.coordinates) {
+          continue;
+        }
+        
+        // Create Turf feature
+        const turfFeature = {
+          type: 'Feature',
+          geometry: geometry,
+          properties: feature.properties || {}
+        };
+        
+        // Check if feature intersects with boundary
+        const intersects = turf.booleanIntersects(turfFeature, boundaryPolygon);
+        
+        if (intersects) {
+          try {
+            // Crop the feature to the boundary
+            let croppedGeometry;
+            
+            if (geometry.type === 'Point') {
+              // For points, just check if they're within the boundary
+              const isWithin = turf.booleanPointInPolygon(turfFeature, boundaryPolygon);
+              if (isWithin) {
+                croppedGeometry = geometry;
+              } else {
+                continue; // Skip points outside boundary
+              }
+            } else if (geometry.type === 'LineString' || geometry.type === 'MultiLineString') {
+              // Clip line to boundary
+              const clipped = turf.lineIntersect(turfFeature, boundaryPolygon);
+              if (clipped.features.length > 0) {
+                // Use the original line if it intersects
+                // For more precise clipping, use turf.lineSplit or custom logic
+                croppedGeometry = geometry;
+              } else {
+                continue;
+              }
+            } else if (geometry.type === 'Polygon' || geometry.type === 'MultiPolygon') {
+              // Intersect polygon with boundary
+              const intersection = turf.intersect(turfFeature, boundaryPolygon);
+              if (intersection && intersection.geometry) {
+                croppedGeometry = intersection.geometry;
+              } else {
+                continue;
+              }
+            } else {
+              // For other geometry types, keep if they intersect
+              croppedGeometry = geometry;
+            }
+            
+            // Add cropped feature
+            croppedFeatures.push({
+              ...feature,
+              geometry: croppedGeometry
+            });
+            
+          } catch (cropError) {
+            console.warn('Error cropping individual feature:', cropError);
+            // If cropping fails but feature intersects, include original
+            croppedFeatures.push(feature);
+          }
+        }
+        
+      } catch (featureError) {
+        console.warn('Error processing feature for cropping:', featureError);
+      }
+    }
+    
+    console.log(`Cropped ${features.length} features to ${croppedFeatures.length} features within boundary`);
+    return croppedFeatures;
+    
+  } catch (error) {
+    console.error('Error in cropFeaturesByBoundary:', error);
+    return features; // Return original features if cropping fails
+  }
+};
+
 // Save individual layer
-export const saveLayerFeatures = async (features, country, province, city, domain, layerName) => {
+export const saveLayerFeatures = async (features, country, province, city, domain, layerName, boundary = null) => {
   try {
     await initializeWasm();
     
@@ -766,12 +1004,24 @@ export const saveLayerFeatures = async (features, country, province, city, domai
       return;
     }
 
+    // Crop features by boundary before saving
+    let featuresToSave = features;
+    if (boundary) {
+      console.log(`Cropping ${features.length} features for layer ${layerName} by city boundary...`);
+      featuresToSave = cropFeaturesByBoundary(features, boundary);
+      
+      if (featuresToSave.length === 0) {
+        console.log(`No features remain after cropping for layer ${layerName}, skipping save`);
+        return;
+      }
+    }
+
     const normalizedCountry = normalizeName(country);
     const normalizedProvince = normalizeName(province);
     const normalizedCity = normalizeName(city);
 
     // Prepare data for parquet with proper GeoJSON geometry storage
-    const data = features.map(feature => {
+    const data = featuresToSave.map(feature => {
       const geometry = feature.geometry || (feature.type === 'Feature' ? feature.geometry : null);
       
       let geometryType = null;
@@ -796,15 +1046,12 @@ export const saveLayerFeatures = async (features, country, province, city, domai
           longitude = parseFloat(geometry.coordinates[0][0][0]) || 0;
           latitude = parseFloat(geometry.coordinates[0][0][1]) || 0;
         } else if (geometry.type === 'MultiLineString' && geometry.coordinates.length > 0 && geometry.coordinates[0].length > 0) {
-          // Use first coordinate of first LineString
           longitude = parseFloat(geometry.coordinates[0][0][0]) || 0;
           latitude = parseFloat(geometry.coordinates[0][0][1]) || 0;
         } else if (geometry.type === 'MultiPolygon' && geometry.coordinates.length > 0 && geometry.coordinates[0].length > 0 && geometry.coordinates[0][0].length > 0) {
-          // Use first coordinate of first ring of first polygon
           longitude = parseFloat(geometry.coordinates[0][0][0][0]) || 0;
           latitude = parseFloat(geometry.coordinates[0][0][0][1]) || 0;
         } else {
-          // Fallback: try to compute centroid for complex geometries
           try {
             const turfFeature = { type: 'Feature', geometry, properties: {} };
             const centroid = turf.centroid(turfFeature);
@@ -847,7 +1094,7 @@ export const saveLayerFeatures = async (features, country, province, city, domai
     });
 
     await s3Client.send(command);
-    console.log(`Layer ${layerName} saved successfully with ${features.length} features`);
+    console.log(`Layer ${layerName} saved successfully with ${featuresToSave.length} features (${features.length - featuresToSave.length} cropped out)`);
   } catch (error) {
     console.error(`Error saving layer ${layerName}:`, error);
     throw error;
@@ -855,7 +1102,7 @@ export const saveLayerFeatures = async (features, country, province, city, domai
 };
 
 // Save custom layer
-export const saveCustomLayer = async (cityName, layerData) => {
+export const saveCustomLayer = async (cityName, layerData, boundary = null) => {
   try {
     await initializeWasm();
     
@@ -876,30 +1123,33 @@ export const saveCustomLayer = async (cityName, layerData) => {
     const normalizedProvince = normalizeName(province);
     const normalizedCountry = normalizeName(country);
 
-    console.log(`Saving custom layer: ${layerData.name} for ${cityName}`);
+    console.log(`Saving custom layer: ${layerData.name} for ${cityName} with icon: ${layerData.icon}`);
 
-    // Prepare features with proper structure
+    // Prepare features with proper structure INCLUDING the icon
     const features = layerData.features.map(f => ({
       type: 'Feature',
       geometry: f.geometry,
       properties: {
         feature_name: f.properties?.name || f.properties?.feature_name || layerData.name,
         layer_name: layerData.name,
-        domain_name: layerData.domain
-      }
+        domain_name: layerData.domain,
+        icon: layerData.icon
+      },
+      icon: layerData.icon
     }));
 
-    // Save using existing function
+    // Save using existing function with boundary parameter
     await saveLayerFeatures(
       features,
       country,
       province,
       city,
       layerData.domain,
-      layerData.name
+      layerData.name,
+      boundary  // Pass boundary for cropping
     );
 
-    console.log(`Custom layer ${layerData.name} saved successfully with ${features.length} features`);
+    console.log(`Custom layer ${layerData.name} saved successfully with cropped features`);
     return true;
   } catch (error) {
     console.error('Error saving custom layer:', error);
@@ -1045,7 +1295,8 @@ export const loadLayerForEditing = async (cityName, domain, layerName) => {
             name: row.feature_name || layerName,
             feature_name: row.feature_name,
             layer_name: row.layer_name || layerName,
-            domain_name: row.domain_name || domain
+            domain_name: row.domain_name || domain,
+            icon: row.icon || null
           }
         });
       }
@@ -1146,26 +1397,24 @@ export const processCityFeatures = async (cityData, country, province, city, onP
           const layerData = layerGroups[layerInfo.filename];
           
           if (layerData && layerData.features && layerData.features.length > 0) {
-            // Save layers that have features
+            // Save layers that have features WITH BOUNDARY CROPPING
             await saveLayerFeatures(
               layerData.features,
               country,
               province,
               city,
               layerData.domain,
-              layerInfo.filename
+              layerInfo.filename,
+              boundary  // Pass boundary for cropping
             );
             savedCount++;
-            console.log(`Saved layer ${layerInfo.filename} with ${layerData.features.length} features`);
+            console.log(`Saved layer ${layerInfo.filename} with cropped features`);
           } else {
-            // Layer processed but has no features - don't save, but count as complete
             console.log(`Layer ${layerInfo.filename} processed with 0 features (not saving to S3)`);
           }
           
-          // Increment counter for ALL layers (with or without features)
           processedCount++;
           
-          // Emit progress update after each layer
           if (onProgressUpdate) {
             onProgressUpdate(cityData.name, {
               processed: processedCount,
@@ -1178,15 +1427,12 @@ export const processCityFeatures = async (cityData, country, province, city, onP
 
         console.log(`Completed batch processing (${processedCount}/${totalLayers} layers processed, ${savedCount} saved)`);
 
-        // Small delay between batches
         await new Promise(resolve => setTimeout(resolve, 2000));
 
       } catch (batchError) {
         console.warn(`Error processing batch:`, batchError);
-        // Still increment counter for failed batch layers
         processedCount += batch.length;
         
-        // Update progress even on error
         if (onProgressUpdate) {
           onProgressUpdate(cityData.name, {
             processed: processedCount,
@@ -1200,7 +1446,6 @@ export const processCityFeatures = async (cityData, country, province, city, onP
 
     console.log(`Completed background processing for ${cityData.name}: ${processedCount}/${totalLayers} layers processed, ${savedCount} saved`);
     
-    // Final completion update
     if (onProgressUpdate) {
       onProgressUpdate(cityData.name, {
         processed: processedCount,

@@ -3,7 +3,8 @@ import { motion } from 'framer-motion';
 import { MapContainer, TileLayer, FeatureGroup, useMap } from 'react-leaflet';
 import { EditControl } from 'react-leaflet-draw';
 import L from 'leaflet';
-import * as shp from 'shapefile'
+import * as shp from 'shapefile';
+import proj4 from 'proj4';
 import { searchOSM, fetchWikipediaData, fetchOSMBoundary } from '../utils/osm';
 import { saveCityData, processCityFeatures, checkCityExists } from '../utils/s3';
 import { getSDGRegion } from '../utils/regions';
@@ -14,30 +15,115 @@ const MapController = ({ center, boundary, onBoundaryLoad }) => {
 
   useEffect(() => {
     if (boundary) {
+      console.log('MapController: boundary changed, fitting to bounds');
       try {
         const geoJsonLayer = L.geoJSON(boundary);
         const bounds = geoJsonLayer.getBounds();
         if (bounds.isValid()) {
-          map.fitBounds(bounds, { padding: [20, 20] });
+          map.fitBounds(bounds, { 
+            padding: [50, 50],
+            maxZoom: 15
+          });
         } else {
+          console.warn('MapController: Invalid bounds, using center');
           map.setView(center || [51.505, -0.09], 12);
         }
       } catch (error) {
-        console.error('Error fitting bounds:', error);
+        console.error('MapController: Error fitting bounds:', error);
         map.setView(center || [51.505, -0.09], 12);
       }
     } else if (center && center[0] && center[1]) {
+      console.log('MapController: No boundary, using center');
       map.setView(center, 12);
     }
   }, [center, boundary, map]);
 
   useEffect(() => {
     if (boundary && onBoundaryLoad) {
+      console.log('MapController: Calling onBoundaryLoad');
       onBoundaryLoad(map);
     }
   }, [boundary, onBoundaryLoad, map]);
 
   return null;
+};
+
+// Helper function to reproject a geometry from any CRS to WGS84
+const reprojectGeometry = (geometry, prjWkt, crsFromGeoJSON = null) => {
+  // Define WGS84 (the target)
+  const wgs84 = 'EPSG:4326';
+  
+  // If no PRJ file provided, try to detect common projections
+  let sourceCRS = null;
+  
+  // First, try to use provided PRJ or GeoJSON CRS
+  if (prjWkt) {
+    try {
+      sourceCRS = prjWkt;
+    } catch (e) {
+      console.warn('Could not parse PRJ file:', e);
+    }
+  } else if (crsFromGeoJSON) {
+    try {
+      sourceCRS = crsFromGeoJSON;
+    } catch (e) {
+      console.warn('Could not parse GeoJSON CRS:', e);
+    }
+  }
+  
+  // If we couldn't get a CRS from PRJ or GeoJSON, try to detect it
+  if (!sourceCRS) {
+    // Check coordinate ranges to detect common projections
+    const firstCoord = geometry.type === 'Polygon' 
+      ? geometry.coordinates[0][0] 
+      : geometry.coordinates[0][0][0];
+    
+    const x = firstCoord[0];
+    const y = firstCoord[1];
+    
+    // If coordinates are already in lat/lon range, assume WGS84
+    if (x >= -180 && x <= 180 && y >= -90 && y <= 90) {
+      console.log('Coordinates appear to be in WGS84, no reprojection needed');
+      return geometry;
+    }
+    
+    // Default to WGS 1984 UTM Zone 19S for shapefile without PRJ
+    // This is EPSG:32719
+    console.warn('No CRS information provided. Assuming WGS 1984 UTM Zone 19S (EPSG:32719)');
+    sourceCRS = 'EPSG:32719';
+  }
+  
+  // Function to transform a coordinate
+  const transformCoord = (coord) => {
+    try {
+      return proj4(sourceCRS, wgs84, coord);
+    } catch (e) {
+      console.error('Error transforming coordinate:', coord, e);
+      throw e;
+    }
+  };
+  
+  // Function to transform a ring of coordinates
+  const transformRing = (ring) => {
+    return ring.map(coord => transformCoord(coord));
+  };
+  
+  // Transform based on geometry type
+  if (geometry.type === 'Polygon') {
+    return {
+      type: 'Polygon',
+      coordinates: geometry.coordinates.map(ring => transformRing(ring))
+    };
+  } else if (geometry.type === 'MultiPolygon') {
+    return {
+      type: 'MultiPolygon',
+      coordinates: geometry.coordinates.map(polygon => 
+        polygon.map(ring => transformRing(ring))
+      )
+    };
+  }
+  
+  return geometry;
 };
 
 const AddCityWizard = ({ editingCity, onComplete, onCancel }) => {
@@ -174,24 +260,49 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel }) => {
   };
 
   const handleBoundaryLoad = useCallback((map) => {
-    if (boundary && drawRef.current) {
+    if (boundary && drawRef.current && map) {
+      console.log('Loading boundary on map:', boundary);
+      console.log('Boundary coordinates sample:', boundary.coordinates);
       drawRef.current.clearLayers();
-      const geoJsonLayer = L.geoJSON(boundary, {
-        style: {
-          color: '#0891b2',
-          weight: 2,
-          fillOpacity: 0.2,
-          interactive: false
-        }
-      });
-      drawRef.current.addLayer(geoJsonLayer);
+      
       try {
+        // Wrap the geometry in a Feature for proper GeoJSON handling
+        const feature = {
+          type: 'Feature',
+          geometry: boundary,
+          properties: {}
+        };
+        
+        const geoJsonLayer = L.geoJSON(feature, {
+          style: {
+            color: '#0891b2',
+            weight: 2,
+            fillOpacity: 0.2,
+            interactive: false
+          }
+        });
+        
+        drawRef.current.addLayer(geoJsonLayer);
+        
         const bounds = geoJsonLayer.getBounds();
+        console.log('Bounds object:', {
+          isValid: bounds.isValid(),
+          southWest: bounds.getSouthWest(),
+          northEast: bounds.getNorthEast(),
+          center: bounds.getCenter()
+        });
+        
         if (bounds.isValid()) {
-          map.fitBounds(bounds, { padding: [20, 20] });
+          console.log('Fitting bounds:', bounds);
+          map.fitBounds(bounds, { 
+            padding: [50, 50],
+            maxZoom: 15 
+          });
+        } else {
+          console.warn('Invalid bounds for boundary');
         }
       } catch (error) {
-        console.error('Error fitting bounds:', error);
+        console.error('Error displaying boundary:', error);
       }
     }
   }, [boundary]);
@@ -204,17 +315,35 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel }) => {
     setIsProcessing(true);
 
     try {
-      const file = files[0];
-      const fileName = file.name.toLowerCase();
-      const fileExt = fileName.split('.').pop();
+      // Find the primary file (GeoJSON or SHP)
+      const geojsonFile = files.find(f => {
+        const name = f.name.toLowerCase();
+        return name.endsWith('.geojson') || name.endsWith('.json');
+      });
+      
+      const shpFile = files.find(f => f.name.toLowerCase().endsWith('.shp'));
 
-      // Handle GeoJSON files
-      if (fileExt === 'geojson' || fileExt === 'json') {
+      if (geojsonFile) {
+        // Handle GeoJSON files
         const reader = new FileReader();
         reader.onload = (event) => {
           try {
             const geojson = JSON.parse(event.target.result);
             let geometry;
+            let crsInfo = null;
+
+            // Extract CRS information if available
+            if (geojson.crs && geojson.crs.properties && geojson.crs.properties.name) {
+              const crsName = geojson.crs.properties.name;
+              // Handle URN format: urn:ogc:def:crs:EPSG::32719
+              if (crsName.includes('EPSG')) {
+                const epsgMatch = crsName.match(/EPSG[:\s]+(\d+)/i);
+                if (epsgMatch) {
+                  crsInfo = `EPSG:${epsgMatch[1]}`;
+                  console.log('Found CRS in GeoJSON:', crsInfo);
+                }
+              }
+            }
 
             // Handle FeatureCollection
             if (geojson.type === 'FeatureCollection') {
@@ -244,7 +373,36 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel }) => {
               setIsProcessing(false);
               return;
             }
+
+            // Validate coordinates structure
+            if (!geometry.coordinates || geometry.coordinates.length === 0) {
+              setUploadError('GeoJSON geometry has invalid or empty coordinates');
+              setIsProcessing(false);
+              return;
+            }
+
+            console.log('Successfully loaded GeoJSON boundary:', geometry);
+            
+            // Reproject if CRS is not WGS84
+            if (crsInfo && crsInfo !== 'EPSG:4326') {
+              try {
+                geometry = reprojectGeometry(geometry, null, crsInfo);
+                console.log('Reprojected GeoJSON boundary to WGS84:', geometry);
+              } catch (reprojError) {
+                console.error('Reprojection error:', reprojError);
+                setUploadError(`Error reprojecting coordinates: ${reprojError.message}`);
+                setIsProcessing(false);
+                return;
+              }
+            }
+            
             setBoundary(geometry);
+            
+            // Clear any existing drawn layers
+            if (drawRef.current) {
+              drawRef.current.clearLayers();
+            }
+            
             setIsProcessing(false);
           } catch (error) {
             console.error('Error parsing GeoJSON:', error);
@@ -252,22 +410,36 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel }) => {
             setIsProcessing(false);
           }
         };
-        reader.readAsText(file);
+        reader.onerror = () => {
+          setUploadError('Error reading GeoJSON file');
+          setIsProcessing(false);
+        };
+        reader.readAsText(geojsonFile);
       }
-      // Handle Shapefile formats
-      else if (fileExt === 'shp') {
+      else if (shpFile) {
+        // Handle Shapefile formats
         try {
-          const arrayBuffer = await file.arrayBuffer();
+          const shpBuffer = await shpFile.arrayBuffer();
           
-          // Try to find associated .dbf file if multiple files were selected
+          // Try to find associated .dbf file
           let dbfBuffer = null;
           const dbfFile = files.find(f => f.name.toLowerCase().endsWith('.dbf'));
           if (dbfFile) {
             dbfBuffer = await dbfFile.arrayBuffer();
           }
 
+          // Try to find associated .prj file for coordinate system info
+          let prjWkt = null;
+          const prjFile = files.find(f => f.name.toLowerCase().endsWith('.prj'));
+          if (prjFile) {
+            prjWkt = await prjFile.text();
+            console.log('Found PRJ file:', prjWkt);
+          } else {
+            console.warn('No PRJ file found - will assume WGS 1984 UTM Zone 19S (EPSG:32719)');
+          }
+
           // Read the shapefile
-          const geojson = await shp.read(arrayBuffer, dbfBuffer);
+          const geojson = await shp.read(shpBuffer, dbfBuffer);
           
           if (!geojson || !geojson.features || geojson.features.length === 0) {
             setUploadError('Shapefile is empty or invalid');
@@ -276,7 +448,7 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel }) => {
           }
 
           // Extract geometry from first feature
-          const geometry = geojson.features[0].geometry;
+          let geometry = geojson.features[0].geometry;
           
           if (!['Polygon', 'MultiPolygon'].includes(geometry.type)) {
             setUploadError('Shapefile must contain Polygon or MultiPolygon geometry');
@@ -284,27 +456,61 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel }) => {
             return;
           }
 
+          // Validate coordinates
+          if (!geometry.coordinates || geometry.coordinates.length === 0) {
+            setUploadError('Shapefile geometry has invalid or empty coordinates');
+            setIsProcessing(false);
+            return;
+          }
+
+          console.log('Original Shapefile boundary:', geometry);
+          
+          // Reproject geometry to WGS84 if needed
+          try {
+            geometry = reprojectGeometry(geometry, prjWkt, null);
+            console.log('Reprojected boundary to WGS84:', geometry);
+          } catch (reprojError) {
+            console.error('Reprojection error:', reprojError);
+            setUploadError(`Error reprojecting coordinates: ${reprojError.message}`);
+            setIsProcessing(false);
+            return;
+          }
+
           setBoundary(geometry);
+          
+          // Clear any existing drawn layers
+          if (drawRef.current) {
+            drawRef.current.clearLayers();
+          }
+          
           setIsProcessing(false);
         } catch (error) {
           console.error('Error parsing Shapefile:', error);
-          setUploadError('Error parsing Shapefile. Please ensure the file is valid.');
+          setUploadError(`Error parsing Shapefile: ${error.message}. Please ensure the file is valid.`);
           setIsProcessing(false);
         }
       }
-      // Handle other Shapefile component files
-      else if (['shx', 'dbf', 'prj', 'cpg', 'qmd'].includes(fileExt)) {
-        setUploadError(
-          `You've selected a .${fileExt} file. Please select the .shp file instead. `
-        );
-        setIsProcessing(false);
-      } else {
-        setUploadError(`Unsupported file format: .${fileExt}. Please upload a GeoJSON (.geojson, .json) or Shapefile (.shp).`);
+      else {
+        // Check if user selected component files without the main file
+        const fileExtensions = files.map(f => f.name.toLowerCase().split('.').pop());
+        
+        if (fileExtensions.some(ext => ['shx', 'dbf', 'prj', 'cpg', 'qmd'].includes(ext))) {
+          setUploadError(
+            'You selected Shapefile component files. Please also select the .shp file ' +
+            '(you can select multiple files at once).'
+          );
+        } else {
+          const uploadedExt = fileExtensions[0];
+          setUploadError(
+            `Unsupported file format: .${uploadedExt}. ` +
+            'Please upload a GeoJSON (.geojson, .json) or Shapefile (.shp with optional .dbf, .shx files).'
+          );
+        }
         setIsProcessing(false);
       }
     } catch (error) {
       console.error('Error processing file:', error);
-      setUploadError('Error processing file. Please try again.');
+      setUploadError(`Error processing file: ${error.message}`);
       setIsProcessing(false);
     }
 
@@ -524,12 +730,19 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel }) => {
                 Upload File
                 <input
                   type="file"
-                  accept=".geojson,.json,.shp"
+                  accept=".geojson,.json,.shp,.shx,.dbf,.prj"
                   onChange={handleFileUpload}
+                  multiple
                   style={{ display: 'none' }}
                 />
               </label>
               <span className="or-text">or draw on map</span>
+            </div>
+            <div className="boundary-controls">
+              <div style={{ fontSize: '12px', color: '#666', marginTop: '8px' }}>
+                  <i className="fas fa-info-circle"></i> Upload GeoJSON (.geojson, .json) or Shapefile (.shp + optional .dbf, .shx, .prj). 
+                  For shapefiles, select all files at once. If no .prj file is provided, assumes WGS 1984 UTM Zone 19S (EPSG:32719).
+              </div>
             </div>
             <div className="map-container-wizard">
               <MapContainer

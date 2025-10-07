@@ -31,6 +31,7 @@ const domainColors = {
 const App = () => {
   const [cities, setCities] = useState([]);
   const [selectedCity, setSelectedCity] = useState(null);
+  const [selectedCityBoundary, setSelectedCityBoundary] = useState(null);
   const [editingCity, setEditingCity] = useState(null);
   const [isWizardOpen, setIsWizardOpen] = useState(false);
   const [activeLayers, setActiveLayers] = useState({});
@@ -143,22 +144,38 @@ const App = () => {
       console.log(`=== APP: City selection requested: ${city.name} ===`);
       
       setSelectedCity(city);
+      
+      // Parse and store the boundary for this city
+      let boundary = null;
+      if (city.boundary) {
+        try {
+          boundary = typeof city.boundary === 'string' ? JSON.parse(city.boundary) : city.boundary;
+          console.log('=== APP: City boundary parsed successfully ===');
+        } catch (parseError) {
+          console.warn('=== APP: Error parsing city boundary ===', parseError);
+        }
+      }
+      setSelectedCityBoundary(boundary);
+      
       setActiveLayers({});
       setAvailableLayers({});
       setError(null);
       
       console.log(`=== APP: Loading available layers for ${city.name} ===`);
-      const availableLayers = await getAvailableLayersForCity(city.name);
-      const layerCount = Object.keys(availableLayers).length;
+      const loadedAvailableLayers = await getAvailableLayersForCity(city.name);
+      const layerCount = Object.keys(loadedAvailableLayers).length;
       
       console.log(`=== APP: Available layers loaded ===`, {
         city: city.name,
         layerCount: layerCount,
-        layers: availableLayers
+        layers: loadedAvailableLayers
       });
       
-      setAvailableLayers(availableLayers);
-      setActiveLayers({});
+      setAvailableLayers(loadedAvailableLayers);
+      
+      // Toggle all available layers on by default
+      const allActive = Object.fromEntries(Object.keys(loadedAvailableLayers).map(layerName => [layerName, true]));
+      setActiveLayers(allActive);
       
       if (layerCount === 0) {
         console.log(`=== APP: No layers found for ${city.name} - may still be processing ===`);
@@ -192,6 +209,7 @@ const App = () => {
         
         if (selectedCity?.name === cityName) {
           setSelectedCity(null);
+          setSelectedCityBoundary(null);
           setActiveLayers({});
           setAvailableLayers({});
         }
@@ -336,14 +354,24 @@ const App = () => {
     if (!selectedCity) return;
     
     try {
-      console.log('=== APP: Saving layer ===', layerData);
+      console.log('=== APP: Saving layer with boundary cropping ===', {
+        layer: layerData.name,
+        featureCount: layerData.features?.length,
+        hasBoundary: !!selectedCityBoundary
+      });
       
-      // Save the layer to S3
-      await saveCustomLayer(selectedCity.name, layerData);
+      // Save the layer to S3 with boundary cropping
+      await saveCustomLayer(selectedCity.name, layerData, selectedCityBoundary);
       
       // Refresh available layers
       const updatedLayers = await getAvailableLayersForCity(selectedCity.name);
       setAvailableLayers(updatedLayers);
+      
+      // Ensure new layer is toggled on
+      setActiveLayers(prev => ({
+        ...prev,
+        [layerData.name]: true
+      }));
       
       console.log('=== APP: Layer saved successfully ===');
       
@@ -359,7 +387,7 @@ const App = () => {
       console.error('=== APP: Error saving layer ===', error);
       throw error;
     }
-  }, [selectedCity]);
+  }, [selectedCity, selectedCityBoundary]);
 
   const handleLayerDelete = useCallback(async (domain, layerName) => {
     if (!selectedCity) return;
@@ -437,6 +465,7 @@ const App = () => {
         {selectedCity && (
           <Sidebar
             selectedCity={selectedCity}
+            cityBoundary={selectedCityBoundary}
             activeLayers={activeLayers}
             availableLayers={availableLayers}
             onLayerToggle={handleLayerToggle}
@@ -451,6 +480,7 @@ const App = () => {
           activeLayers={activeLayers}
           domainColors={domainColors}
           loadCityFeatures={loadCityFeatures}
+          availableLayers={availableLayers}
         />
       </div>
 

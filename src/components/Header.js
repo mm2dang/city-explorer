@@ -18,20 +18,19 @@ const Header = ({ cities, selectedCity, onCitySelect, onAddCity, onEditCity, onD
   };
 
   const handleCitySelect = (city) => {
-    const hasDataLayers = cityDataStatus[city.name];
     const progress = processingProgress?.[city.name];
     const isProcessing = progress && progress.status === 'processing';
     
-    // Only allow selection if city has data and is not processing
-    if (hasDataLayers && !isProcessing) {
+    // Allow selection if the city is not processing
+    if (!isProcessing) {
       onCitySelect(city);
       setShowDropdown(false);
     }
   };
 
   const getStatusCounts = () => {
-    const ready = cities.filter(city => cityDataStatus[city.name]).length;
-    const processing = Object.keys(processingProgress || {}).length;
+    const ready = cityDataStatus ? cities.filter(city => cityDataStatus[city.name]).length : 0;
+    const processing = processingProgress ? Object.keys(processingProgress).length : 0;
     
     return { ready, processing, total: cities.length };
   };
@@ -183,17 +182,17 @@ const Header = ({ cities, selectedCity, onCitySelect, onAddCity, onEditCity, onD
                       </button>
                     </div>
                     {sortedCities.map((city) => {
-                      const hasDataLayers = cityDataStatus[city.name];
+                      const hasDataLayers = cityDataStatus ? cityDataStatus[city.name] : false;
                       const progress = processingProgress?.[city.name];
                       const isProcessing = progress && progress.status === 'processing';
                       
                       return (
                         <div key={city.name} className="dropdown-item-container">
                           <motion.div
-                            className={`dropdown-item ${selectedCity?.name === city.name ? 'selected' : ''} ${!hasDataLayers || isProcessing ? 'disabled' : ''}`}
+                            className={`dropdown-item ${selectedCity?.name === city.name ? 'selected' : ''} ${isProcessing ? 'disabled' : ''}`}
                             onClick={() => handleCitySelect(city)}
-                            whileHover={hasDataLayers && !isProcessing ? { backgroundColor: '#f0f9ff' } : {}}
-                            style={{ cursor: hasDataLayers && !isProcessing ? 'pointer' : 'not-allowed', opacity: hasDataLayers && !isProcessing ? 1 : 0.6 }}
+                            whileHover={!isProcessing ? { backgroundColor: '#f0f9ff' } : {}}
+                            style={{ cursor: !isProcessing ? 'pointer' : 'not-allowed', opacity: !isProcessing ? 1 : 0.6 }}
                           >
                             <div className="city-info">
                               <div className="city-header">
@@ -216,7 +215,6 @@ const Header = ({ cities, selectedCity, onCitySelect, onAddCity, onEditCity, onD
                                 </div>
                               </div>
                               
-                              {/* Population and Size row */}
                               {(city.population || city.size) && (
                                 <div className="city-meta-row">
                                   {city.population && (
@@ -234,7 +232,6 @@ const Header = ({ cities, selectedCity, onCitySelect, onAddCity, onEditCity, onD
                                 </div>
                               )}
                               
-                              {/* Processing Status row */}
                               <div className="city-status-row">
                                 <span className={`status-label ${isProcessing ? 'processing' : hasDataLayers ? 'ready' : 'pending'}`}>
                                   <i className={`fas fa-${isProcessing ? 'spinner fa-spin' : hasDataLayers ? 'check-circle' : 'clock'}`}></i>
@@ -242,15 +239,12 @@ const Header = ({ cities, selectedCity, onCitySelect, onAddCity, onEditCity, onD
                                 </span>
                               </div>
                               
-                              {/* Progress bar (only shown when processing) */}
                               {isProcessing && progress && (
                                 <div className="processing-status">
                                   <div className="progress-bar">
                                     <div 
                                       className="progress-fill" 
-                                      style={{ 
-                                        width: `${Math.min((progress.processed / progress.total) * 100, 100)}%` 
-                                      }}
+                                      style={{ width: `${Math.min((progress.processed / progress.total) * 100, 100)}%` }}
                                     />
                                   </div>
                                   <small className="progress-text">
@@ -262,7 +256,7 @@ const Header = ({ cities, selectedCity, onCitySelect, onAddCity, onEditCity, onD
                                 </div>
                               )}
                             </div>
-                            </motion.div>
+                          </motion.div>
                         </div>
                       );
                     })}
@@ -286,6 +280,18 @@ const Header = ({ cities, selectedCity, onCitySelect, onAddCity, onEditCity, onD
       </div>
     </header>
   );
+};
+
+Header.defaultProps = {
+  cities: [],
+  cityDataStatus: {},
+  processingProgress: {},
+  selectedCity: null,
+  onCitySelect: () => {},
+  onAddCity: () => {},
+  onEditCity: () => {},
+  onDeleteCity: () => {},
+  isLoading: false,
 };
 
 export default Header;
