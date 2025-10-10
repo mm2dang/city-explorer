@@ -251,6 +251,21 @@ const App = () => {
       setIsWizardOpen(false);
       setEditingCity(null);
       
+      // If no progress update callback (user skipped feature processing), just refresh and exit
+      if (!onProgressUpdate) {
+        console.log('=== APP: Skipping feature processing, refreshing cities list ===');
+        const { cities: updatedCities, statusMap } = await loadAllCities();
+        setCities(updatedCities);
+        setCityDataStatus(statusMap);
+        
+        alert(`${newCity.name} saved successfully!\n\n` +
+              `• City boundary saved\n` +
+              `• Feature processing skipped\n` +
+              `• You can add custom layers or process features later`);
+        
+        return;
+      }
+      
       const layerDefinitions = {
         mobility: 8,
         governance: 3,

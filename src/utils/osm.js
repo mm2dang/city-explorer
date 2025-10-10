@@ -157,11 +157,11 @@ export const fetchWikipediaData = async (cityName) => {
       });
 
       const wikitext = response.data.parse?.wikitext['*'];
-      if (!wikitext) return { population: null, size: null };
+      if (!wikitext) return { population: null, size: null, url: null };
 
       // Extract infobox with proper nested brace handling
       const startIndex = wikitext.indexOf('{{Infobox');
-      if (startIndex === -1) return { population: null, size: null };
+      if (startIndex === -1) return { population: null, size: null, url: null };
 
       let braceCount = 0;
       let i = startIndex;
@@ -221,10 +221,14 @@ export const fetchWikipediaData = async (cityName) => {
         }
       }
 
-      return { population, size };
+      // Create Wikipedia URL
+      const encodedTitle = encodeURIComponent(title.replace(/ /g, '_'));
+      const url = `https://en.wikipedia.org/wiki/${encodedTitle}`;
+
+      return { population, size, url };
     } catch (error) {
       console.warn(`Error fetching Wikipedia data for ${title}:`, error);
-      return { population: null, size: null };
+      return { population: null, size: null, url: null };
     }
   };
 
@@ -235,7 +239,7 @@ export const fetchWikipediaData = async (cityName) => {
     try {
       if (await checkWikipediaPage(variation)) {
         const data = await fetchPageData(variation);
-        if (data.population || data.size) {
+        if (data.population || data.size || data.url) {
           console.log(`Found Wikipedia data for ${variation}:`, data);
           return data;
         }
@@ -247,7 +251,7 @@ export const fetchWikipediaData = async (cityName) => {
   }
 
   console.log(`No Wikipedia data found for ${cityName}`);
-  return { population: null, size: null };
+  return { population: null, size: null, url: null };
 };
 
 // Live feature processing for immediate display

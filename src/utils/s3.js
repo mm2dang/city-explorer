@@ -1,4 +1,4 @@
-import { S3Client, ListObjectsV2Command, GetObjectCommand, PutObjectCommand, DeleteObjectsCommand } from '@aws-sdk/client-s3';
+import { S3Client, ListObjectsV2Command, GetObjectCommand, PutObjectCommand, DeleteObjectsCommand, CopyObjectCommand } from '@aws-sdk/client-s3';
 import { readParquet, writeParquet, Table, WriterPropertiesBuilder, Compression } from 'parquet-wasm';
 import { tableFromArrays, tableToIPC, tableFromIPC } from 'apache-arrow';
 import * as turf from '@turf/turf';
@@ -67,7 +67,13 @@ const s3Client = new S3Client({
   },
 });
 
-const BUCKET_NAME = 'veraset-data-qoli-dev';
+const BUCKET_NAME = process.env.REACT_APP_S3_BUCKET_NAME;
+
+// Optional: Add validation to ensure the bucket name is defined
+if (!process.env.REACT_APP_S3_BUCKET_NAME) {
+  console.error('REACT_APP_S3_BUCKET_NAME is not defined in the .env file');
+  throw new Error('S3 bucket name is not configured');
+}
 
 // Helper function to normalize names (lowercase, replace spaces with underscores)
 const normalizeName = (name) => {
@@ -393,6 +399,111 @@ export const saveCityData = async (cityData, country, province, city) => {
     console.log('City data saved to population bucket successfully');
   } catch (error) {
     console.error('Error saving city data to population bucket:', error);
+    throw error;
+  }
+};
+
+export const moveCityData = async (oldCountry, oldProvince, oldCity, newCountry, newProvince, newCity) => {
+  try {
+    console.log(`Moving city data from ${oldCountry}/${oldProvince}/${oldCity} to ${newCountry}/${newProvince}/${newCity}`);
+    
+    const oldNormalizedCountry = normalizeName(oldCountry);
+    const oldNormalizedProvince = normalizeName(oldProvince);
+    const oldNormalizedCity = normalizeName(oldCity);
+    
+    const newNormalizedCountry = normalizeName(newCountry);
+    const newNormalizedProvince = normalizeName(newProvince);
+    const newNormalizedCity = normalizeName(newCity);
+    
+    // Don't move if paths are the same
+    if (oldNormalizedCountry === newNormalizedCountry && 
+        oldNormalizedProvince === newNormalizedProvince && 
+        oldNormalizedCity === newNormalizedCity) {
+      console.log('Source and destination are the same, skipping move');
+      return;
+    }
+    
+    const objectsToCopy = [];
+    const objectsToDelete = [];
+    
+    // Find all data layer files
+    const dataPrefix = `data/country=${oldNormalizedCountry}/province=${oldNormalizedProvince}/city=${oldNormalizedCity}/`;
+    console.log(`Scanning data prefix: ${dataPrefix}`);
+    
+    let continuationToken = null;
+    do {
+      const listCommand = new ListObjectsV2Command({
+        Bucket: BUCKET_NAME,
+        Prefix: dataPrefix,
+        ContinuationToken: continuationToken,
+      });
+      
+      const response = await s3Client.send(listCommand);
+      
+      if (response.Contents && response.Contents.length > 0) {
+        response.Contents.forEach(obj => {
+          // Extract the domain and layer name from the key
+          const match = obj.Key.match(/domain=([^/]+)\/(.+)$/);
+          if (match) {
+            const [, domain, fileName] = match;
+            const newKey = `data/country=${newNormalizedCountry}/province=${newNormalizedProvince}/city=${newNormalizedCity}/domain=${domain}/${fileName}`;
+            
+            objectsToCopy.push({
+              oldKey: obj.Key,
+              newKey: newKey
+            });
+            objectsToDelete.push({ Key: obj.Key });
+            
+            console.log(`Will copy: ${obj.Key} -> ${newKey}`);
+          }
+        });
+      }
+      
+      continuationToken = response.NextContinuationToken;
+    } while (continuationToken);
+    
+    console.log(`Found ${objectsToCopy.length} data files to move`);
+    
+    // Copy all files to new location
+    for (const { oldKey, newKey } of objectsToCopy) {
+      try {
+        const copyCommand = new CopyObjectCommand({
+          Bucket: BUCKET_NAME,
+          CopySource: `${BUCKET_NAME}/${oldKey}`,
+          Key: newKey,
+        });
+        
+        await s3Client.send(copyCommand);
+        console.log(`Copied: ${oldKey} -> ${newKey}`);
+      } catch (copyError) {
+        console.error(`Error copying ${oldKey}:`, copyError);
+        throw copyError;
+      }
+    }
+    
+    // Delete old files
+    if (objectsToDelete.length > 0) {
+      const BATCH_SIZE = 1000;
+      
+      for (let i = 0; i < objectsToDelete.length; i += BATCH_SIZE) {
+        const batch = objectsToDelete.slice(i, i + BATCH_SIZE);
+        
+        const deleteCommand = new DeleteObjectsCommand({
+          Bucket: BUCKET_NAME,
+          Delete: {
+            Objects: batch,
+            Quiet: false,
+          },
+        });
+        
+        await s3Client.send(deleteCommand);
+        console.log(`Deleted batch of ${batch.length} old files`);
+      }
+    }
+    
+    console.log(`Successfully moved all data for city`);
+  } catch (error) {
+    console.error('Error moving city data:', error);
     throw error;
   }
 };
@@ -1004,8 +1115,14 @@ export const saveLayerFeatures = async (features, country, province, city, domai
       return;
     }
 
-    // Crop features by boundary before saving
+    const normalizedCountry = normalizeName(country);
+    const normalizedProvince = normalizeName(province);
+    const normalizedCity = normalizeName(city);
+
     let featuresToSave = features;
+    
+    // Only crop if boundary is provided (for automated processing)
+    // If boundary is null, features are already cropped (manual uploads)
     if (boundary) {
       console.log(`Cropping ${features.length} features for layer ${layerName} by city boundary...`);
       featuresToSave = cropFeaturesByBoundary(features, boundary);
@@ -1014,11 +1131,11 @@ export const saveLayerFeatures = async (features, country, province, city, domai
         console.log(`No features remain after cropping for layer ${layerName}, skipping save`);
         return;
       }
+      
+      console.log(`After cropping: ${featuresToSave.length} features remain (${features.length - featuresToSave.length} removed)`);
+    } else {
+      console.log(`Using pre-cropped features for layer ${layerName}: ${featuresToSave.length} features`);
     }
-
-    const normalizedCountry = normalizeName(country);
-    const normalizedProvince = normalizeName(province);
-    const normalizedCity = normalizeName(city);
 
     // Prepare data for parquet with proper GeoJSON geometry storage
     const data = featuresToSave.map(feature => {
@@ -1066,13 +1183,13 @@ export const saveLayerFeatures = async (features, country, province, city, domai
       }
       
       return {
-        feature_name: feature.properties?.name || feature.feature_name || null,
+        feature_name: feature.properties?.name || feature.properties?.feature_name || feature.feature_name || null,
         geometry_type: geometryType,
         longitude: longitude,
         latitude: latitude,
         geometry_coordinates: geometryCoordinates,
-        layer_name: feature.layer_name || layerName,
-        domain_name: feature.domain_name || domain,
+        layer_name: feature.layer_name || feature.properties?.layer_name || layerName,
+        domain_name: feature.domain_name || feature.properties?.domain_name || domain,
         icon: feature.icon || feature.properties?.icon || null
       };
     });
@@ -1094,7 +1211,12 @@ export const saveLayerFeatures = async (features, country, province, city, domai
     });
 
     await s3Client.send(command);
-    console.log(`Layer ${layerName} saved successfully with ${featuresToSave.length} features (${features.length - featuresToSave.length} cropped out)`);
+    
+    if (boundary) {
+      console.log(`Layer ${layerName} saved successfully with ${featuresToSave.length} features (${features.length - featuresToSave.length} cropped out)`);
+    } else {
+      console.log(`Layer ${layerName} saved successfully with ${featuresToSave.length} pre-cropped features`);
+    }
   } catch (error) {
     console.error(`Error saving layer ${layerName}:`, error);
     throw error;
@@ -1124,6 +1246,7 @@ export const saveCustomLayer = async (cityName, layerData, boundary = null) => {
     const normalizedCountry = normalizeName(country);
 
     console.log(`Saving custom layer: ${layerData.name} for ${cityName} with icon: ${layerData.icon}`);
+    console.log(`Initial feature count: ${layerData.features.length}`);
 
     // Prepare features with proper structure INCLUDING the icon
     const features = layerData.features.map(f => ({
@@ -1138,7 +1261,19 @@ export const saveCustomLayer = async (cityName, layerData, boundary = null) => {
       icon: layerData.icon
     }));
 
-    // Save using existing function with boundary parameter
+    console.log(`Prepared ${features.length} features for saving`);
+
+    // IMPORTANT: Features are already cropped in LayerModal.js before being passed here
+    // We should NOT crop them again as it may cause issues with already-cropped geometries
+    // Just save them directly
+    
+    // However, we still want to validate that we have features to save
+    if (features.length === 0) {
+      console.warn(`No features to save for layer ${layerData.name}`);
+      throw new Error('No features to save. All features may have been outside the city boundary.');
+    }
+
+    // Save directly without additional cropping since LayerModal already handled it
     await saveLayerFeatures(
       features,
       country,
@@ -1146,10 +1281,10 @@ export const saveCustomLayer = async (cityName, layerData, boundary = null) => {
       city,
       layerData.domain,
       layerData.name,
-      boundary  // Pass boundary for cropping
+      null  // Pass null for boundary since features are already cropped
     );
 
-    console.log(`Custom layer ${layerData.name} saved successfully with cropped features`);
+    console.log(`Custom layer ${layerData.name} saved successfully with ${features.length} features`);
     return true;
   } catch (error) {
     console.error('Error saving custom layer:', error);
