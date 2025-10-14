@@ -1,49 +1,65 @@
 .header {
   background: linear-gradient(90deg, #0891b2 0%, #14b8a6 100%);
-  height: 80px;
+  min-height: auto;
+  padding: 16px 32px;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
   z-index: 100;
 }
 
-.header-content {
+.header-main-content {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 100%;
-  padding: 0 32px;
-  max-width: 1400px;
+  padding: 16px 32px;
+  max-width: 100%;
+  width: 100%;
   margin: 0 auto;
 }
 
 .app-title {
   display: flex;
+  flex-direction: row;
   align-items: center;
-  gap: 12px;
+  gap: 24px;
   color: white;
+  flex-shrink: 0;
 }
 
-.app-title i {
+.title-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+.title-row i {
   font-size: 28px;
 }
 
-.app-title h1 {
+.title-row h1 {
   font-size: 28px;
   font-weight: 700;
   letter-spacing: -0.5px;
+  margin: 0;
 }
 
 .status-summary {
-  margin-left: 12px;
+  margin-left: 0;
+  flex-shrink: 0;
+  align-self: center;
 }
 
 .status-summary small {
   opacity: 0.9;
+  font-size: 13px;
 }
 
 .header-controls {
   display: flex;
   align-items: center;
   gap: 16px;
+  flex-shrink: 0;
+  margin-left: auto;
 }
 
 .city-selector {
@@ -514,10 +530,10 @@
 
 @media (max-width: 768px) {
   .header-content {
-    padding: 0 20px;
+    padding: 16px 20px;
   }
   
-  .app-title h1 {
+  .title-row h1 {
     font-size: 24px;
   }
   

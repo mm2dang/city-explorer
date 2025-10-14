@@ -5,12 +5,12 @@ import LayerModal from './LayerModal';
 import { exportLayer, exportAllLayers } from '../utils/exportUtils';
 import '../styles/Sidebar.css';
 
-const Sidebar = ({ 
-  selectedCity, 
+const Sidebar = ({
+  selectedCity,
   cityBoundary,
-  availableLayers, 
-  activeLayers, 
-  onLayerToggle, 
+  availableLayers,
+  activeLayers,
+  onLayerToggle,
   domainColors,
   onLayerSave,
   onLayerDelete
@@ -21,6 +21,7 @@ const Sidebar = ({
   const [selectedDomain, setSelectedDomain] = useState(null);
   const [exportingLayer, setExportingLayer] = useState(null);
   const [showExportAllMenu, setShowExportAllMenu] = useState(false);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
 
   // Close export all menu when clicking outside
   useEffect(() => {
@@ -29,7 +30,6 @@ const Sidebar = ({
         setShowExportAllMenu(false);
       }
     };
-
     document.addEventListener('mousedown', handleClickOutside);
     return () => {
       document.removeEventListener('mousedown', handleClickOutside);
@@ -115,34 +115,33 @@ const Sidebar = ({
   // Get available layers organized by domain
   const availableLayersByDomain = useMemo(() => {
     const layersByDomain = {};
-    
+
     // Initialize all domains with empty arrays
     Object.keys(layerDefinitions).forEach(domain => {
       layersByDomain[domain] = [];
     });
-    
+
     // Add available layers from definitions
     Object.entries(layerDefinitions).forEach(([domain, layers]) => {
-      const availableDomainLayers = layers.filter(layer => 
+      const availableDomainLayers = layers.filter(layer =>
         availableLayers[layer.name]
       );
-      
       layersByDomain[domain] = availableDomainLayers;
     });
-    
+
     // Add custom layers that aren't in layerDefinitions
     Object.keys(availableLayers).forEach(layerName => {
       const layer = availableLayers[layerName];
       if (layer && layer.domain) {
         const domain = layer.domain;
         const isInDefinitions = layerDefinitions[domain]?.some(l => l.name === layerName);
-        
+
         if (!isInDefinitions) {
           // This is a custom layer
           if (!layersByDomain[domain]) {
             layersByDomain[domain] = [];
           }
-          
+
           // Check if not already added
           if (!layersByDomain[domain].some(l => l.name === layerName)) {
             layersByDomain[domain].push({
@@ -153,7 +152,7 @@ const Sidebar = ({
         }
       }
     });
-    
+
     return layersByDomain;
   }, [layerDefinitions, availableLayers]);
 
@@ -224,7 +223,7 @@ const Sidebar = ({
 
   const handleExportAll = async (format) => {
     if (!window.confirm(`Export all layers as ${format.toUpperCase()}? This may take a few minutes.`)) return;
-    
+
     try {
       setExportingLayer('all');
       setShowExportAllMenu(false);
@@ -240,7 +239,7 @@ const Sidebar = ({
   const handleDeleteAll = async () => {
     if (!window.confirm('Delete ALL layers? This action cannot be undone.')) return;
     if (!window.confirm('Are you absolutely sure? All layer data will be permanently deleted.')) return;
-    
+
     try {
       for (const [domain, layers] of Object.entries(availableLayersByDomain)) {
         for (const layer of layers) {
@@ -257,12 +256,12 @@ const Sidebar = ({
     return (
       <div className="sidebar">
         <div className="sidebar-header">
-          <div className="header-icon-wrapper">
-            <i className="fas fa-layers"></i>
+          <div className="header-content">
+            <div className="header-text">
+              <h2>Data Layers</h2>
+            </div>
           </div>
-          <h2>Data Layers</h2>
         </div>
-        
         <div className="no-layers-message">
           <i className="fas fa-map-marked-alt"></i>
           <h3>No City Selected</h3>
@@ -277,170 +276,209 @@ const Sidebar = ({
   const activeLayersCount = Object.values(activeLayers).filter(Boolean).length;
 
   return (
-    <div className="sidebar">
+    <motion.div
+      className={`sidebar ${isSidebarCollapsed ? 'collapsed' : ''}`}
+      animate={{ width: isSidebarCollapsed ? 80 : 360 }}
+      transition={{ duration: 0.3 }}
+    >
       <div className="sidebar-header">
         <div className="header-content">
-          <div className="header-icon-wrapper">
-            <i className="fas fa-layers"></i>
-          </div>
-          <div className="header-text">
-            <h2>Data Layers</h2>
-            <div className="city-indicator">
-              <i className="fas fa-map-pin"></i>
-              {selectedCity.name}
+          {!isSidebarCollapsed && (
+            <div className="header-text">
+              <h2>Data Layers</h2>
             </div>
+          )}
+          <div className="city-indicator">
+            <i className="fas fa-map-pin"></i>
+            {selectedCity.name}
           </div>
         </div>
+        <motion.button
+          className="collapse-toggle-btn"
+          onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
+          whileHover={{ scale: 1.1 }}
+          whileTap={{ scale: 0.95 }}
+          title={isSidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+        >
+          <i className={`fas fa-chevron-${isSidebarCollapsed ? 'right' : 'left'}`}></i>
+        </motion.button>
       </div>
-      
+
       <div className="layers-container">
-        {!hasAvailableLayers ? (
-          <div className="no-layers-message">
-            <i className="fas fa-clock"></i>
-            <h3>Processing Data</h3>
-            <p>Data layers are being processed for this city. Please check back in a few minutes.</p>
+        {isSidebarCollapsed ? (
+          // Collapsed view - show icons only
+          <div className="collapsed-layers-view">
+            {hasAvailableLayers && Object.entries(availableLayersByDomain).map(([domain, layers]) => (
+              <motion.div
+                key={domain}
+                className="collapsed-domain-icon"
+                title={`${formatDomainName(domain)} (${layers.length})`}
+                whileHover={{ scale: 1.1 }}
+                whileTap={{ scale: 0.95 }}
+              >
+                <div
+                  className="collapsed-icon-wrapper"
+                  style={{ backgroundColor: `${domainColors[domain]}15` }}
+                >
+                  <i
+                    className={domainIcons[domain]}
+                    style={{ color: domainColors[domain] }}
+                  />
+                </div>
+                <span className="collapsed-count">{layers.length}</span>
+              </motion.div>
+            ))}
           </div>
         ) : (
+          // Expanded view - full content
           <>
-            <div className="layers-stats-section">
-              <div className="layers-summary">
-                <div className="summary-item">
-                  <span className="summary-label">Active</span>
-                  <span className="summary-value">{activeLayersCount}</span>
-                </div>
-                <div className="summary-divider"></div>
-                <div className="summary-item">
-                  <span className="summary-label">Available</span>
-                  <span className="summary-value">{totalLayers}</span>
-                </div>
+            {!hasAvailableLayers ? (
+              <div className="no-layers-message">
+                <i className="fas fa-clock"></i>
+                <h3>Processing Data</h3>
+                <p>Data layers are being processed for this city. Please check back in a few minutes.</p>
               </div>
-              <div className="bulk-actions">
-                <div className="bulk-export-wrapper">
-                  <button
-                    className="bulk-action-btn export"
-                    onClick={() => setShowExportAllMenu(!showExportAllMenu)}
-                    disabled={exportingLayer === 'all'}
-                  >
-                    <i className="fas fa-download"></i>
-                    {exportingLayer === 'all' ? 'Exporting...' : 'Export All'}
-                  </button>
-                  {showExportAllMenu && (
-                    <div className="export-dropdown">
-                      <button
-                        className="export-option"
-                        onClick={() => handleExportAll('parquet')}
-                      >
-                        <i className="fas fa-database"></i>
-                        <span className="format-label">Parquet</span>
-                        <span className="format-ext">.parquet</span>
-                      </button>
-                      <button
-                        className="export-option"
-                        onClick={() => handleExportAll('csv')}
-                      >
-                        <i className="fas fa-file-csv"></i>
-                        <span className="format-label">CSV</span>
-                        <span className="format-ext">.csv</span>
-                      </button>
-                      <button
-                        className="export-option"
-                        onClick={() => handleExportAll('geojson')}
-                      >
-                        <i className="fas fa-map-marked-alt"></i>
-                        <span className="format-label">GeoJSON</span>
-                        <span className="format-ext">.geojson</span>
-                      </button>
-                      <button
-                        className="export-option"
-                        onClick={() => handleExportAll('shapefile')}
-                      >
-                        <i className="fas fa-layer-group"></i>
-                        <span className="format-label">Shapefile</span>
-                        <span className="format-ext">.shp</span>
-                      </button>
+            ) : (
+              <>
+                <div className="layers-stats-section">
+                  <div className="layers-summary">
+                    <div className="summary-item">
+                      <span className="summary-label">Active</span>
+                      <span className="summary-value">{activeLayersCount}</span>
                     </div>
-                  )}
+                    <div className="summary-divider"></div>
+                    <div className="summary-item">
+                      <span className="summary-label">Available</span>
+                      <span className="summary-value">{totalLayers}</span>
+                    </div>
+                  </div>
+                  <div className="bulk-actions">
+                    <div className="bulk-export-wrapper">
+                      <button
+                        className="bulk-action-btn export"
+                        onClick={() => setShowExportAllMenu(!showExportAllMenu)}
+                        disabled={exportingLayer === 'all'}
+                      >
+                        <i className="fas fa-download"></i>
+                        {exportingLayer === 'all' ? 'Exporting...' : 'Export All'}
+                      </button>
+                      {showExportAllMenu && (
+                        <div className="export-dropdown">
+                          <button
+                            className="export-option"
+                            onClick={() => handleExportAll('parquet')}
+                          >
+                            <i className="fas fa-database"></i>
+                            <span className="format-label">Parquet</span>
+                            <span className="format-ext">.parquet</span>
+                          </button>
+                          <button
+                            className="export-option"
+                            onClick={() => handleExportAll('csv')}
+                          >
+                            <i className="fas fa-file-csv"></i>
+                            <span className="format-label">CSV</span>
+                            <span className="format-ext">.csv</span>
+                          </button>
+                          <button
+                            className="export-option"
+                            onClick={() => handleExportAll('geojson')}
+                          >
+                            <i className="fas fa-map-marked-alt"></i>
+                            <span className="format-label">GeoJSON</span>
+                            <span className="format-ext">.geojson</span>
+                          </button>
+                          <button
+                            className="export-option"
+                            onClick={() => handleExportAll('shapefile')}
+                          >
+                            <i className="fas fa-layer-group"></i>
+                            <span className="format-label">Shapefile</span>
+                            <span className="format-ext">.shp</span>
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                    <button
+                      className="bulk-action-btn delete"
+                      onClick={handleDeleteAll}
+                    >
+                      <i className="fas fa-trash-alt"></i>
+                      Delete All
+                    </button>
+                  </div>
                 </div>
-                <button
-                  className="bulk-action-btn delete"
-                  onClick={handleDeleteAll}
-                >
-                  <i className="fas fa-trash-alt"></i>
-                  Delete All
-                </button>
-              </div>
-            </div>
-
-            <div className="layers-scroll-content">
-              {Object.entries(availableLayersByDomain).map(([domain, layers]) => (
-                <div key={domain} className="domain-section">
-                  <motion.div
-                    className="domain-header"
-                    onClick={() => toggleDomain(domain)}
-                    whileHover={{ backgroundColor: 'rgba(0, 0, 0, 0.03)' }}
-                  >
-                    <div className="domain-info">
-                      <div 
-                        className="domain-icon-wrapper"
-                        style={{ backgroundColor: `${domainColors[domain]}15` }}
-                      >
-                        <i 
-                          className={domainIcons[domain]} 
-                          style={{ color: domainColors[domain] }}
-                        />
-                      </div>
-                      <span className="domain-name">{formatDomainName(domain)}</span>
-                      <span className="layer-count">{layers.length}</span>
-                    </div>
-                    <div className="domain-actions">
-                      <button
-                        className="add-layer-icon-btn"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleAddLayer(domain);
-                        }}
-                        title="Add layer to this domain"
-                      >
-                        <i className="fas fa-plus"></i>
-                      </button>
-                      <motion.i
-                        className={`fas fa-chevron-${expandedDomains.has(domain) ? 'up' : 'down'}`}
-                        animate={{ 
-                          rotate: expandedDomains.has(domain) ? 180 : 0 
-                        }}
-                        transition={{ duration: 0.2 }}
-                      />
-                    </div>
-                  </motion.div>
-                  
-                  <AnimatePresence>
-                    {expandedDomains.has(domain) && (
+                <div className="layers-scroll-content">
+                  {Object.entries(availableLayersByDomain).map(([domain, layers]) => (
+                    <div key={domain} className="domain-section">
                       <motion.div
-                        className="layers-list"
-                        initial={{ height: 0, opacity: 0 }}
-                        animate={{ height: 'auto', opacity: 1 }}
-                        exit={{ height: 0, opacity: 0 }}
-                        transition={{ duration: 0.2 }}
+                        className="domain-header"
+                        onClick={() => toggleDomain(domain)}
+                        whileHover={{ backgroundColor: 'rgba(0, 0, 0, 0.03)' }}
                       >
-                        {layers.map((layer) => (
-                          <LayerToggle
-                            key={layer.name}
-                            layer={layer}
-                            domainColor={domainColors[domain]}
-                            isActive={!!activeLayers[layer.name]}
-                            onToggle={(isActive) => onLayerToggle(layer.name, isActive)}
-                            onEdit={() => handleEditLayer(domain, layer)}
-                            onDelete={() => handleDeleteLayer(domain, layer.name)}
-                            onExport={(format) => handleExportLayer(domain, layer.name, format)}
-                            isExporting={exportingLayer === layer.name}
+                        <div className="domain-info">
+                          <div
+                            className="domain-icon-wrapper"
+                            style={{ backgroundColor: `${domainColors[domain]}15` }}
+                          >
+                            <i
+                              className={domainIcons[domain]}
+                              style={{ color: domainColors[domain] }}
+                            />
+                          </div>
+                          <span className="domain-name">{formatDomainName(domain)}</span>
+                          <span className="layer-count">{layers.length}</span>
+                        </div>
+                        <div className="domain-actions">
+                          <button
+                            className="add-layer-icon-btn"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleAddLayer(domain);
+                            }}
+                            title="Add layer to this domain"
+                          >
+                            <i className="fas fa-plus"></i>
+                          </button>
+                          <motion.i
+                            className={`fas fa-chevron-${expandedDomains.has(domain) ? 'up' : 'down'}`}
+                            animate={{
+                              rotate: expandedDomains.has(domain) ? 180 : 0
+                            }}
+                            transition={{ duration: 0.2 }}
                           />
-                        ))}
+                        </div>
                       </motion.div>
-                    )}
-                  </AnimatePresence>
+                      <AnimatePresence>
+                        {expandedDomains.has(domain) && (
+                          <motion.div
+                            className="layers-list"
+                            initial={{ height: 0, opacity: 0 }}
+                            animate={{ height: 'auto', opacity: 1 }}
+                            exit={{ height: 0, opacity: 0 }}
+                            transition={{ duration: 0.2 }}
+                          >
+                            {layers.map((layer) => (
+                              <LayerToggle
+                                key={layer.name}
+                                layer={layer}
+                                domainColor={domainColors[domain]}
+                                isActive={!!activeLayers[layer.name]}
+                                onToggle={(isActive) => onLayerToggle(layer.name, isActive)}
+                                onEdit={() => handleEditLayer(domain, layer)}
+                                onDelete={() => handleDeleteLayer(domain, layer.name)}
+                                onExport={(format) => handleExportLayer(domain, layer.name, format)}
+                                isExporting={exportingLayer === layer.name}
+                              />
+                            ))}
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
+              </>
+            )}
           </>
         )}
       </div>
@@ -458,9 +496,9 @@ const Sidebar = ({
         existingLayers={selectedDomain ? availableLayersByDomain[selectedDomain] || [] : []}
         onSave={handleModalSave}
         cityBoundary={cityBoundary}
-        cityName={selectedCity?.name} 
+        cityName={selectedCity?.name}
       />
-    </div>
+    </motion.div>
   );
 };
 

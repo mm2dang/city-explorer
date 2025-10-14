@@ -135,10 +135,12 @@ const Header = ({
 
   return (
     <header className="header">
-      <div className="header-content">
+      <div className="header-main-content">
         <div className="app-title">
-          <i className="fas fa-map-marked-alt"></i>
-          <h1>CityExplorer</h1>
+          <div className="title-row">
+            <i className="fas fa-map-marked-alt"></i>
+            <h1>CityExplorer</h1>
+          </div>
           <div className="status-summary">
             <small>
               {cities.length} cities available
