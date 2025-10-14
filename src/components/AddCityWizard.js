@@ -9,6 +9,7 @@ import { searchOSM, fetchWikipediaData, fetchOSMBoundary } from '../utils/osm';
 import { saveCityData, processCityFeatures, checkCityExists, moveCityData, deleteCityData } from '../utils/s3';
 import { getSDGRegion } from '../utils/regions';
 import 'leaflet-draw/dist/leaflet.draw.css';
+import '../styles/AddCityWizard.css';
 
 const MapController = ({ center, boundary, onBoundaryLoad }) => {
   const map = useMap();

@@ -1,4 +1,4 @@
-import { S3Client, ListObjectsV2Command, GetObjectCommand, PutObjectCommand, DeleteObjectsCommand, CopyObjectCommand } from '@aws-sdk/client-s3';
+import { S3Client, ListObjectsV2Command, GetObjectCommand, PutObjectCommand, DeleteObjectsCommand } from '@aws-sdk/client-s3';
 import { readParquet, writeParquet, Table, WriterPropertiesBuilder, Compression } from 'parquet-wasm';
 import { tableFromArrays, tableToIPC, tableFromIPC } from 'apache-arrow';
 import * as turf from '@turf/turf';
@@ -56,18 +56,69 @@ const createParquetTable = (data) => {
   }
 };
 
+const validateCredentials = () => {
+  const accessKeyId = process.env.REACT_APP_AWS_ACCESS_KEY_ID;
+  const secretAccessKey = process.env.REACT_APP_AWS_SECRET_ACCESS_KEY;
+  const region = process.env.REACT_APP_AWS_REGION;
+  const bucketName = process.env.REACT_APP_S3_BUCKET_NAME;
+
+  const errors = [];
+
+  if (!accessKeyId || accessKeyId.trim() === '') {
+    errors.push('REACT_APP_AWS_ACCESS_KEY_ID is missing or empty');
+  }
+  if (!secretAccessKey || secretAccessKey.trim() === '') {
+    errors.push('REACT_APP_AWS_SECRET_ACCESS_KEY is missing or empty');
+  }
+  if (!region || region.trim() === '') {
+    errors.push('REACT_APP_AWS_REGION is missing or empty');
+  }
+  if (!bucketName || bucketName.trim() === '') {
+    errors.push('REACT_APP_S3_BUCKET_NAME is missing or empty');
+  }
+
+  // Session token is optional
+  const sessionToken = process.env.REACT_APP_AWS_SESSION_TOKEN;
+  if (sessionToken && sessionToken.trim() === '') {
+    errors.push('REACT_APP_AWS_SESSION_TOKEN is set but empty (remove it from .env if not using temporary credentials)');
+  }
+
+  return { valid: errors.length === 0, errors };
+};
+
+// Validate credentials on load
+const credentialCheck = validateCredentials();
+if (!credentialCheck.valid) {
+  console.error('AWS Credential Configuration Errors:', credentialCheck.errors);
+  credentialCheck.errors.forEach(err => console.error(`  - ${err}`));
+}
+
+// Build credentials object more carefully
+const buildCredentials = () => {
+  const accessKeyId = process.env.REACT_APP_AWS_ACCESS_KEY_ID?.trim();
+  const secretAccessKey = process.env.REACT_APP_AWS_SECRET_ACCESS_KEY?.trim();
+  const sessionToken = process.env.REACT_APP_AWS_SESSION_TOKEN?.trim();
+
+  const credentials = {
+    accessKeyId,
+    secretAccessKey,
+  };
+
+  // Only add sessionToken if it exists and is not empty
+  if (sessionToken && sessionToken.length > 0) {
+    credentials.sessionToken = sessionToken;
+  }
+
+  return credentials;
+};
+
 const s3Client = new S3Client({
   region: process.env.REACT_APP_AWS_REGION || 'us-east-1',
-  credentials: {
-    accessKeyId: process.env.REACT_APP_AWS_ACCESS_KEY_ID,
-    secretAccessKey: process.env.REACT_APP_AWS_SECRET_ACCESS_KEY,
-    ...(process.env.REACT_APP_AWS_SESSION_TOKEN && {
-      sessionToken: process.env.REACT_APP_AWS_SESSION_TOKEN
-    }),
-  },
+  credentials: buildCredentials(),
 });
 
 const BUCKET_NAME = process.env.REACT_APP_S3_BUCKET_NAME;
+let DATA_SOURCE_PREFIX = 'city';
 
 // Optional: Add validation to ensure the bucket name is defined
 if (!process.env.REACT_APP_S3_BUCKET_NAME) {
@@ -75,10 +126,45 @@ if (!process.env.REACT_APP_S3_BUCKET_NAME) {
   throw new Error('S3 bucket name is not configured');
 }
 
+export const setDataSource = (source) => {
+  if (source === 'city' || source === 'osm') {
+    DATA_SOURCE_PREFIX = source;
+    console.log(`Data source set to: ${DATA_SOURCE_PREFIX}`);
+  } else {
+    console.error(`Invalid data source: ${source}. Must be 'city' or 'osm'`);
+  }
+};
+
+export const getDataSource = () => {
+  return DATA_SOURCE_PREFIX;
+};
+
+// Helper function to build path with data source prefix
+const buildPath = (pathType, country, province, city, domain = null, layerName = null) => {
+  const normalizedCountry = normalizeName(country);
+  const normalizedProvince = normalizeName(province);
+  const normalizedCity = normalizeName(city);
+  
+  let basePath = `${DATA_SOURCE_PREFIX}/${pathType}/country=${normalizedCountry}/province=${normalizedProvince}/city=${normalizedCity}`;
+  
+  if (pathType === 'data' && domain && layerName) {
+    basePath += `/domain=${domain}/${layerName}.snappy.parquet`;
+  } else if (pathType === 'population') {
+    basePath += '/city_data.snappy.parquet';
+  } else if (pathType === 'data' && domain) {
+    basePath += `/domain=${domain}/`;
+  }
+  
+  return basePath;
+};
+
 // Helper function to normalize names (lowercase, replace spaces with underscores)
 const normalizeName = (name) => {
   return name.toLowerCase().replace(/\s+/g, '_');
 };
+
+// Track active processing operations that can be cancelled
+const activeProcessing = new Map();
 
 // Layer definitions
 const layerDefinitions = {
@@ -145,7 +231,7 @@ const layerDefinitions = {
 
 // Recursive function to scan S3 directories deeply
 const scanS3Directory = async (prefix, targetFileName = null) => {
-  console.log(`Scanning S3 directory: ${prefix}`);
+  console.log(`Scanning S3 directory: ${prefix} (data source: ${DATA_SOURCE_PREFIX})`);
   
   const foundFiles = [];
   let continuationToken = null;
@@ -179,13 +265,13 @@ const scanS3Directory = async (prefix, targetFileName = null) => {
 // Get all cities from BOTH population and data buckets
 export const getAllCities = async () => {
   try {
-    console.log('=== Scanning S3 buckets for cities ===');
+    console.log(`=== Scanning S3 buckets for cities (source: ${DATA_SOURCE_PREFIX}) ===`);
     
     const cities = new Map();
     
     // Scan population bucket for city_data.snappy.parquet files
     console.log('--- Scanning population bucket recursively ---');
-    const populationFiles = await scanS3Directory('population/', 'city_data.snappy.parquet');
+    const populationFiles = await scanS3Directory(`${DATA_SOURCE_PREFIX}/population/`, 'city_data.snappy.parquet');
     
     for (const filePath of populationFiles) {
       console.log(`Processing population file: ${filePath}`);
@@ -213,7 +299,7 @@ export const getAllCities = async () => {
     
     // Scan data bucket for additional cities
     console.log('--- Scanning data bucket for additional cities ---');
-    const dataFiles = await scanS3Directory('data/', '.snappy.parquet');
+    const dataFiles = await scanS3Directory(`${DATA_SOURCE_PREFIX}/data/`, '.snappy.parquet');
     
     // Extract unique cities from data files
     const dataCities = new Set();
@@ -276,7 +362,7 @@ export const getAllCities = async () => {
 const getCityData = async (country, province, city) => {
   try {
     await initializeWasm();
-    console.log(`=== Loading city data for: ${country}/${province}/${city} ===`);
+    console.log(`=== Loading city data for: ${country}/${province}/${city} (source: ${DATA_SOURCE_PREFIX}) ===`);
     
     // Helper function to convert stream to ArrayBuffer
     const streamToArrayBuffer = async (stream) => {
@@ -308,7 +394,7 @@ const getCityData = async (country, province, city) => {
     };
     
     // Load city metadata from population bucket
-    const cityMetaKey = `population/country=${country}/province=${province}/city=${city}/city_data.snappy.parquet`;
+    const cityMetaKey = buildPath('population', country, province, city);
     
     try {
       const getCommand = new GetObjectCommand({
@@ -364,10 +450,6 @@ const getCityData = async (country, province, city) => {
 export const saveCityData = async (cityData, country, province, city) => {
   try {
     await initializeWasm();
-    
-    const normalizedCountry = normalizeName(country);
-    const normalizedProvince = normalizeName(province);
-    const normalizedCity = normalizeName(city);
 
     // Prepare data for parquet
     const data = [{
@@ -386,7 +468,7 @@ export const saveCityData = async (cityData, country, province, city) => {
       .setCompression(Compression.SNAPPY)
       .build();
     const buffer = writeParquet(table, writerProperties);
-    const key = `population/country=${normalizedCountry}/province=${normalizedProvince}/city=${normalizedCity}/city_data.snappy.parquet`;
+    const key = buildPath('population', country, province, city);
     
     const command = new PutObjectCommand({
       Bucket: BUCKET_NAME,
@@ -405,7 +487,7 @@ export const saveCityData = async (cityData, country, province, city) => {
 
 export const moveCityData = async (oldCountry, oldProvince, oldCity, newCountry, newProvince, newCity) => {
   try {
-    console.log(`Moving city data from ${oldCountry}/${oldProvince}/${oldCity} to ${newCountry}/${newProvince}/${newCity}`);
+    console.log(`Moving city data from ${oldCountry}/${oldProvince}/${oldCity} to ${newCountry}/${newProvince}/${newCity} (source: ${DATA_SOURCE_PREFIX})`);
     
     const oldNormalizedCountry = normalizeName(oldCountry);
     const oldNormalizedProvince = normalizeName(oldProvince);
@@ -427,7 +509,7 @@ export const moveCityData = async (oldCountry, oldProvince, oldCity, newCountry,
     const objectsToDelete = [];
     
     // Find all data layer files
-    const dataPrefix = `data/country=${oldNormalizedCountry}/province=${oldNormalizedProvince}/city=${oldNormalizedCity}/`;
+    const dataPrefix = `${DATA_SOURCE_PREFIX}/data/country=${oldNormalizedCountry}/province=${oldNormalizedProvince}/city=${oldNormalizedCity}/`;
     console.log(`Scanning data prefix: ${dataPrefix}`);
     
     let continuationToken = null;
@@ -464,19 +546,62 @@ export const moveCityData = async (oldCountry, oldProvince, oldCity, newCountry,
     
     console.log(`Found ${objectsToCopy.length} data files to move`);
     
-    // Copy all files to new location
+    // Copy all files to new location - use GetObject/PutObject instead of CopyObject
     for (const { oldKey, newKey } of objectsToCopy) {
       try {
-        const copyCommand = new CopyObjectCommand({
+        console.log(`Attempting to copy via read/write: ${oldKey} -> ${newKey}`);
+        
+        // Step 1: Get the source object
+        const getCommand = new GetObjectCommand({
           Bucket: BUCKET_NAME,
-          CopySource: `${BUCKET_NAME}/${oldKey}`,
-          Key: newKey,
+          Key: oldKey,
         });
         
-        await s3Client.send(copyCommand);
-        console.log(`Copied: ${oldKey} -> ${newKey}`);
+        const getResponse = await s3Client.send(getCommand);
+        
+        // Convert stream to buffer
+        const streamToArrayBuffer = async (stream) => {
+          const reader = stream.getReader();
+          const chunks = [];
+          
+          try {
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              chunks.push(value);
+            }
+          } finally {
+            reader.releaseLock();
+          }
+          
+          const totalLength = chunks.reduce((acc, chunk) => acc + chunk.length, 0);
+          const result = new Uint8Array(totalLength);
+          
+          let offset = 0;
+          for (const chunk of chunks) {
+            result.set(chunk, offset);
+            offset += chunk.length;
+          }
+          
+          return result;
+        };
+        
+        const objectData = await streamToArrayBuffer(getResponse.Body);
+        
+        // Step 2: Put the object at the new location
+        const putCommand = new PutObjectCommand({
+          Bucket: BUCKET_NAME,
+          Key: newKey,
+          Body: objectData,
+          ContentType: getResponse.ContentType || 'application/octet-stream',
+        });
+        
+        await s3Client.send(putCommand);
+        console.log(`Copied via read/write: ${oldKey} -> ${newKey}`);
+        
       } catch (copyError) {
-        console.error(`Error copying ${oldKey}:`, copyError);
+        console.error(`Error copying ${oldKey}:`, copyError.message);
+        console.error(`Full error:`, copyError);
         throw copyError;
       }
     }
@@ -529,7 +654,7 @@ export const getAvailableLayersForCity = async (cityName) => {
     const availableLayers = {};
     
     // Scan all domains in the data bucket
-    const dataPrefix = `data/country=${normalizedCountry}/province=${normalizedProvince}/city=${normalizedCity}/`;
+    const dataPrefix = `${DATA_SOURCE_PREFIX}/data/country=${normalizedCountry}/province=${normalizedProvince}/city=${normalizedCity}/`;
     
     let continuationToken = null;
     do {
@@ -620,7 +745,7 @@ export const getAvailableLayersForCity = async (cityName) => {
 export const loadCityFeatures = async (cityName, activeLayers) => {
   try {
     await initializeWasm();
-    console.log('=== S3: loadCityFeatures called ===', { cityName, activeLayers });
+    console.log(`=== S3: loadCityFeatures called (source: ${DATA_SOURCE_PREFIX}) ===`, { cityName, activeLayers });
     
     const parts = cityName.split(',').map(p => p.trim());
     if (parts.length < 2) {
@@ -685,7 +810,7 @@ export const loadCityFeatures = async (cityName, activeLayers) => {
     for (const [domain, layers] of Object.entries(layerDefinitions)) {
       for (const layer of layers) {
         if (activeLayerNames.includes(layer.filename)) {
-          const key = `data/country=${normalizedCountry}/province=${normalizedProvince}/city=${normalizedCity}/domain=${domain}/${layer.filename}.snappy.parquet`;
+          const key = buildPath('data', country, province, city, domain, layer.filename);
           
           try {
             console.log(`=== S3: Attempting to load layer ${layer.filename} from ${key} ===`);
@@ -888,7 +1013,7 @@ export const loadCityFeatures = async (cityName, activeLayers) => {
     
     // Also check for custom layers that might not be in layerDefinitions
     try {
-      const customLayersPrefix = `data/country=${normalizedCountry}/province=${normalizedProvince}/city=${normalizedCity}/`;
+      const customLayersPrefix = `${DATA_SOURCE_PREFIX}/data/country=${normalizedCountry}/province=${normalizedProvince}/city=${normalizedCity}/`;
       
       let continuationToken = null;
       do {
@@ -1115,10 +1240,6 @@ export const saveLayerFeatures = async (features, country, province, city, domai
       return;
     }
 
-    const normalizedCountry = normalizeName(country);
-    const normalizedProvince = normalizeName(province);
-    const normalizedCity = normalizeName(city);
-
     let featuresToSave = features;
     
     // Only crop if boundary is provided (for automated processing)
@@ -1201,7 +1322,7 @@ export const saveLayerFeatures = async (features, country, province, city, domai
       .build();
     const buffer = writeParquet(table, writerProperties);
     
-    const key = `data/country=${normalizedCountry}/province=${normalizedProvince}/city=${normalizedCity}/domain=${domain}/${layerName}.snappy.parquet`;
+    const key = buildPath('data', country, province, city, domain, layerName);
     
     const command = new PutObjectCommand({
       Bucket: BUCKET_NAME,
@@ -1240,10 +1361,6 @@ export const saveCustomLayer = async (cityName, layerData, boundary = null) => {
     } else {
       [city, province, country] = parts;
     }
-    
-    const normalizedCity = normalizeName(city);
-    const normalizedProvince = normalizeName(province);
-    const normalizedCountry = normalizeName(country);
 
     console.log(`Saving custom layer: ${layerData.name} for ${cityName} with icon: ${layerData.icon}`);
     console.log(`Initial feature count: ${layerData.features.length}`);
@@ -1307,12 +1424,8 @@ export const deleteLayer = async (cityName, domain, layerName) => {
     } else {
       [city, province, country] = parts;
     }
-    
-    const normalizedCity = normalizeName(city);
-    const normalizedProvince = normalizeName(province);
-    const normalizedCountry = normalizeName(country);
 
-    const key = `data/country=${normalizedCountry}/province=${normalizedProvince}/city=${normalizedCity}/domain=${domain}/${layerName}.snappy.parquet`;
+    const key = buildPath('data', country, province, city, domain, layerName);
 
     console.log(`Deleting layer: ${key}`);
 
@@ -1357,12 +1470,8 @@ export const loadLayerForEditing = async (cityName, domain, layerName) => {
     } else {
       [city, province, country] = parts;
     }
-    
-    const normalizedCity = normalizeName(city);
-    const normalizedProvince = normalizeName(province);
-    const normalizedCountry = normalizeName(country);
 
-    const key = `data/country=${normalizedCountry}/province=${normalizedProvince}/city=${normalizedCity}/domain=${domain}/${layerName}.snappy.parquet`;
+    const key = buildPath('data', country, province, city, domain, layerName);
 
     console.log(`Loading layer for editing: ${key}`);
 
@@ -1445,10 +1554,64 @@ export const loadLayerForEditing = async (cityName, domain, layerName) => {
   }
 };
 
+// Cancel processing for a specific city
+export const cancelCityProcessing = async (cityName) => {
+  const processingInfo = activeProcessing.get(cityName);
+  
+  if (processingInfo) {
+    console.log(`Cancelling processing for ${cityName}`);
+    processingInfo.shouldCancel = true;
+    
+    // Terminate any active worker
+    if (processingInfo.worker) {
+      processingInfo.worker.terminate();
+      processingInfo.worker = null;
+    }
+    
+    // Delete existing data
+    try {
+      await deleteCityData(cityName);
+      console.log(`Deleted existing data for ${cityName} after cancellation`);
+    } catch (error) {
+      console.error(`Error deleting data after cancellation for ${cityName}:`, error);
+    }
+    
+    // Remove from active processing
+    activeProcessing.delete(cityName);
+    
+    return true;
+  }
+  
+  return false;
+};
+
+export const isCityProcessing = (cityName) => {
+  return activeProcessing.has(cityName);
+};
+
 // Background processing function
 export const processCityFeatures = async (cityData, country, province, city, onProgressUpdate) => {
   try {
     console.log(`Starting background processing for ${cityData.name}`);
+    
+    // Initialize tracking for this city
+    activeProcessing.set(cityData.name, { shouldCancel: false, worker: null });
+    
+    // Check if city still exists before starting
+    const cityExists = await checkCityExists(country, province, city);
+    if (!cityExists) {
+      console.log(`City ${cityData.name} no longer exists, aborting processing`);
+      activeProcessing.delete(cityData.name);
+      if (onProgressUpdate) {
+        onProgressUpdate(cityData.name, {
+          processed: 0,
+          saved: 0,
+          total: 0,
+          status: 'cancelled'
+        });
+      }
+      return { processedLayers: 0, savedLayers: 0, totalLayers: 0, cancelled: true };
+    }
     
     const boundary = JSON.parse(cityData.boundary);
     const allLayers = [];
@@ -1471,12 +1634,60 @@ export const processCityFeatures = async (cityData, country, province, city, onP
     const BATCH_SIZE = 3;
     
     for (let i = 0; i < allLayers.length; i += BATCH_SIZE) {
+      // Check if processing should be cancelled
+      const processingInfo = activeProcessing.get(cityData.name);
+      if (!processingInfo || processingInfo.shouldCancel) {
+        console.log(`Processing cancelled for ${cityData.name}`);
+        activeProcessing.delete(cityData.name);
+        
+        if (onProgressUpdate) {
+          onProgressUpdate(cityData.name, {
+            processed: processedCount,
+            saved: savedCount,
+            total: totalLayers,
+            status: 'cancelled'
+          });
+        }
+        
+        return { processedLayers: processedCount, savedLayers: savedCount, totalLayers, cancelled: true };
+      }
+      
+      // Check if city still exists
+      const cityExists = await checkCityExists(country, province, city);
+      if (!cityExists) {
+        console.log(`City ${cityData.name} was deleted during processing, aborting`);
+        activeProcessing.delete(cityData.name);
+        
+        // Delete any partially processed data
+        try {
+          await deleteCityData(cityData.name);
+        } catch (error) {
+          console.error(`Error cleaning up after city deletion:`, error);
+        }
+        
+        if (onProgressUpdate) {
+          onProgressUpdate(cityData.name, {
+            processed: processedCount,
+            saved: savedCount,
+            total: totalLayers,
+            status: 'cancelled'
+          });
+        }
+        
+        return { processedLayers: processedCount, savedLayers: savedCount, totalLayers, cancelled: true };
+      }
+      
       const batch = allLayers.slice(i, i + BATCH_SIZE);
       
       try {
         console.log(`Processing batch ${Math.floor(i/BATCH_SIZE) + 1}/${Math.ceil(totalLayers/BATCH_SIZE)}`);
 
         const worker = new Worker('/worker.js');
+        
+        // Store worker reference for potential cancellation
+        if (activeProcessing.has(cityData.name)) {
+          activeProcessing.get(cityData.name).worker = worker;
+        }
         
         const workerPromise = new Promise((resolve, reject) => {
           const timeout = setTimeout(() => {
@@ -1488,6 +1699,11 @@ export const processCityFeatures = async (cityData, country, province, city, onP
             clearTimeout(timeout);
             worker.terminate();
             
+            // Clear worker reference
+            if (activeProcessing.has(cityData.name)) {
+              activeProcessing.get(cityData.name).worker = null;
+            }
+            
             if (e.data.error) {
               reject(new Error(e.data.error));
             } else {
@@ -1498,6 +1714,12 @@ export const processCityFeatures = async (cityData, country, province, city, onP
           worker.onerror = (error) => {
             clearTimeout(timeout);
             worker.terminate();
+            
+            // Clear worker reference
+            if (activeProcessing.has(cityData.name)) {
+              activeProcessing.get(cityData.name).worker = null;
+            }
+            
             reject(error);
           };
         });
@@ -1509,6 +1731,24 @@ export const processCityFeatures = async (cityData, country, province, city, onP
         });
 
         const batchResults = await workerPromise;
+        
+        // Check again if processing should be cancelled after worker completes
+        const processingInfoAfterWorker = activeProcessing.get(cityData.name);
+        if (!processingInfoAfterWorker || processingInfoAfterWorker.shouldCancel) {
+          console.log(`Processing cancelled for ${cityData.name} after worker completion`);
+          activeProcessing.delete(cityData.name);
+          
+          if (onProgressUpdate) {
+            onProgressUpdate(cityData.name, {
+              processed: processedCount,
+              saved: savedCount,
+              total: totalLayers,
+              status: 'cancelled'
+            });
+          }
+          
+          return { processedLayers: processedCount, savedLayers: savedCount, totalLayers, cancelled: true };
+        }
         
         // Group results by layer and save each layer separately
         const layerGroups = {};
@@ -1529,6 +1769,24 @@ export const processCityFeatures = async (cityData, country, province, city, onP
         
         // Process each layer in the batch
         for (const layerInfo of batch) {
+          // Check cancellation before each save
+          const processingInfoBeforeSave = activeProcessing.get(cityData.name);
+          if (!processingInfoBeforeSave || processingInfoBeforeSave.shouldCancel) {
+            console.log(`Processing cancelled for ${cityData.name} before saving layer`);
+            activeProcessing.delete(cityData.name);
+            
+            if (onProgressUpdate) {
+              onProgressUpdate(cityData.name, {
+                processed: processedCount,
+                saved: savedCount,
+                total: totalLayers,
+                status: 'cancelled'
+              });
+            }
+            
+            return { processedLayers: processedCount, savedLayers: savedCount, totalLayers, cancelled: true };
+          }
+          
           const layerData = layerGroups[layerInfo.filename];
           
           if (layerData && layerData.features && layerData.features.length > 0) {
@@ -1581,6 +1839,9 @@ export const processCityFeatures = async (cityData, country, province, city, onP
 
     console.log(`Completed background processing for ${cityData.name}: ${processedCount}/${totalLayers} layers processed, ${savedCount} saved`);
     
+    // Remove from active processing on successful completion
+    activeProcessing.delete(cityData.name);
+    
     if (onProgressUpdate) {
       onProgressUpdate(cityData.name, {
         processed: processedCount,
@@ -1590,72 +1851,11 @@ export const processCityFeatures = async (cityData, country, province, city, onP
       });
     }
     
-    return { processedLayers: processedCount, savedLayers: savedCount, totalLayers };
+    return { processedLayers: processedCount, savedLayers: savedCount, totalLayers, cancelled: false };
   } catch (error) {
     console.error('Error in background processing:', error);
+    activeProcessing.delete(cityData.name);
     throw error;
-  }
-};
-
-// Check if a city has data layers available
-export const cityHasDataLayers = async (cityName) => {
-  try {
-    const parts = cityName.split(',').map(p => p.trim());
-    if (parts.length < 2) return false;
-    
-    let city, province, country;
-    if (parts.length === 2) {
-      [city, country] = parts;
-      province = '';
-    } else {
-      [city, province, country] = parts;
-    }
-    
-    const normalizedCity = normalizeName(city);
-    const normalizedProvince = normalizeName(province);
-    const normalizedCountry = normalizeName(country);
-    
-    // Check if data directory exists for this city
-    const command = new ListObjectsV2Command({
-      Bucket: BUCKET_NAME,
-      Prefix: `data/country=${normalizedCountry}/province=${normalizedProvince}/city=${normalizedCity}/`,
-      MaxKeys: 1,
-    });
-    
-    const response = await s3Client.send(command);
-    return response.Contents && response.Contents.length > 0;
-  } catch (error) {
-    console.warn(`Error checking if city has data layers: ${cityName}`, error);
-    return false;
-  }
-};
-
-// Get all cities with their data availability status
-export const getAllCitiesWithDataStatus = async () => {
-  try {
-    const cities = await getAllCities();
-    const citiesWithStatus = [];
-    
-    for (const city of cities) {
-      try {
-        const hasDataLayers = await cityHasDataLayers(city.name);
-        citiesWithStatus.push({
-          ...city,
-          hasDataLayers
-        });
-      } catch (error) {
-        console.warn(`Error checking data status for ${city.name}:`, error);
-        citiesWithStatus.push({
-          ...city,
-          hasDataLayers: false
-        });
-      }
-    }
-    
-    return citiesWithStatus;
-  } catch (error) {
-    console.error('Error getting cities with data status:', error);
-    return [];
   }
 };
 
@@ -1684,7 +1884,7 @@ export const deleteCityData = async (cityName) => {
     const objectsToDelete = [];
 
     // List and collect population data files
-    const populationPrefix = `population/country=${normalizedCountry}/province=${normalizedProvince}/city=${normalizedCity}/`;
+    const populationPrefix = `${DATA_SOURCE_PREFIX}/population/country=${normalizedCountry}/province=${normalizedProvince}/city=${normalizedCity}/`;
     console.log(`Scanning population prefix: ${populationPrefix}`);
     
     let populationContinuationToken = null;
@@ -1707,7 +1907,7 @@ export const deleteCityData = async (cityName) => {
     } while (populationContinuationToken);
 
     // List and collect data layer files
-    const dataPrefix = `data/country=${normalizedCountry}/province=${normalizedProvince}/city=${normalizedCity}/`;
+    const dataPrefix = `${DATA_SOURCE_PREFIX}/data/country=${normalizedCountry}/province=${normalizedProvince}/city=${normalizedCity}/`;
     console.log(`Scanning data prefix: ${dataPrefix}`);
     
     let dataContinuationToken = null;
@@ -1776,7 +1976,7 @@ export const checkCityExists = async (country, province, city) => {
     const normalizedProvince = normalizeName(province);
     const normalizedCity = normalizeName(city);
     
-    const cityMetaKey = `population/country=${normalizedCountry}/province=${normalizedProvince}/city=${normalizedCity}/city_data.snappy.parquet`;
+    const cityMetaKey = buildPath('population', country, province, city);
     
     try {
       const listCommand = new ListObjectsV2Command({
@@ -1786,13 +1986,77 @@ export const checkCityExists = async (country, province, city) => {
       });
       
       const response = await s3Client.send(listCommand);
-      return response.Contents && response.Contents.length > 0;
+      const exists = response.Contents && response.Contents.length > 0;
+      console.log(`City ${normalizedCountry}/${normalizedProvince}/${normalizedCity} exists: ${exists}`);
+      return exists;
     } catch (error) {
-      console.log(`City does not exist: ${city}`);
+      console.log(`City ${normalizedCountry}/${normalizedProvince}/${normalizedCity} does not exist:`, error.message);
       return false;
     }
   } catch (error) {
     console.error(`Error checking if city exists:`, error);
     return false;
+  }
+};
+
+// Check if a city has data layers available
+export const cityHasDataLayers = async (cityName) => {
+  try {
+    const parts = cityName.split(',').map(p => p.trim());
+    if (parts.length < 2) return false;
+    
+    let city, province, country;
+    if (parts.length === 2) {
+      [city, country] = parts;
+      province = '';
+    } else {
+      [city, province, country] = parts;
+    }
+    
+    const normalizedCity = normalizeName(city);
+    const normalizedProvince = normalizeName(province);
+    const normalizedCountry = normalizeName(country);
+    
+    // Check if data directory exists for this city
+    const command = new ListObjectsV2Command({
+      Bucket: BUCKET_NAME,
+      Prefix: `${DATA_SOURCE_PREFIX}/data/country=${normalizedCountry}/province=${normalizedProvince}/city=${normalizedCity}/`,
+      MaxKeys: 1,
+    });
+    
+    const response = await s3Client.send(command);
+    return response.Contents && response.Contents.length > 0;
+  } catch (error) {
+    console.warn(`Error checking if city has data layers: ${cityName}`, error);
+    return false;
+  }
+};
+
+// Get all cities with their data availability status
+export const getAllCitiesWithDataStatus = async () => {
+  try {
+    const cities = await getAllCities();
+    const citiesWithStatus = [];
+    
+    for (const city of cities) {
+      try {
+        const hasDataLayers = await cityHasDataLayers(city.name);
+        citiesWithStatus.push({
+          ...city,
+          hasDataLayers
+        });
+      } catch (error) {
+        console.warn(`Error checking data status for ${city.name}:`, error);
+        citiesWithStatus.push({
+          ...city,
+          hasDataLayers: false
+        });
+      }
+    }
+    
+    return citiesWithStatus;
+  } catch (error) {
+    console.error('Error getting cities with data status:', error);
+    return [];
   }
 };

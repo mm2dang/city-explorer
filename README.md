@@ -29,7 +29,8 @@ cityexplorer/
 │   │   ├── Sidebar.css
 │   │   ├── LayerModal.css
 │   │   ├── leaflet.css
-│   │   └── MapViewer.css
+│   │   ├── MapViewer.css
+│   │   └── AddCityWizard.css
 │   ├── App.js                 # Main application component
 │   └── index.js               # React entry point
 ├── package.json
@@ -148,21 +149,39 @@ The app will:
 ### S3 Bucket Structure
 
 ```
-s3://your-bucket-name/
-├── population/
-│   └── country={country}/
-│       └── province={province}/
-│           └── city={city}/
-│               └── city_data.snappy.parquet
+s3://your-bucket-name
+├── osm/
+│   ├── population/
+│   │   └── country={country}/
+│   │       └── province={province}/
+│   │           └── city={city}/
+│   │               └── city_data.snappy.parquet
+│   │
+│   └── data/
+│       └── country={country}/
+│           └── province={province}/
+│               └── city={city}/
+│                   └── domain={domain}/
+│                       ├── roads.snappy.parquet
+│                       ├── parks.snappy.parquet
+│                       └── ... (other layers)
 │
-└── data/
-    └── country={country}/
-        └── province={province}/
-            └── city={city}/
-                └── domain={domain}/
-                    ├── roads.snappy.parquet
-                    ├── parks.snappy.parquet
-                    └── ... (other layers)
+└──  city/
+    ├── population/
+    │   └── country={country}/
+    │       └── province={province}/
+    │           └── city={city}/
+    │               └── city_data.snappy.parquet
+    │
+    └── data/
+        └── country={country}/
+            └── province={province}/
+                └── city={city}/
+                    └── domain={domain}/
+                        ├── roads.snappy.parquet
+                        ├── parks.snappy.parquet
+                        └── ... (other layers)
+
 ```
 
 ### Parquet Schema

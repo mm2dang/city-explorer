@@ -2,8 +2,21 @@ import React, { useState } from 'react';
 import { motion } from 'framer-motion';
 import '../styles/Header.css';
 
-const Header = ({ cities, selectedCity, onCitySelect, onAddCity, onEditCity, onDeleteCity, isLoading, cityDataStatus, processingProgress }) => {
+const Header = ({ 
+  cities = [], 
+  selectedCity = null, 
+  onCitySelect = () => {}, 
+  onAddCity = () => {}, 
+  onEditCity = () => {}, 
+  onDeleteCity = () => {}, 
+  isLoading = false,
+  cityDataStatus = {}, 
+  processingProgress = {},
+  dataSource = 'osm',
+  onDataSourceChange = () => {}
+}) => {
   const [showDropdown, setShowDropdown] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
   const [sortBy, setSortBy] = useState('name');
   const [sortOrder, setSortOrder] = useState('asc');
 
@@ -28,9 +41,19 @@ const Header = ({ cities, selectedCity, onCitySelect, onAddCity, onEditCity, onD
     }
   };
 
+  const handleDataSourceChange = async (source) => {
+    setShowSettings(false);
+    await onDataSourceChange(source);
+  };
+
   const getStatusCounts = () => {
     const ready = cityDataStatus ? cities.filter(city => cityDataStatus[city.name]).length : 0;
-    const processing = processingProgress ? Object.keys(processingProgress).length : 0;
+    const processing = processingProgress 
+     ? Object.keys(processingProgress).filter(cityName => {
+         const progress = processingProgress[cityName];
+         return progress && progress.status === 'processing';
+       }).length 
+     : 0;
     
     return { ready, processing, total: cities.length };
   };
@@ -266,6 +289,61 @@ const Header = ({ cities, selectedCity, onCitySelect, onAddCity, onEditCity, onD
             )}
           </div>
           
+          <div className="settings-selector">
+            <motion.button
+              className="settings-btn"
+              onClick={() => setShowSettings(!showSettings)}
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              title="Data source settings"
+            >
+              <i className="fas fa-cog"></i>
+            </motion.button>
+            
+            {showSettings && (
+              <motion.div
+                className="settings-dropdown"
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+              >
+                <div className="settings-header">
+                  <i className="fas fa-database"></i>
+                  <span>Data Source</span>
+                </div>
+                <div className="settings-options">
+                  <button
+                    className={`settings-option ${dataSource === 'osm' ? 'active' : ''}`}
+                    onClick={() => handleDataSourceChange('osm')}
+                  >
+                    <div className="option-content">
+                      <i className="fas fa-map"></i>
+                      <div className="option-text">
+                        <strong>OpenStreetMap Data</strong>
+                        <small>Community-sourced geographic data</small>
+                      </div>
+                    </div>
+                    {dataSource === 'osm' && <i className="fas fa-check-circle"></i>}
+                  </button>
+                  
+                  <button
+                    className={`settings-option ${dataSource === 'city' ? 'active' : ''}`}
+                    onClick={() => handleDataSourceChange('city')}
+                  >
+                    <div className="option-content">
+                      <i className="fas fa-upload"></i>
+                      <div className="option-text">
+                        <strong>Uploaded Data</strong>
+                        <small>Custom uploaded geographic data</small>
+                      </div>
+                    </div>
+                    {dataSource === 'city' && <i className="fas fa-check-circle"></i>}
+                  </button>
+                </div>
+              </motion.div>
+            )}
+          </div>
+          
           <motion.button
             className="add-city-btn"
             onClick={onAddCity}
@@ -280,18 +358,6 @@ const Header = ({ cities, selectedCity, onCitySelect, onAddCity, onEditCity, onD
       </div>
     </header>
   );
-};
-
-Header.defaultProps = {
-  cities: [],
-  cityDataStatus: {},
-  processingProgress: {},
-  selectedCity: null,
-  onCitySelect: () => {},
-  onAddCity: () => {},
-  onEditCity: () => {},
-  onDeleteCity: () => {},
-  isLoading: false,
 };
 
 export default Header;
