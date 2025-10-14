@@ -34,6 +34,7 @@ function App() {
   const [availableLayers, setAvailableLayers] = useState({});
   const [editingLayer, setEditingLayer] = useState(null);
   const [dataSource, setDataSourceState] = useState('city'); // Default to 'city' (uploaded data)
+  const [mapView, setMapView] = useState('street'); // Add map view state
 
   // Domain colors for consistent styling
   const domainColors = {
@@ -117,6 +118,12 @@ function App() {
     } finally {
       setIsLoading(false);
     }
+  };
+
+  // Handle map view change
+  const handleMapViewChange = (newView) => {
+    console.log(`Changing map view to: ${newView}`);
+    setMapView(newView);
   };
 
   const handleCitySelect = async (city) => {
@@ -500,6 +507,8 @@ function App() {
         processingProgress={processingProgress}
         dataSource={dataSource}
         onDataSourceChange={handleDataSourceChange}
+        mapView={mapView}
+        onMapViewChange={handleMapViewChange}
       />
       
       <div className="main-content">
@@ -525,6 +534,7 @@ function App() {
           domainColors={domainColors}
           loadCityFeatures={loadCityFeatures}
           availableLayers={availableLayers}
+          mapView={mapView}
         />
       </div>
 

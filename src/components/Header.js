@@ -13,7 +13,9 @@ const Header = ({
   cityDataStatus = {}, 
   processingProgress = {},
   dataSource = 'osm',
-  onDataSourceChange = () => {}
+  onDataSourceChange = () => {},
+  mapView = 'street',
+  onMapViewChange = () => {}
 }) => {
   const [showDropdown, setShowDropdown] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
@@ -41,9 +43,23 @@ const Header = ({
     }
   };
 
+  const handleCityDropdownToggle = () => {
+    setShowDropdown(!showDropdown);
+    setShowSettings(false); // Close settings when opening city selector
+  };
+
+  const handleSettingsToggle = () => {
+    setShowSettings(!showSettings);
+    setShowDropdown(false); // Close city selector when opening settings
+  };
+
   const handleDataSourceChange = async (source) => {
-    setShowSettings(false);
     await onDataSourceChange(source);
+  };
+
+  const handleMapViewChange = (view) => {
+    setShowSettings(false);
+    onMapViewChange(view);
   };
 
   const getStatusCounts = () => {
@@ -136,7 +152,7 @@ const Header = ({
           <div className="city-selector">
             <motion.button
               className="city-selector-btn"
-              onClick={() => setShowDropdown(!showDropdown)}
+              onClick={handleCityDropdownToggle}
               whileHover={{ scale: 1.02 }}
               whileTap={{ scale: 0.98 }}
             >
@@ -292,7 +308,7 @@ const Header = ({
           <div className="settings-selector">
             <motion.button
               className="settings-btn"
-              onClick={() => setShowSettings(!showSettings)}
+              onClick={handleSettingsToggle}
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
               title="Data source settings"
@@ -338,6 +354,40 @@ const Header = ({
                       </div>
                     </div>
                     {dataSource === 'city' && <i className="fas fa-check-circle"></i>}
+                  </button>
+                </div>
+
+                <div className="settings-header">
+                  <i className="fas fa-map-marked-alt"></i>
+                  <span>Map View</span>
+                </div>
+                <div className="settings-options">
+                  <button
+                    className={`settings-option ${mapView === 'street' ? 'active' : ''}`}
+                    onClick={() => handleMapViewChange('street')}
+                  >
+                    <div className="option-content">
+                      <i className="fas fa-road"></i>
+                      <div className="option-text">
+                        <strong>Street View</strong>
+                        <small>Standard street map with labels</small>
+                      </div>
+                    </div>
+                    {mapView === 'street' && <i className="fas fa-check-circle"></i>}
+                  </button>
+                  
+                  <button
+                    className={`settings-option ${mapView === 'satellite' ? 'active' : ''}`}
+                    onClick={() => handleMapViewChange('satellite')}
+                  >
+                    <div className="option-content">
+                      <i className="fas fa-satellite"></i>
+                      <div className="option-text">
+                        <strong>Satellite View</strong>
+                        <small>Aerial imagery from space</small>
+                      </div>
+                    </div>
+                    {mapView === 'satellite' && <i className="fas fa-check-circle"></i>}
                   </button>
                 </div>
               </motion.div>

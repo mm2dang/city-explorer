@@ -64,10 +64,12 @@ const MapViewer = ({
   activeLayers = {},
   domainColors = {},
   loadCityFeatures,
-  availableLayers = {}
+  availableLayers = {},
+  mapView = 'street'
 }) => {
   const mapRef = useRef(null);
   const mapInstanceRef = useRef(null);
+  const tileLayerRef = useRef(null);
   const clusterGroupsRef = useRef({});
   const boundaryLayerRef = useRef(null);
   const nonPointLayerRef = useRef(null);
@@ -85,10 +87,12 @@ const MapViewer = ({
       maxZoom: 18
     }).setView([43.4643, -80.5204], 12);
 
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    // Add initial tile layer (street view)
+    const tileLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       attribution: '© OpenStreetMap contributors'
     }).addTo(map);
 
+    tileLayerRef.current = tileLayer;
     mapInstanceRef.current = map;
 
     return () => {
@@ -102,6 +106,29 @@ const MapViewer = ({
       }
     };
   }, []);
+
+  // Update tile layer when mapView changes
+  useEffect(() => {
+    if (!mapInstanceRef.current || !tileLayerRef.current) return;
+
+    // Remove current tile layer
+    mapInstanceRef.current.removeLayer(tileLayerRef.current);
+
+    // Add new tile layer based on mapView
+    let newTileLayer;
+    if (mapView === 'satellite') {
+      newTileLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+        attribution: 'Tiles © Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community'
+      });
+    } else {
+      newTileLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '© OpenStreetMap contributors'
+      });
+    }
+
+    newTileLayer.addTo(mapInstanceRef.current);
+    tileLayerRef.current = newTileLayer;
+  }, [mapView]);
 
   // Clear all markers and layers
   const clearAllLayers = useCallback(() => {
