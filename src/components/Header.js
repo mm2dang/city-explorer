@@ -224,7 +224,7 @@ const Header = ({
                       <input
                         type="text"
                         className="search-input"
-                        placeholder="Search by any field"
+                        placeholder="Search any field..."
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
                         onClick={(e) => e.stopPropagation()}

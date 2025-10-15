@@ -192,7 +192,7 @@
   color: #374151;
   font-size: 14px;
   transition: all 0.3s ease;
-  cursor: default;
+  cursor: pointer;
 }
 
 .map-feature-count:hover {
@@ -231,6 +231,74 @@
   color: #374151;
 }
 
+.leaflet-marker-pane,
+.leaflet-shadow-pane,
+.leaflet-overlay-pane,
+.leaflet-popup-pane {
+  z-index: 600 !important;
+}
+
+/* Custom marker icon - no positioning interference */
+.custom-marker-icon {
+  background: transparent !important;
+  border: none !important;
+  margin: 0 !important;
+  padding: 0 !important;
+}
+
+/* Marker cluster groups */
+.marker-cluster-small,
+.marker-cluster-medium,
+.marker-cluster-large,
+.custom-cluster-icon,
+.marker-cluster {
+  z-index: 1000 !important;
+}
+
+/* Ensure cluster icons don't interfere with positioning */
+.custom-cluster-icon {
+  background: transparent !important;
+  border: none !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  width: 40px !important;
+  height: 40px !important;
+  margin-left: -20px !important;
+  margin-top: -20px !important;
+}
+
+/* Spiderfied markers (expanded from cluster) should be on top */
+.leaflet-marker-icon.leaflet-zoom-animated.leaflet-interactive {
+  z-index: 10000 !important;
+}
+
+/* Spiderfy lines should be below markers but above clusters */
+.leaflet-cluster-spider-leg {
+  z-index: 9000 !important;
+  stroke-width: 2px;
+  stroke: rgba(0, 0, 0, 0.3);
+}
+
+/* Ensure individual markers in spiderfied state have highest z-index */
+.marker-cluster-spiderfied .leaflet-marker-icon {
+  z-index: 10001 !important;
+}
+
+/* Leaflet panes hierarchy - ensure proper stacking */
+.leaflet-pane {
+  position: absolute;
+  top: 0;
+  left: 0;
+}
+
+.leaflet-map-pane {
+  z-index: auto;
+}
+
+.leaflet-tile-pane {
+  z-index: 200 !important;
+}
+
 /* Leaflet popup styling */
 .leaflet-popup-content-wrapper {
   background: white;
@@ -262,6 +330,66 @@
   color: #374151;
   background: none;
   transform: scale(1.1);
+}
+
+/* Custom Zoom to Boundary Control - Exact same style as zoom buttons */
+.leaflet-control-custom {
+  background: rgba(255, 255, 255, 0.95) !important;
+  backdrop-filter: blur(10px) !important;
+  border: 1px solid rgba(226, 232, 240, 0.8) !important;
+  color: #374151 !important;
+  font-size: 18px !important;
+  width: 34px !important;
+  height: 34px !important;
+  line-height: 32px !important;
+  border-radius: 8px !important;
+  margin: 2px !important;
+  transition: all 0.2s !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  cursor: pointer !important;
+  box-shadow: none !important;
+  text-align: center !important;
+}
+
+.leaflet-control-custom:hover {
+  background: white !important;
+  color: #0891b2 !important;
+  transform: scale(1.05) !important;
+}
+
+.leaflet-control-custom i {
+  font-size: 16px;
+  line-height: 32px;
+  color: #374151;
+  transition: color 0.2s !important;
+}
+
+.leaflet-control-custom:hover i {
+  color: #0891b2 !important;
+}
+
+/* Position custom control below zoom buttons with offset to the right */
+.leaflet-top .leaflet-left .leaflet-control-custom {
+  margin-top: 76px;
+  margin-left: 10px !important;
+}
+
+/* Responsive adjustments for custom control */
+@media (max-width: 768px) {
+  .leaflet-top .leaflet-left .leaflet-control-custom {
+    margin-top: 70px;
+    margin-left: 10px !important;
+    width: 30px !important;
+    height: 30px !important;
+    line-height: 28px !important;
+    font-size: 16px !important;
+  }
+  
+  .leaflet-control-custom i {
+    font-size: 14px;
+  }
 }
 
 /* Responsive design */

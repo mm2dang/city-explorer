@@ -3,6 +3,7 @@ import { readParquet, writeParquet, WriterPropertiesBuilder, Compression } from 
 import { tableFromIPC } from 'apache-arrow';
 import shpwrite from '@mapbox/shp-write';
 import JSZip from 'jszip';
+import { getDataSource } from './s3';
 
 // Initialize S3 client
 const s3Client = new S3Client({
@@ -16,7 +17,7 @@ const s3Client = new S3Client({
   },
 });
 
-const BUCKET_NAME = 'veraset-data-qoli-dev';
+const BUCKET_NAME = process.env.REACT_APP_S3_BUCKET_NAME;
 
 // Helper to normalize names
 const normalizeName = (name) => {
@@ -61,6 +62,8 @@ const streamToArrayBuffer = async (stream) => {
 // Load layer data from S3
 const loadLayerData = async (cityName, domain, layerName) => {
   try {
+    console.log(`Loading from S3: city="${cityName}", domain="${domain}", layer="${layerName}"`);
+    
     const parts = cityName.split(',').map(p => p.trim());
     if (parts.length < 2) {
       throw new Error('Invalid city name format');
@@ -78,37 +81,55 @@ const loadLayerData = async (cityName, domain, layerName) => {
     const normalizedProvince = normalizeName(province);
     const normalizedCountry = normalizeName(country);
     
-    const key = `data/country=${normalizedCountry}/province=${normalizedProvince}/city=${normalizedCity}/domain=${domain}/${layerName}.snappy.parquet`;
+    // Get current data source prefix from s3.js
+    const DATA_SOURCE_PREFIX = getDataSource();
+    console.log(`Using data source prefix: ${DATA_SOURCE_PREFIX}`);
     
-    console.log(`Loading layer from S3: ${key}`);
+    const possibleKeys = [
+      `${DATA_SOURCE_PREFIX}/data/country=${normalizedCountry}/province=${normalizedProvince}/city=${normalizedCity}/domain=${domain}/${layerName}.snappy.parquet`,
+    ];
     
-    const command = new GetObjectCommand({
-      Bucket: BUCKET_NAME,
-      Key: key,
-    });
-    
-    const response = await s3Client.send(command);
-    const arrayBuffer = await streamToArrayBuffer(response.Body);
-    const uint8Array = new Uint8Array(arrayBuffer);
-    
-    // Read parquet file
-    const wasmTable = readParquet(uint8Array);
-    const ipcBytes = wasmTable.intoIPCStream();
-    const arrowTable = tableFromIPC(ipcBytes);
-    
-    // Convert to JavaScript objects
-    const data = [];
-    for (let i = 0; i < arrowTable.numRows; i++) {
-      const row = {};
-      for (const field of arrowTable.schema.fields) {
-        const column = arrowTable.getChild(field.name);
-        row[field.name] = column.get(i);
+    for (const key of possibleKeys) {
+      try {
+        console.log(`Trying key: ${key}`);
+        const command = new GetObjectCommand({
+          Bucket: BUCKET_NAME,
+          Key: key,
+        });
+        
+        const response = await s3Client.send(command);
+        const arrayBuffer = await streamToArrayBuffer(response.Body);
+        const uint8Array = new Uint8Array(arrayBuffer);
+        
+        // Successfully loaded, parse the data
+        const wasmTable = readParquet(uint8Array);
+        const ipcBytes = wasmTable.intoIPCStream();
+        const arrowTable = tableFromIPC(ipcBytes);
+        
+        const data = [];
+        for (let i = 0; i < arrowTable.numRows; i++) {
+          const row = {};
+          for (const field of arrowTable.schema.fields) {
+            const column = arrowTable.getChild(field.name);
+            row[field.name] = column.get(i);
+          }
+          data.push(row);
+        }
+        
+        console.log(`Successfully loaded ${data.length} rows from: ${key}`);
+        return data;
+        
+      } catch (error) {
+        if (error.Code === 'NoSuchKey' || error.name === 'NoSuchKey') {
+          continue; // Try next key pattern
+        }
+        throw error; // Other errors should be thrown immediately
       }
-      data.push(row);
     }
     
-    console.log(`Loaded ${data.length} rows for layer ${layerName}`);
-    return data;
+    // If we get here, none of the keys worked
+    console.error('All key patterns failed. Tried:', possibleKeys);
+    throw new Error(`Layer data not found. Tried ${possibleKeys.length} different paths.`);
     
   } catch (error) {
     console.error('Error loading layer data:', error);

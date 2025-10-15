@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import './styles/App.css';
 import Header from './components/Header';
-import Sidebar from './components/Sidebar';
+import Sidebar from './components/Sidebar'; // Fixed import path
 import MapViewer from './components/MapViewer';
 import AddCityWizard from './components/AddCityWizard';
 import LayerModal from './components/LayerModal';
@@ -10,7 +10,6 @@ import {
   loadCityFeatures,
   saveCityData,
   deleteCityData,
-  processCityFeatures,
   cancelCityProcessing,
   getAvailableLayersForCity,
   saveCustomLayer,
@@ -24,7 +23,6 @@ function App() {
   const [cities, setCities] = useState([]);
   const [selectedCity, setSelectedCity] = useState(null);
   const [activeLayers, setActiveLayers] = useState({});
-  const [features, setFeatures] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
   const [showAddCityWizard, setShowAddCityWizard] = useState(false);
   const [showLayerModal, setShowLayerModal] = useState(false);
@@ -35,18 +33,20 @@ function App() {
   const [editingLayer, setEditingLayer] = useState(null);
   const [dataSource, setDataSourceState] = useState('city');
   const [mapView, setMapView] = useState('street');
+  // eslint-disable-next-line no-unused-vars
+  const [features, setFeatures] = useState([]);
 
   // Domain colors for consistent styling
   const domainColors = {
-    mobility: '#3b82f6',
-    governance: '#8b5cf6',
-    health: '#ef4444',
-    economy: '#f59e0b',
-    environment: '#10b981',
-    culture: '#ec4899',
-    education: '#06b6d4',
-    housing: '#6366f1',
-    social: '#f97316',
+    mobility: '#fdd900',     // Yellow
+    governance: '#005670',   // Dark Teal Blue
+    health: '#ffdb9d',       // Peach
+    economy: '#00b2e2',      // Sky Blue
+    environment: '#3aaa35',  // Green
+    social: '#f49ac1',       // Pink
+    education: '#ff8000',    // Orange
+    housing: '#b3d7b1',      // Light Green
+    culture: '#e33e7f',      // Deep Pink
   };
 
   // Initialize data source on mount
@@ -353,39 +353,39 @@ function App() {
     }
   };
 
-  const handleAddLayer = () => {
+  const handleEditLayer = async (domain, layerName) => {
     if (!selectedCity) {
-      alert('Please select a city first');
+      console.error('No city selected');
       return;
     }
-    setEditingLayer(null);
-    setShowLayerModal(true);
-  };
-
-  const handleEditLayer = async (layerName) => {
-    if (!selectedCity) return;
-
+  
+    if (!domain || !layerName) {
+      console.error('Invalid edit parameters:', { domain, layerName });
+      alert('Cannot edit layer: missing domain or layer name');
+      return;
+    }
+  
     try {
-      console.log(`Loading layer for editing: ${layerName}`);
-      const layerInfo = availableLayers[layerName];
-      if (!layerInfo) {
-        console.error('Layer info not found for:', layerName);
-        return;
-      }
-
+      console.log(`Loading layer for editing: domain="${domain}", layerName="${layerName}"`);
+  
       const features = await loadLayerForEditing(
         selectedCity.name,
-        layerInfo.domain,
+        domain,
         layerName
       );
-
+  
+      const layerInfo = availableLayers[layerName];
+      const icon = layerInfo?.icon || 'fas fa-map-marker-alt';
+  
       setEditingLayer({
         name: layerName,
-        domain: layerInfo.domain,
-        icon: layerInfo.icon,
+        domain: domain,
+        icon: icon,
         features: features
       });
+      
       setShowLayerModal(true);
+      console.log('Layer loaded for editing successfully');
     } catch (error) {
       console.error('Error loading layer for editing:', error);
       alert(`Error loading layer: ${error.message}`);
@@ -423,30 +423,40 @@ function App() {
     }
   };
 
-  const handleDeleteLayer = async (layerName) => {
-    if (!selectedCity) return;
-    if (!window.confirm(`Are you sure you want to delete the layer "${layerName}"?`)) {
+  const handleDeleteLayer = async (domain, layerName, options = {}) => {
+    // Validate inputs
+    if (!selectedCity) {
+      console.error('No city selected');
+      alert('Please select a city first');
       return;
     }
-
+    
+    if (!domain || !layerName) {
+      console.error('Invalid delete parameters:', { domain, layerName });
+      alert('Cannot delete layer: missing domain or layer name');
+      return;
+    }
+  
+    const displayName = layerName.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+    
+    if (!options.silent && !window.confirm(`Are you sure you want to delete the layer "${displayName}"?`)) {
+      return;
+    }
+  
     try {
-      console.log(`Deleting layer: ${layerName}`);
-      const layerInfo = availableLayers[layerName];
-      if (!layerInfo) {
-        console.error('Layer info not found for:', layerName);
-        return;
-      }
-
-      await deleteLayer(selectedCity.name, layerInfo.domain, layerName);
-
+      console.log(`Deleting layer: domain="${domain}", layerName="${layerName}", city="${selectedCity.name}" (silent: ${options.silent})`);
+      
+      await deleteLayer(selectedCity.name, domain, layerName);
+  
       if (activeLayers[layerName]) {
         const newActiveLayers = { ...activeLayers };
         delete newActiveLayers[layerName];
         setActiveLayers(newActiveLayers);
       }
-
+  
       const layers = await getAvailableLayersForCity(selectedCity.name);
       setAvailableLayers(layers);
+      
       console.log('Layer deleted successfully');
     } catch (error) {
       console.error('Error deleting layer:', error);
@@ -480,9 +490,7 @@ function App() {
           cityBoundary={selectedCity?.boundary}
           activeLayers={activeLayers}
           onLayerToggle={handleLayerToggle}
-          onAddLayer={handleAddLayer}
           onEditLayer={handleEditLayer}
-          onDeleteLayer={handleDeleteLayer}
           availableLayers={availableLayers}
           domainColors={domainColors}
           onLayerSave={handleSaveLayer}
@@ -490,8 +498,6 @@ function App() {
         />
         <MapViewer
           selectedCity={selectedCity}
-          features={features}
-          isLoading={isLoading}
           activeLayers={activeLayers}
           domainColors={domainColors}
           loadCityFeatures={loadCityFeatures}
