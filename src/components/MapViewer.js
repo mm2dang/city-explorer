@@ -95,7 +95,24 @@ const MapViewer = ({
     tileLayerRef.current = tileLayer;
     mapInstanceRef.current = map;
 
+    // Add resize observer to handle container size changes
+    const resizeObserver = new ResizeObserver(() => {
+      if (mapInstanceRef.current) {
+        // Invalidate size after a short delay to ensure smooth transition
+        setTimeout(() => {
+          if (mapInstanceRef.current) {
+            mapInstanceRef.current.invalidateSize();
+          }
+        }, 350); // Slightly longer than the sidebar transition (300ms)
+      }
+    });
+
+    if (mapRef.current) {
+      resizeObserver.observe(mapRef.current);
+    }
+
     return () => {
+      resizeObserver.disconnect();
       if (mapInstanceRef.current) {
         mapInstanceRef.current.remove();
         mapInstanceRef.current = null;
@@ -520,11 +537,9 @@ const MapViewer = ({
       )}
       
       {featureCount > 0 && (
-        <div className="map-info">
-          <div className="info-content">
-            <i className="fas fa-map-marker-alt"></i>
-            <span>{featureCount.toLocaleString()} features loaded</span>
-          </div>
+        <div className="map-feature-count">
+          <i className="fas fa-map-marker-alt"></i>
+          <span>{featureCount.toLocaleString()} features loaded</span>
         </div>
       )}
       

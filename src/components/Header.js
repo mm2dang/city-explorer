@@ -2,15 +2,15 @@ import React, { useState } from 'react';
 import { motion } from 'framer-motion';
 import '../styles/Header.css';
 
-const Header = ({ 
-  cities = [], 
-  selectedCity = null, 
-  onCitySelect = () => {}, 
-  onAddCity = () => {}, 
-  onEditCity = () => {}, 
-  onDeleteCity = () => {}, 
+const Header = ({
+  cities = [],
+  selectedCity = null,
+  onCitySelect = () => {},
+  onAddCity = () => {},
+  onEditCity = () => {},
+  onDeleteCity = () => {},
   isLoading = false,
-  cityDataStatus = {}, 
+  cityDataStatus = {},
   processingProgress = {},
   dataSource = 'osm',
   onDataSourceChange = () => {},
@@ -21,6 +21,7 @@ const Header = ({
   const [showSettings, setShowSettings] = useState(false);
   const [sortBy, setSortBy] = useState('name');
   const [sortOrder, setSortOrder] = useState('asc');
+  const [searchQuery, setSearchQuery] = useState('');
 
   const handleCityAction = (e, action, city) => {
     e.stopPropagation();
@@ -40,12 +41,16 @@ const Header = ({
     if (!isProcessing) {
       onCitySelect(city);
       setShowDropdown(false);
+      setSearchQuery(''); // Clear search when selecting a city
     }
   };
 
   const handleCityDropdownToggle = () => {
     setShowDropdown(!showDropdown);
     setShowSettings(false); // Close settings when opening city selector
+    if (!showDropdown) {
+      setSearchQuery(''); // Clear search when opening dropdown
+    }
   };
 
   const handleSettingsToggle = () => {
@@ -64,13 +69,12 @@ const Header = ({
 
   const getStatusCounts = () => {
     const ready = cityDataStatus ? cities.filter(city => cityDataStatus[city.name]).length : 0;
-    const processing = processingProgress 
-     ? Object.keys(processingProgress).filter(cityName => {
-         const progress = processingProgress[cityName];
-         return progress && progress.status === 'processing';
-       }).length 
-     : 0;
-    
+    const processing = processingProgress
+      ? Object.keys(processingProgress).filter(cityName => {
+          const progress = processingProgress[cityName];
+          return progress && progress.status === 'processing';
+        }).length
+      : 0;
     return { ready, processing, total: cities.length };
   };
 
@@ -93,6 +97,29 @@ const Header = ({
       province: parts[1] || '',
       country: parts[2] || ''
     };
+  };
+
+  const filterCities = (citiesToFilter) => {
+    if (!searchQuery.trim()) return citiesToFilter;
+
+    const query = searchQuery.toLowerCase().trim();
+    
+    return citiesToFilter.filter(city => {
+      const parsed = parseCityName(city.name);
+      const cityName = parsed.city.toLowerCase();
+      const province = parsed.province.toLowerCase();
+      const country = parsed.country.toLowerCase();
+      const population = city.population ? city.population.toString() : '';
+      const size = city.size ? city.size.toString() : '';
+
+      return (
+        cityName.includes(query) ||
+        province.includes(query) ||
+        country.includes(query) ||
+        population.includes(query) ||
+        size.includes(query)
+      );
+    });
   };
 
   const sortCities = (citiesToSort) => {
@@ -131,7 +158,8 @@ const Header = ({
     });
   };
 
-  const sortedCities = sortCities(cities);
+  const filteredCities = filterCities(cities);
+  const sortedCities = sortCities(filteredCities);
 
   return (
     <header className="header">
@@ -149,7 +177,7 @@ const Header = ({
             </small>
           </div>
         </div>
-        
+
         <div className="header-controls">
           <div className="city-selector">
             <motion.button
@@ -163,7 +191,7 @@ const Header = ({
               </span>
               <i className={`fas fa-chevron-${showDropdown ? 'up' : 'down'}`}></i>
             </motion.button>
-            
+
             {showDropdown && (
               <motion.div
                 className="city-dropdown"
@@ -189,6 +217,39 @@ const Header = ({
                     <div className="dropdown-header">
                       <span>Available Cities ({cities.length})</span>
                     </div>
+
+                    {/* Search Input */}
+                    <div className="search-container">
+                      <i className="fas fa-search search-icon"></i>
+                      <input
+                        type="text"
+                        className="search-input"
+                        placeholder="Search by any field"
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        onClick={(e) => e.stopPropagation()}
+                      />
+                      {searchQuery && (
+                        <button
+                          className="clear-search-btn"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSearchQuery('');
+                          }}
+                          title="Clear search"
+                        >
+                          <i className="fas fa-times"></i>
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Results count when searching */}
+                    {searchQuery && (
+                      <div className="search-results-info">
+                        <span>{filteredCities.length} result{filteredCities.length !== 1 ? 's' : ''} found</span>
+                      </div>
+                    )}
+
                     <div className="sort-controls">
                       <span className="sort-label">Sort by:</span>
                       <button
@@ -222,91 +283,102 @@ const Header = ({
                         Size {sortBy === 'size' && <i className={`fas fa-chevron-${sortOrder === 'asc' ? 'up' : 'down'}`}></i>}
                       </button>
                     </div>
-                    {sortedCities.map((city) => {
-                      const hasDataLayers = cityDataStatus ? cityDataStatus[city.name] : false;
-                      const progress = processingProgress?.[city.name];
-                      const isProcessing = progress && progress.status === 'processing';
-                      
-                      return (
-                        <div key={city.name} className="dropdown-item-container">
-                          <motion.div
-                            className={`dropdown-item ${selectedCity?.name === city.name ? 'selected' : ''} ${isProcessing ? 'disabled' : ''}`}
-                            onClick={() => handleCitySelect(city)}
-                            whileHover={!isProcessing ? { backgroundColor: '#f0f9ff' } : {}}
-                            style={{ cursor: !isProcessing ? 'pointer' : 'not-allowed', opacity: !isProcessing ? 1 : 0.6 }}
-                          >
-                            <div className="city-info">
-                              <div className="city-header">
-                                <span className="city-name">{city.name}</span>
-                                <div className="city-actions">
-                                  <button
-                                    className="action-btn edit-btn"
-                                    onClick={(e) => handleCityAction(e, 'edit', city)}
-                                    title="Edit city"
-                                  >
-                                    <i className="fas fa-edit"></i>
-                                  </button>
-                                  <button
-                                    className="action-btn delete-btn"
-                                    onClick={(e) => handleCityAction(e, 'delete', city)}
-                                    title="Delete city"
-                                  >
-                                    <i className="fas fa-trash"></i>
-                                  </button>
-                                </div>
-                              </div>
-                              
-                              {(city.population || city.size) && (
-                                <div className="city-meta-row">
-                                  {city.population && (
-                                    <span className="city-details">
-                                      <i className="fas fa-users"></i>
-                                      {city.population.toLocaleString()}
-                                    </span>
-                                  )}
-                                  {city.size && (
-                                    <span className="city-details">
-                                      <i className="fas fa-expand-arrows-alt"></i>
-                                      {city.size} km²
-                                    </span>
-                                  )}
-                                </div>
-                              )}
-                              
-                              <div className="city-status-row">
-                                <span className={`status-label ${isProcessing ? 'processing' : hasDataLayers ? 'ready' : 'pending'}`}>
-                                  <i className={`fas fa-${isProcessing ? 'spinner fa-spin' : hasDataLayers ? 'check-circle' : 'clock'}`}></i>
-                                  {isProcessing ? 'Processing' : hasDataLayers ? 'Ready' : 'Pending'}
-                                </span>
-                              </div>
-                              
-                              {isProcessing && progress && (
-                                <div className="processing-status">
-                                  <div className="progress-bar">
-                                    <div 
-                                      className="progress-fill" 
-                                      style={{ width: `${Math.min((progress.processed / progress.total) * 100, 100)}%` }}
-                                    />
-                                  </div>
-                                  <small className="progress-text">
-                                    {progress.processed} / {progress.total} layers processed
-                                    {progress.saved !== undefined && progress.saved !== progress.processed && 
-                                      ` (${progress.saved} with data)`
-                                    }
-                                  </small>
-                                </div>
-                              )}
-                            </div>
-                          </motion.div>
+
+                    {sortedCities.length === 0 ? (
+                      <div className="dropdown-item empty">
+                        <i className="fas fa-search"></i>
+                        <div>
+                          <strong>No cities match your search</strong>
+                          <p>Try different search terms</p>
                         </div>
-                      );
-                    })}
+                      </div>
+                    ) : (
+                      sortedCities.map((city) => {
+                        const hasDataLayers = cityDataStatus ? cityDataStatus[city.name] : false;
+                        const progress = processingProgress?.[city.name];
+                        const isProcessing = progress && progress.status === 'processing';
+
+                        return (
+                          <div key={city.name} className="dropdown-item-container">
+                            <motion.div
+                              className={`dropdown-item ${selectedCity?.name === city.name ? 'selected' : ''} ${isProcessing ? 'disabled' : ''}`}
+                              onClick={() => handleCitySelect(city)}
+                              whileHover={!isProcessing ? { backgroundColor: '#f0f9ff' } : {}}
+                              style={{ cursor: !isProcessing ? 'pointer' : 'not-allowed', opacity: !isProcessing ? 1 : 0.6 }}
+                            >
+                              <div className="city-info">
+                                <div className="city-header">
+                                  <span className="city-name">{city.name}</span>
+                                  <div className="city-actions">
+                                    <button
+                                      className="action-btn edit-btn"
+                                      onClick={(e) => handleCityAction(e, 'edit', city)}
+                                      title="Edit city"
+                                    >
+                                      <i className="fas fa-edit"></i>
+                                    </button>
+                                    <button
+                                      className="action-btn delete-btn"
+                                      onClick={(e) => handleCityAction(e, 'delete', city)}
+                                      title="Delete city"
+                                    >
+                                      <i className="fas fa-trash"></i>
+                                    </button>
+                                  </div>
+                                </div>
+
+                                {(city.population || city.size) && (
+                                  <div className="city-meta-row">
+                                    {city.population && (
+                                      <span className="city-details">
+                                        <i className="fas fa-users"></i>
+                                        {city.population.toLocaleString()}
+                                      </span>
+                                    )}
+                                    {city.size && (
+                                      <span className="city-details">
+                                        <i className="fas fa-expand-arrows-alt"></i>
+                                        {city.size} km²
+                                      </span>
+                                    )}
+                                  </div>
+                                )}
+
+                                <div className="city-status-row">
+                                  <span className={`status-label ${isProcessing ? 'processing' : hasDataLayers ? 'ready' : 'pending'}`}>
+                                    <i className={`fas fa-${isProcessing ? 'spinner fa-spin' : hasDataLayers ? 'check-circle' : 'clock'}`}></i>
+                                    {isProcessing ? 'Processing' : hasDataLayers ? 'Ready' : 'Pending'}
+                                  </span>
+                                </div>
+
+                                {isProcessing && progress && (
+                                  <div className="processing-status">
+                                    <div className="progress-bar">
+                                      <div
+                                        className="progress-fill"
+                                        style={{ width: `${Math.min((progress.processed / progress.total) * 100, 100)}%` }}
+                                      />
+                                    </div>
+                                    <small className="progress-text">
+                                      {progress.processed} / {progress.total} layers processed
+                                      {progress.saved !== undefined && progress.saved !== progress.processed &&
+                                        ` (${progress.saved} with data)`
+                                      }
+                                    </small>
+                                  </div>
+                                )}
+                              </div>
+                            </motion.div>
+                          </div>
+                        );
+                      })
+                    )}
                   </>
                 )}
               </motion.div>
             )}
           </div>
-          
+
           <div className="settings-selector">
             <motion.button
               className="settings-btn"
@@ -317,7 +389,7 @@ const Header = ({
             >
               <i className="fas fa-cog"></i>
             </motion.button>
-            
+
             {showSettings && (
               <motion.div
                 className="settings-dropdown"
@@ -343,7 +415,7 @@ const Header = ({
                     </div>
                     {dataSource === 'osm' && <i className="fas fa-check-circle"></i>}
                   </button>
-                  
+
                   <button
                     className={`settings-option ${dataSource === 'city' ? 'active' : ''}`}
                     onClick={() => handleDataSourceChange('city')}
@@ -377,7 +449,7 @@ const Header = ({
                     </div>
                     {mapView === 'street' && <i className="fas fa-check-circle"></i>}
                   </button>
-                  
+
                   <button
                     className={`settings-option ${mapView === 'satellite' ? 'active' : ''}`}
                     onClick={() => handleMapViewChange('satellite')}
@@ -395,7 +467,7 @@ const Header = ({
               </motion.div>
             )}
           </div>
-          
+
           <motion.button
             className="add-city-btn"
             onClick={onAddCity}

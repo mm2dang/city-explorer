@@ -6,18 +6,18 @@ import MapViewer from './components/MapViewer';
 import AddCityWizard from './components/AddCityWizard';
 import LayerModal from './components/LayerModal';
 import {
-getAllCitiesWithDataStatus,
-loadCityFeatures,
-saveCityData,
-deleteCityData,
-processCityFeatures,
-cancelCityProcessing,
-getAvailableLayersForCity,
-saveCustomLayer,
-deleteLayer,
-loadLayerForEditing,
-moveCityData,
-setDataSource
+  getAllCitiesWithDataStatus,
+  loadCityFeatures,
+  saveCityData,
+  deleteCityData,
+  processCityFeatures,
+  cancelCityProcessing,
+  getAvailableLayersForCity,
+  saveCustomLayer,
+  deleteLayer,
+  loadLayerForEditing,
+  moveCityData,
+  setDataSource
 } from './utils/s3';
 
 function App() {
@@ -33,8 +33,8 @@ function App() {
   const [processingProgress, setProcessingProgress] = useState({});
   const [availableLayers, setAvailableLayers] = useState({});
   const [editingLayer, setEditingLayer] = useState(null);
-  const [dataSource, setDataSourceState] = useState('city'); // Default to 'city' (uploaded data)
-  const [mapView, setMapView] = useState('street'); // Add map view state
+  const [dataSource, setDataSourceState] = useState('city');
+  const [mapView, setMapView] = useState('street');
 
   // Domain colors for consistent styling
   const domainColors = {
@@ -51,7 +51,6 @@ function App() {
 
   // Initialize data source on mount
   useEffect(() => {
-    // Set default to 'city' on first load
     setDataSource('city');
     setDataSourceState('city');
     console.log('Data source initialized to: city (uploaded data)');
@@ -62,6 +61,35 @@ function App() {
     loadCities();
   }, []);
 
+  // Debounced feature reloading when activeLayers changes
+  useEffect(() => {
+    let timeoutId;
+    
+    const reloadFeatures = async () => {
+      if (selectedCity && Object.keys(activeLayers).length > 0) {
+        setIsLoading(true);
+        try {
+          const cityFeatures = await loadCityFeatures(selectedCity.name, activeLayers);
+          console.log(`Loaded ${cityFeatures.length} features for active layers`);
+          setFeatures(cityFeatures);
+        } catch (error) {
+          console.error('Error loading features:', error);
+          setFeatures([]);
+        } finally {
+          setIsLoading(false);
+        }
+      } else if (selectedCity && Object.keys(activeLayers).length === 0) {
+        // No active layers, clear features
+        setFeatures([]);
+      }
+    };
+    
+    // Debounce the feature reload by 300ms to batch multiple toggles
+    timeoutId = setTimeout(reloadFeatures, 300);
+    
+    return () => clearTimeout(timeoutId);
+  }, [activeLayers, selectedCity]);
+
   const loadCities = async () => {
     setIsLoading(true);
     try {
@@ -70,7 +98,6 @@ function App() {
       console.log(`Loaded ${citiesWithStatus.length} cities:`, citiesWithStatus);
       setCities(citiesWithStatus);
 
-      // Update city data status
       const newStatus = {};
       citiesWithStatus.forEach(city => {
         newStatus[city.name] = city.hasDataLayers;
@@ -83,26 +110,20 @@ function App() {
     }
   };
 
-  // Handle data source change
   const handleDataSourceChange = async (newSource) => {
     console.log(`Switching data source from ${dataSource} to ${newSource}`);
-    // Update local state
     setDataSourceState(newSource);
-    // Update s3.js data source
     setDataSource(newSource);
-    // Clear current selection and layers
     setSelectedCity(null);
     setActiveLayers({});
     setFeatures([]);
     setAvailableLayers({});
 
-    // Reload cities from new data source
     setIsLoading(true);
     try {
       const citiesWithStatus = await getAllCitiesWithDataStatus();
       setCities(citiesWithStatus);
 
-      // Update city data status
       const newStatus = {};
       citiesWithStatus.forEach(city => {
         newStatus[city.name] = city.hasDataLayers;
@@ -116,7 +137,6 @@ function App() {
     }
   };
 
-  // Handle map view change
   const handleMapViewChange = (newView) => {
     console.log(`Changing map view to: ${newView}`);
     setMapView(newView);
@@ -128,68 +148,39 @@ function App() {
     setActiveLayers({});
     setFeatures([]);
 
-    // Load available layers for the selected city
     try {
       const layers = await getAvailableLayersForCity(city.name);
       console.log('Available layers for city:', layers);
       setAvailableLayers(layers);
 
-      // Enable all layers by default
       const allLayersActive = {};
       Object.keys(layers).forEach(layerName => {
         allLayersActive[layerName] = true;
       });
       setActiveLayers(allLayersActive);
-
-      // Load features for all active layers
-      if (Object.keys(allLayersActive).length > 0) {
-        setIsLoading(true);
-        try {
-          const cityFeatures = await loadCityFeatures(city.name, allLayersActive);
-          console.log(`Loaded ${cityFeatures.length} features for all layers`);
-          setFeatures(cityFeatures);
-        } catch (error) {
-          console.error('Error loading features:', error);
-          setFeatures([]);
-        } finally {
-          setIsLoading(false);
-        }
-      }
     } catch (error) {
       console.error('Error loading available layers:', error);
       setAvailableLayers({});
     }
   };
 
-  const handleLayerToggle = async (layerName, isActive) => {
+  const handleLayerToggle = (layerName, isActive) => {
     console.log(`Layer ${layerName} toggled to ${isActive}`);
-    const newActiveLayers = {
-      ...activeLayers,
+    
+    // Update state immediately without reloading
+    // The useEffect hook will handle the debounced reload
+    setActiveLayers(prev => ({
+      ...prev,
       [layerName]: isActive,
-    };
-    setActiveLayers(newActiveLayers);
-
-    if (selectedCity) {
-      setIsLoading(true);
-      try {
-        const cityFeatures = await loadCityFeatures(selectedCity.name, newActiveLayers);
-        console.log(`Loaded ${cityFeatures.length} features for active layers`);
-        setFeatures(cityFeatures);
-      } catch (error) {
-        console.error('Error loading features:', error);
-        setFeatures([]);
-      } finally {
-        setIsLoading(false);
-      }
-    }
+    }));
   };
 
   const handleAddCity = async (cityData, startProcessing) => {
     try {
       console.log('Adding new city:', cityData);
-      // Parse city name to get country, province, city
       const parts = cityData.name.split(',').map(p => p.trim());
       let city, province, country;
+      
       if (parts.length === 2) {
         [city, country] = parts;
         province = '';
@@ -197,16 +188,11 @@ function App() {
         [city, province, country] = parts;
       }
 
-      // Save city metadata
       await saveCityData(cityData, country, province, city);
-
-      // Reload cities
       await loadCities();
 
-      // Only start processing if callback provided
       if (startProcessing) {
         console.log('Starting background processing for:', cityData.name);
-        // Initialize processing progress
         setProcessingProgress(prev => ({
           ...prev,
           [cityData.name]: {
@@ -217,13 +203,11 @@ function App() {
           }
         }));
 
-        // Update city data status to show it's processing
         setCityDataStatus(prev => ({
           ...prev,
           [cityData.name]: false
         }));
 
-        // Start processing via callback
         startProcessing((cityName, progress) => {
           console.log(`Processing progress for ${cityName}:`, progress);
           setProcessingProgress(prev => ({
@@ -231,7 +215,6 @@ function App() {
             [cityName]: progress
           }));
 
-          // Update city data status when processing is complete
           if (progress.status === 'complete' && progress.saved > 0) {
             setCityDataStatus(prev => ({
               ...prev,
@@ -258,10 +241,9 @@ function App() {
   const handleUpdateCity = async (updatedCityData, startProcessing) => {
     try {
       console.log('Updating city:', updatedCityData);
-      // Parse old and new city names
       const oldParts = editingCity.name.split(',').map(p => p.trim());
       const newParts = updatedCityData.name.split(',').map(p => p.trim());
-
+      
       let oldCity, oldProvince, oldCountry;
       let newCity, newProvince, newCountry;
 
@@ -279,7 +261,6 @@ function App() {
         [newCity, newProvince, newCountry] = newParts;
       }
 
-      // Check if location changed (country/province/city)
       const locationChanged =
         oldCountry !== newCountry ||
         oldProvince !== newProvince ||
@@ -287,20 +268,15 @@ function App() {
 
       if (locationChanged) {
         console.log('Location changed, moving data...');
-        // Move all data to new location
         await moveCityData(
           oldCountry, oldProvince, oldCity,
           newCountry, newProvince, newCity
         );
       }
 
-      // Save updated city metadata
       await saveCityData(updatedCityData, newCountry, newProvince, newCity);
-
-      // Reload cities
       await loadCities();
 
-      // Only start processing if callback provided
       if (startProcessing) {
         console.log('Starting background processing for updated city:', updatedCityData.name);
         setProcessingProgress(prev => ({
@@ -329,7 +305,6 @@ function App() {
         });
       }
 
-      // Update selected city if it was the one being edited
       if (selectedCity?.name === editingCity.name) {
         setSelectedCity(null);
         setActiveLayers({});
@@ -351,30 +326,25 @@ function App() {
 
     try {
       console.log('Deleting city:', cityName);
-      // Cancel any active processing
       const wasCancelled = await cancelCityProcessing(cityName);
       if (wasCancelled) {
         console.log('Cancelled active processing for city');
       }
 
-      // Delete city data
       await deleteCityData(cityName);
 
-      // Clear selection if deleted city was selected
       if (selectedCity?.name === cityName) {
         setSelectedCity(null);
         setActiveLayers({});
         setFeatures([]);
       }
 
-      // Remove from processing progress
       setProcessingProgress(prev => {
         const newProgress = { ...prev };
         delete newProgress[cityName];
         return newProgress;
       });
 
-      // Reload cities
       await loadCities();
       console.log('City deleted successfully');
     } catch (error) {
@@ -388,7 +358,6 @@ function App() {
       alert('Please select a city first');
       return;
     }
-
     setEditingLayer(null);
     setShowLayerModal(true);
   };
@@ -404,7 +373,6 @@ function App() {
         return;
       }
 
-      // Load the layer features
       const features = await loadLayerForEditing(
         selectedCity.name,
         layerInfo.domain,
@@ -417,7 +385,6 @@ function App() {
         icon: layerInfo.icon,
         features: features
       });
-
       setShowLayerModal(true);
     } catch (error) {
       console.error('Error loading layer for editing:', error);
@@ -432,20 +399,16 @@ function App() {
         throw new Error('No city selected');
       }
 
-      // Save the layer
       await saveCustomLayer(selectedCity.name, layerData, selectedCity.boundary);
 
-      // Reload available layers
       const layers = await getAvailableLayersForCity(selectedCity.name);
       setAvailableLayers(layers);
 
-      // Update city data status to show it has layers
       setCityDataStatus(prev => ({
         ...prev,
         [selectedCity.name]: true
       }));
 
-      // If the layer is currently active, reload features
       if (activeLayers[layerData.name]) {
         const cityFeatures = await loadCityFeatures(selectedCity.name, activeLayers);
         setFeatures(cityFeatures);
@@ -462,7 +425,6 @@ function App() {
 
   const handleDeleteLayer = async (layerName) => {
     if (!selectedCity) return;
-
     if (!window.confirm(`Are you sure you want to delete the layer "${layerName}"?`)) {
       return;
     }
@@ -477,21 +439,14 @@ function App() {
 
       await deleteLayer(selectedCity.name, layerInfo.domain, layerName);
 
-      // Remove from active layers if it was active
       if (activeLayers[layerName]) {
         const newActiveLayers = { ...activeLayers };
         delete newActiveLayers[layerName];
         setActiveLayers(newActiveLayers);
-
-        // Reload features without this layer
-        const cityFeatures = await loadCityFeatures(selectedCity.name, newActiveLayers);
-        setFeatures(cityFeatures);
       }
 
-      // Reload available layers
       const layers = await getAvailableLayersForCity(selectedCity.name);
       setAvailableLayers(layers);
-
       console.log('Layer deleted successfully');
     } catch (error) {
       console.error('Error deleting layer:', error);
@@ -519,7 +474,6 @@ function App() {
         mapView={mapView}
         onMapViewChange={handleMapViewChange}
       />
-
       <div className="main-content">
         <Sidebar
           selectedCity={selectedCity}
@@ -534,7 +488,6 @@ function App() {
           onLayerSave={handleSaveLayer}
           onLayerDelete={handleDeleteLayer}
         />
-
         <MapViewer
           selectedCity={selectedCity}
           features={features}

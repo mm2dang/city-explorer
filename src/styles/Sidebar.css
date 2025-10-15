@@ -132,12 +132,40 @@
 }
 
 .collapsed-domain-icon {
-  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 6px;
+  padding: 12px 8px;
+  border-radius: 8px;
+  transition: all 0.2s;
   cursor: pointer;
+  position: relative;
+  border: 2px solid transparent;
+}
+
+.collapsed-domain-icon:hover {
+  background: rgba(0, 0, 0, 0.03);
+}
+
+.collapsed-domain-icon.all-active {
+  background: rgba(8, 145, 178, 0.1);
+  border: 2px solid rgba(8, 145, 178, 0.3);
+}
+
+.collapsed-domain-icon.some-active {
+  background: rgba(8, 145, 178, 0.05);
+  border: 2px dashed rgba(8, 145, 178, 0.2);
+}
+
+.collapsed-domain-icon.disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.collapsed-domain-icon.disabled:hover {
+  background: transparent;
+  transform: none;
 }
 
 .collapsed-icon-wrapper {

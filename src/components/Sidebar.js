@@ -156,6 +156,17 @@ const Sidebar = ({
     return layersByDomain;
   }, [layerDefinitions, availableLayers]);
 
+  // Get only domains with layers for collapsed view
+  const domainsWithLayers = useMemo(() => {
+    const filtered = {};
+    Object.entries(availableLayersByDomain).forEach(([domain, layers]) => {
+      if (layers.length > 0) {
+        filtered[domain] = layers;
+      }
+    });
+    return filtered;
+  }, [availableLayersByDomain]);
+
   // Auto-expand domains that have available layers when city changes
   useEffect(() => {
     if (selectedCity && Object.keys(availableLayersByDomain).length > 0) {
@@ -252,6 +263,21 @@ const Sidebar = ({
     }
   };
 
+  const handleToggleDomainLayers = (domain, layers) => {
+    // Check if all layers in this domain are currently active
+    const allActive = layers.every(layer => activeLayers[layer.name]);
+    
+    // Determine the new state: if all are active, turn all off; otherwise turn all on
+    const newState = !allActive;
+    
+    console.log(`Toggling domain ${domain}: ${layers.length} layers to ${newState}`);
+    
+    // Toggle all layers in the domain to the new state
+    layers.forEach((layer) => {
+      onLayerToggle(layer.name, newState);
+    });
+  };
+
   if (!selectedCity) {
     return (
       <div className="sidebar">
@@ -308,26 +334,32 @@ const Sidebar = ({
         {isSidebarCollapsed ? (
           // Collapsed view - show icons only
           <div className="collapsed-layers-view">
-            {hasAvailableLayers && Object.entries(availableLayersByDomain).map(([domain, layers]) => (
-              <motion.div
-                key={domain}
-                className="collapsed-domain-icon"
-                title={`${formatDomainName(domain)} (${layers.length})`}
-                whileHover={{ scale: 1.1 }}
-                whileTap={{ scale: 0.95 }}
-              >
-                <div
-                  className="collapsed-icon-wrapper"
-                  style={{ backgroundColor: `${domainColors[domain]}15` }}
+            {Object.keys(domainsWithLayers).length > 0 && Object.entries(domainsWithLayers).map(([domain, layers]) => {
+              const allActive = layers.every(layer => activeLayers[layer.name]);
+              const someActive = layers.some(layer => activeLayers[layer.name]);
+              
+              return (
+                <motion.div
+                  key={domain}
+                  className={`collapsed-domain-icon ${allActive ? 'all-active' : someActive ? 'some-active' : ''}`}
+                  title={`${formatDomainName(domain)} (${layers.length}) - Click to toggle`}
+                  onClick={() => handleToggleDomainLayers(domain, layers)}
+                  whileHover={{ scale: 1.1 }}
+                  whileTap={{ scale: 0.95 }}
                 >
-                  <i
-                    className={domainIcons[domain]}
-                    style={{ color: domainColors[domain] }}
-                  />
-                </div>
-                <span className="collapsed-count">{layers.length}</span>
-              </motion.div>
-            ))}
+                  <div
+                    className="collapsed-icon-wrapper"
+                    style={{ backgroundColor: `${domainColors[domain]}15` }}
+                  >
+                    <i
+                      className={domainIcons[domain]}
+                      style={{ color: domainColors[domain] }}
+                    />
+                  </div>
+                  <span className="collapsed-count">{layers.length}</span>
+                </motion.div>
+              );
+            })}
           </div>
         ) : (
           // Expanded view - full content
