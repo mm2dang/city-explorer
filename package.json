@@ -29,6 +29,7 @@
     "react-leaflet-draw": "^0.20.0",
     "react-router-dom": "^7.9.1",
     "react-scripts": "5.0.1",
+    "recharts": "^3.2.1",
     "shapefile": "^0.6.6",
     "shp-write": "^0.3.2",
     "shpjs": "^6.2.0"

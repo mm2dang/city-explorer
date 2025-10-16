@@ -11,10 +11,11 @@ body {
   overflow: hidden;
 }
 
-.app {
+.App {
   height: 100vh;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 .main-content {
@@ -22,6 +23,13 @@ body {
   display: flex;
   height: calc(100vh - 80px);
   overflow: hidden;
+  position: relative;
+}
+
+/* Ensure MapViewer takes remaining space between sidebars */
+.main-content > *:nth-child(2) {
+  flex: 1;
+  min-width: 0;
 }
 
 .wizard-overlay {
@@ -355,35 +363,6 @@ body {
   transform: none !important;
 }
 
-/* Responsive design */
-@media (max-width: 768px) {
-  .wizard-container {
-    margin: 10px;
-    max-height: 95vh;
-  }
-  
-  .wizard-header {
-    padding: 20px;
-  }
-  
-  .wizard-content {
-    padding: 20px;
-  }
-  
-  .wizard-footer {
-    padding: 20px;
-  }
-  
-  .wizard-steps {
-    padding: 15px 20px;
-  }
-  
-  .step {
-    font-size: 14px;
-    padding: 8px;
-  }
-}
-
 .processing-status-bar {
   position: fixed;
   bottom: 20px;
@@ -415,4 +394,70 @@ body {
   transform: translateY(-2px);
   box-shadow: 0 6px 16px rgba(0, 0, 0, 0.2);
   transition: all 0.2s ease;
+}
+
+/* Responsive design for two sidebars */
+@media (max-width: 1600px) {
+  /* Allow sidebars to collapse more easily on smaller screens */
+}
+
+@media (max-width: 1200px) {
+  /* Consider stacking or hiding one sidebar */
+  .indicators-sidebar {
+    width: 320px;
+  }
+  
+  .indicators-sidebar.collapsed {
+    width: 60px;
+  }
+}
+
+@media (max-width: 768px) {
+  .wizard-container {
+    margin: 10px;
+    max-height: 95vh;
+  }
+  
+  .wizard-header {
+    padding: 20px;
+  }
+  
+  .wizard-content {
+    padding: 20px;
+  }
+  
+  .wizard-footer {
+    padding: 20px;
+  }
+  
+  .wizard-steps {
+    padding: 15px 20px;
+  }
+  
+  .step {
+    font-size: 14px;
+    padding: 8px;
+  }
+  
+  /* On mobile, consider hiding one sidebar by default */
+  .indicators-sidebar {
+    position: absolute;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    z-index: 50;
+    box-shadow: -4px 0 12px rgba(0, 0, 0, 0.1);
+  }
+  
+  .indicators-sidebar.collapsed {
+    width: 50px;
+  }
+}
+
+@media (max-width: 480px) {
+  .main-content {
+    flex-direction: column;
+  }
+  
+  /* Stack sidebars vertically on very small screens if needed */
 }

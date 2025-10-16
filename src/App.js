@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import './styles/App.css';
 import Header from './components/Header';
-import Sidebar from './components/Sidebar'; // Fixed import path
+import Sidebar from './components/Sidebar';
 import MapViewer from './components/MapViewer';
 import AddCityWizard from './components/AddCityWizard';
 import LayerModal from './components/LayerModal';
+import IndicatorsSidebar from './components/IndicatorsSidebar';
 import {
   getAllCitiesWithDataStatus,
   loadCityFeatures,
@@ -38,15 +39,15 @@ function App() {
 
   // Domain colors for consistent styling
   const domainColors = {
-    mobility: '#fdd900',     // Yellow
-    governance: '#005670',   // Dark Teal Blue
-    health: '#ffdb9d',       // Peach
-    economy: '#00b2e2',      // Sky Blue
-    environment: '#3aaa35',  // Green
-    social: '#f49ac1',       // Pink
-    education: '#ff8000',    // Orange
-    housing: '#b3d7b1',      // Light Green
-    culture: '#e33e7f',      // Deep Pink
+    mobility: '#fdd900',
+    governance: '#005670',
+    health: '#ffdb9d',
+    economy: '#00b2e2',
+    environment: '#3aaa35',
+    social: '#f49ac1',
+    education: '#ff8000',
+    housing: '#b3d7b1',
+    culture: '#e33e7f',
   };
 
   // Initialize data source on mount
@@ -79,12 +80,10 @@ function App() {
           setIsLoading(false);
         }
       } else if (selectedCity && Object.keys(activeLayers).length === 0) {
-        // No active layers, clear features
         setFeatures([]);
       }
     };
     
-    // Debounce the feature reload by 300ms to batch multiple toggles
     timeoutId = setTimeout(reloadFeatures, 300);
     
     return () => clearTimeout(timeoutId);
@@ -167,8 +166,6 @@ function App() {
   const handleLayerToggle = (layerName, isActive) => {
     console.log(`Layer ${layerName} toggled to ${isActive}`);
     
-    // Update state immediately without reloading
-    // The useEffect hook will handle the debounced reload
     setActiveLayers(prev => ({
       ...prev,
       [layerName]: isActive,
@@ -424,7 +421,6 @@ function App() {
   };
 
   const handleDeleteLayer = async (domain, layerName, options = {}) => {
-    // Validate inputs
     if (!selectedCity) {
       console.error('No city selected');
       alert('Please select a city first');
@@ -503,6 +499,10 @@ function App() {
           loadCityFeatures={loadCityFeatures}
           availableLayers={availableLayers}
           mapView={mapView}
+        />
+        <IndicatorsSidebar
+          selectedCity={selectedCity}
+          dataSource={dataSource}
         />
       </div>
 
