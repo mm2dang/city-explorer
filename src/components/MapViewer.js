@@ -128,14 +128,14 @@ const MapViewer = ({
   // Initialize map - ONLY ONCE
   useEffect(() => {
     if (!mapRef.current || mapInstanceRef.current) return;
-
+  
     console.log('MapViewer: Initializing map');
     
     const map = L.map(mapRef.current, {
       zoomControl: true,
       minZoom: 2,
       maxZoom: 18
-    }).setView([43.4643, -80.5204], 12);
+    }).setView([20, 0], 2);
 
     // Add initial tile layer (street view by default)
     const tileLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -148,7 +148,7 @@ const MapViewer = ({
     // Custom Zoom to Boundary Control
     const ZoomToBoundaryControl = L.Control.extend({
       options: { position: 'topleft' },
-
+  
       onAdd: function(map) {
         const container = L.DomUtil.create('div', 'leaflet-bar leaflet-control leaflet-control-custom');
         container.style.background = 'rgba(255, 255, 255, 0.95)';
@@ -182,11 +182,22 @@ const MapViewer = ({
           container.style.transform = 'scale(1)';
           container.querySelector('i').style.color = '#374151';
         };
-
+  
         L.DomEvent.disableClickPropagation(container);
-
+  
         container.onclick = () => {
-          // Always try boundary first
+          // <-- CHANGED: Check if city is selected first
+          const mapContainer = map.getContainer();
+          const cityLat = parseFloat(mapContainer.dataset.cityLat);
+          const cityLng = parseFloat(mapContainer.dataset.cityLng);
+          
+          // If no city selected, zoom to world view
+          if (isNaN(cityLat) || isNaN(cityLng)) {
+            map.setView([20, 0], 2);
+            return;
+          }
+          
+          // Try boundary first if city is selected
           if (boundaryLayerRef.current) {
             try {
               const bounds = boundaryLayerRef.current.getBounds();
@@ -199,20 +210,14 @@ const MapViewer = ({
             }
           }
           
-          // Fallback: try to get city info from the map container's data
-          const mapContainer = map.getContainer();
-          const cityLat = parseFloat(mapContainer.dataset.cityLat);
-          const cityLng = parseFloat(mapContainer.dataset.cityLng);
-          
-          if (!isNaN(cityLat) && !isNaN(cityLng)) {
-            map.setView([cityLat, cityLng], 12);
-          }
+          // Fallback: zoom to city coordinates
+          map.setView([cityLat, cityLng], 12);
         };
-
+  
         return container;
       }
     });
-
+  
     const zoomControl = new ZoomToBoundaryControl();
     map.addControl(zoomControl);
 
@@ -372,7 +377,10 @@ const MapViewer = ({
     clearAllLayers();
 
     if (!selectedCity) {
-      // Clear stored city data when no city selected
+      // Show world view when no city selected
+      mapInstanceRef.current.setView([20, 0], 2);
+      
+      // Clear stored city data
       const mapContainer = mapInstanceRef.current.getContainer();
       delete mapContainer.dataset.cityLat;
       delete mapContainer.dataset.cityLng;
@@ -765,9 +773,6 @@ const MapViewer = ({
     alert('Enable layers in the sidebar to view features on the map.');
   };
 
-  const safeActiveLayers = activeLayers || {};
-  const hasActiveLayers = Object.values(safeActiveLayers).some(isActive => isActive);
-
   return (
     <div className="map-viewer">
       <div ref={mapRef} className="map-container" />
@@ -789,26 +794,6 @@ const MapViewer = ({
         <i className="fas fa-map-marker-alt"></i>
         <span>{featureCount.toLocaleString()} features loaded</span>
       </div>
-      
-      {!selectedCity && (
-        <div className="map-placeholder">
-          <div className="placeholder-content">
-            <i className="fas fa-map-marker-alt"></i>
-            <h3>Select a City</h3>
-            <p>Choose a city from the dropdown above to view its data layers on the map.</p>
-          </div>
-        </div>
-      )}
-      
-      {selectedCity && !hasActiveLayers && (
-        <div className="map-overlay">
-          <div className="overlay-content">
-            <i className="fas fa-layers"></i>
-            <h4>No Layers Active</h4>
-            <p>Enable some layers in the sidebar to view data on the map.</p>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

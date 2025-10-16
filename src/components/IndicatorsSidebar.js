@@ -3,12 +3,12 @@ import { motion } from 'framer-motion';
 import {
   getAvailableDateRanges,
   getSummaryData,
-  triggerGlueJob,
   getGlueJobStatus
 } from '../utils/indicators';
+import Papa from 'papaparse';
 import '../styles/IndicatorsSidebar.css';
 
-const IndicatorsSidebar = ({ selectedCity, dataSource }) => {
+const IndicatorsSidebar = ({ selectedCity, dataSource, onCalculateIndicators }) => {
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [selectedDateRange, setSelectedDateRange] = useState(null);
   const [availableDateRanges, setAvailableDateRanges] = useState([]);
@@ -19,6 +19,8 @@ const IndicatorsSidebar = ({ selectedCity, dataSource }) => {
   const [isCalculating, setIsCalculating] = useState(false);
   const [calculationStatus, setCalculationStatus] = useState(null);
   const [jobId, setJobId] = useState(null);
+  const [showExportMenu, setShowExportMenu] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
 
   // Indicator definitions with labels and descriptions
   const indicators = useMemo(() => ({
@@ -122,6 +124,8 @@ const IndicatorsSidebar = ({ selectedCity, dataSource }) => {
             if (selectedDateRange) {
               await loadSummaryData();
             }
+            // Show success message
+            alert('Indicator calculation completed successfully!');
           } else if (status.state === 'FAILED' || status.state === 'STOPPED') {
             setIsCalculating(false);
             setJobId(null);
@@ -129,6 +133,9 @@ const IndicatorsSidebar = ({ selectedCity, dataSource }) => {
           }
         } catch (error) {
           console.error('Error polling job status:', error);
+          setIsCalculating(false);
+          setJobId(null);
+          alert(`Error checking job status: ${error.message}`);
         }
       }, 5000); // Poll every 5 seconds
     }
@@ -137,22 +144,18 @@ const IndicatorsSidebar = ({ selectedCity, dataSource }) => {
     };
   }, [isCalculating, jobId, selectedDateRange, loadDateRanges, loadSummaryData]);
 
-  const handleCalculate = async () => {
-    if (!window.confirm('This will recalculate all indicator values. This process may take several minutes. Continue?')) {
-      return;
-    }
-    setIsCalculating(true);
-    setCalculationStatus({ state: 'STARTING', progress: 0 });
-    try {
-      const runId = await triggerGlueJob();
-      setJobId(runId);
-    } catch (error) {
-      console.error('Error triggering calculation:', error);
-      alert(`Failed to start calculation: ${error.message}`);
-      setIsCalculating(false);
-      setCalculationStatus(null);
-    }
-  };
+  // Close export menu when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (showExportMenu && !event.target.closest('.export-menu-wrapper')) {
+        setShowExportMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [showExportMenu]);
 
   const handleSort = (key) => {
     let direction = 'asc';
@@ -206,6 +209,87 @@ const IndicatorsSidebar = ({ selectedCity, dataSource }) => {
       (!province || (row.province && row.province.toLowerCase() === province.toLowerCase()))
     );
   }, [selectedCity, summaryData]);
+
+  // Check if export should be enabled
+  const canExport = summaryData.length > 0;
+
+  const handleExportIndicators = async (format) => {
+    if (!canExport) return;
+    
+    try {
+      setIsExporting(true);
+      setShowExportMenu(false);
+  
+      let dataToExport = selectedCity ? [selectedCityData] : filteredAndSortedData;
+      
+      if (!dataToExport || dataToExport.length === 0) {
+        throw new Error('No data available to export');
+      }
+  
+      const filename = selectedCity 
+        ? `${selectedCity.name.replace(/[^a-z0-9]/gi, '_')}_indicators_${selectedDateRange}`
+        : `all_cities_indicators_${selectedDateRange}`;
+  
+      if (format === 'csv') {
+        // Export as CSV using Papa Parse
+        const csv = Papa.unparse(dataToExport);
+        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+        const link = document.createElement('a');
+        const url = URL.createObjectURL(blob);
+        link.setAttribute('href', url);
+        link.setAttribute('download', `${filename}.csv`);
+        link.style.visibility = 'hidden';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+        console.log('CSV export completed');
+      } else if (format === 'parquet') {
+        // Export as Parquet using parquet-wasm (same as sidebar)
+        const { default: init } = await import('parquet-wasm');
+        await init();
+        
+        // Convert data to Arrow Table format
+        const columns = {};
+        if (dataToExport.length > 0) {
+          Object.keys(dataToExport[0]).forEach(key => {
+            columns[key] = dataToExport.map(row => row[key]);
+          });
+        }
+        
+        const { tableFromArrays, tableToIPC } = await import('apache-arrow');
+        const arrowTable = tableFromArrays(columns);
+        const ipcBuffer = tableToIPC(arrowTable, 'stream');
+        
+        const { Table, writeParquet, WriterPropertiesBuilder, Compression } = await import('parquet-wasm');
+        const wasmTable = Table.fromIPCStream(ipcBuffer);
+        
+        // Write with Snappy compression
+        const writerProperties = new WriterPropertiesBuilder()
+          .setCompression(Compression.SNAPPY)
+          .build();
+        
+        const buffer = writeParquet(wasmTable, writerProperties);
+        
+        const blob = new Blob([buffer], { type: 'application/octet-stream' });
+        const link = document.createElement('a');
+        const url = URL.createObjectURL(blob);
+        link.setAttribute('href', url);
+        link.setAttribute('download', `${filename}.snappy.parquet`);
+        link.style.visibility = 'hidden';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+        console.log('Parquet export completed');
+      }
+    } catch (error) {
+      console.error('Export failed:', error);
+      alert(`Failed to export indicators: ${error.message}`);
+    } finally {
+      setIsExporting(false);
+    }
+  };
 
   // Render collapsed view when sidebar is collapsed and city is selected
   const renderCollapsedView = () => {
@@ -406,14 +490,48 @@ const IndicatorsSidebar = ({ selectedCity, dataSource }) => {
       ) : (
         <div className="indicators-content">
           <div className="controls-section">
-            <button
-              className="calculate-btn"
-              onClick={handleCalculate}
-              disabled={isCalculating}
-            >
-              <i className={`fas ${isCalculating ? 'fa-spinner fa-spin' : 'fa-calculator'}`}></i>
-              {isCalculating ? 'Calculating...' : 'Calculate Indicators'}
-            </button>
+            <div className="controls-buttons">
+              <button
+                className="calculate-btn"
+                onClick={onCalculateIndicators}
+                disabled={isCalculating}
+              >
+                <i className={`fas ${isCalculating ? 'fa-spinner fa-spin' : 'fa-calculator'}`}></i>
+                {isCalculating ? 'Calculating...' : 'Calculate Indicators'}
+              </button>
+              {canExport && (
+                <div className="export-menu-wrapper">
+                  <button
+                    className="export-btn"
+                    onClick={() => setShowExportMenu(!showExportMenu)}
+                    disabled={isExporting}
+                  >
+                    <i className={`fas ${isExporting ? 'fa-spinner fa-spin' : 'fa-download'}`}></i>
+                    {isExporting ? 'Exporting...' : 'Export'}
+                  </button>
+                  {showExportMenu && (
+                    <div className="export-dropdown">
+                      <button
+                        className="export-option"
+                        onClick={() => handleExportIndicators('csv')}
+                      >
+                        <i className="fas fa-file-csv"></i>
+                        <span className="format-label">CSV</span>
+                        <span className="format-ext">.csv</span>
+                      </button>
+                      <button
+                        className="export-option"
+                        onClick={() => handleExportIndicators('parquet')}
+                      >
+                        <i className="fas fa-database"></i>
+                        <span className="format-label">Parquet</span>
+                        <span className="format-ext">.parquet</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
             {isCalculating && calculationStatus && (
               <div className="calculation-status">
                 <div className="status-bar">
@@ -436,7 +554,9 @@ const IndicatorsSidebar = ({ selectedCity, dataSource }) => {
                   <option value="">No date ranges available</option>
                 ) : (
                   availableDateRanges.map(range => (
-                    <option key={range} value={range}>{range}</option>
+                    <option key={range} value={range}>
+                      {range.replace('_to_', ' to ')}
+                    </option>
                   ))
                 )}
               </select>

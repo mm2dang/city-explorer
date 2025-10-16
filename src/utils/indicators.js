@@ -1,30 +1,26 @@
-import AWS from 'aws-sdk';
+import { S3Client, ListObjectsV2Command, GetObjectCommand } from '@aws-sdk/client-s3';
+import { GlueClient, StartJobRunCommand, GetJobRunCommand } from '@aws-sdk/client-glue';
 import pako from 'pako';
 import Papa from 'papaparse';
 
-// Configure AWS SDK
-const s3 = new AWS.S3({
+// Configure AWS clients
+const s3Client = new S3Client({
   region: process.env.REACT_APP_AWS_REGION,
-  accessKeyId: process.env.REACT_APP_AWS_ACCESS_KEY_ID,
-  secretAccessKey: process.env.REACT_APP_AWS_SECRET_ACCESS_KEY,
-  sessionToken: process.env.REACT_APP_AWS_SESSION_TOKEN,
+  credentials: {
+    accessKeyId: process.env.REACT_APP_AWS_ACCESS_KEY_ID,
+    secretAccessKey: process.env.REACT_APP_AWS_SECRET_ACCESS_KEY,
+    sessionToken: process.env.REACT_APP_AWS_SESSION_TOKEN,
+  }
 });
 
-// Initialize Glue client
-let glue = null;
-try {
-  // AWS Glue is available in the AWS SDK
-  if (AWS.Glue) {
-    glue = new AWS.Glue({
-      region: process.env.REACT_APP_AWS_REGION,
-      accessKeyId: process.env.REACT_APP_AWS_ACCESS_KEY_ID,
-      secretAccessKey: process.env.REACT_APP_AWS_SECRET_ACCESS_KEY,
-      sessionToken: process.env.REACT_APP_AWS_SESSION_TOKEN,
-    });
+const glueClient = new GlueClient({
+  region: process.env.REACT_APP_AWS_REGION,
+  credentials: {
+    accessKeyId: process.env.REACT_APP_AWS_ACCESS_KEY_ID,
+    secretAccessKey: process.env.REACT_APP_AWS_SECRET_ACCESS_KEY,
+    sessionToken: process.env.REACT_APP_AWS_SESSION_TOKEN,
   }
-} catch (error) {
-  console.warn('AWS Glue not available in this SDK version:', error.message);
-}
+});
 
 const RESULT_BUCKET = process.env.REACT_APP_S3_RESULT_BUCKET_NAME;
 const GLUE_JOB_NAME = 'monthly_indicators';
@@ -36,16 +32,16 @@ export async function getAvailableDateRanges(dataSource) {
   try {
     const prefix = `${dataSource}/summary/`;
     
-    const params = {
+    const command = new ListObjectsV2Command({
       Bucket: RESULT_BUCKET,
       Prefix: prefix,
       Delimiter: '/'
-    };
+    });
 
-    const result = await s3.listObjectsV2(params).promise();
+    const result = await s3Client.send(command);
     
     // Extract date ranges from folder names
-    const dateRanges = result.CommonPrefixes
+    const dateRanges = (result.CommonPrefixes || [])
       .map(prefix => {
         const parts = prefix.Prefix.split('/');
         return parts[parts.length - 2]; // Get the date range folder name
@@ -65,17 +61,51 @@ export async function getAvailableDateRanges(dataSource) {
 /**
  * Read and decompress a gzipped CSV file from S3
  */
+/**
+ * Read and decompress a gzipped CSV file from S3
+ */
 async function readGzippedCsv(bucket, key) {
   try {
-    const params = {
+    const command = new GetObjectCommand({
       Bucket: bucket,
       Key: key
-    };
+    });
 
-    const response = await s3.getObject(params).promise();
+    const response = await s3Client.send(command);
+    
+    // Convert stream to buffer - browser environment
+    let buffer;
+    
+    if (response.Body instanceof Blob) {
+      // Modern browsers - Body is a Blob
+      const arrayBuffer = await response.Body.arrayBuffer();
+      buffer = new Uint8Array(arrayBuffer);
+    } else if (response.Body.transformToByteArray) {
+      // AWS SDK v3 browser environment helper
+      buffer = await response.Body.transformToByteArray();
+    } else {
+      // Fallback - try to read as ReadableStream
+      const reader = response.Body.getReader();
+      const chunks = [];
+      
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+      }
+      
+      // Concatenate chunks
+      const totalLength = chunks.reduce((acc, chunk) => acc + chunk.length, 0);
+      buffer = new Uint8Array(totalLength);
+      let offset = 0;
+      for (const chunk of chunks) {
+        buffer.set(chunk, offset);
+        offset += chunk.length;
+      }
+    }
     
     // Decompress the gzipped content
-    const decompressed = pako.ungzip(response.Body, { to: 'string' });
+    const decompressed = pako.ungzip(buffer, { to: 'string' });
     
     // Parse CSV
     return new Promise((resolve, reject) => {
@@ -105,15 +135,15 @@ export async function getSummaryData(dataSource, dateRange) {
     const prefix = `${dataSource}/summary/${dateRange}/`;
     
     // List all CSV files in the date range folder
-    const params = {
+    const command = new ListObjectsV2Command({
       Bucket: RESULT_BUCKET,
       Prefix: prefix
-    };
+    });
 
-    const result = await s3.listObjectsV2(params).promise();
+    const result = await s3Client.send(command);
     
     // Filter for CSV.gz files
-    const csvFiles = result.Contents.filter(obj => 
+    const csvFiles = (result.Contents || []).filter(obj => 
       obj.Key.endsWith('.csv.gz')
     );
 
@@ -166,21 +196,19 @@ export async function getMonthlyIndicators(dataSource, country, province, city, 
           : `${dataSource}/results/country=${normalizedCountry}/city=${normalizedCity}/month=${month}/`;
 
         // List files in this month's folder
-        const params = {
+        const command = new ListObjectsV2Command({
           Bucket: RESULT_BUCKET,
           Prefix: prefix
-        };
+        });
 
-        const result = await s3.listObjectsV2(params).promise();
+        const result = await s3Client.send(command);
         
         // Find parquet files
-        const parquetFiles = result.Contents?.filter(obj => 
+        const parquetFiles = (result.Contents || []).filter(obj => 
           obj.Key.endsWith('.parquet')
-        ) || [];
+        );
 
         if (parquetFiles.length > 0) {
-          // For now, we'll use a workaround: convert the indicator summary data
-          // In production, you'd read the actual Parquet file
           console.log(`Found ${parquetFiles.length} parquet files for ${month}`);
           
           // Fallback: use summary data
@@ -242,21 +270,25 @@ function generateMonthRange(startMonth, endMonth) {
 }
 
 /**
- * Trigger the Glue job to recalculate indicators
+ * Trigger the Glue job to calculate indicators
  */
-export async function triggerGlueJob() {
-  if (!glue) {
-    throw new Error('AWS Glue is not available. Please ensure the AWS SDK includes Glue support.');
-  }
-
+export async function triggerGlueJobWithParams(parameters) {
   try {
-    const params = {
-      JobName: GLUE_JOB_NAME
-    };
+    const command = new StartJobRunCommand({
+      JobName: parameters.JOB_NAME,
+      Arguments: {
+        '--CITY': parameters.CITY,
+        '--PROVINCE': parameters.PROVINCE,
+        '--COUNTRY': parameters.COUNTRY,
+        '--START_MONTH': parameters.START_MONTH,
+        '--END_MONTH': parameters.END_MONTH,
+        '--USE_OSM': parameters.USE_OSM
+      }
+    });
 
-    const result = await glue.startJobRun(params).promise();
+    const result = await glueClient.send(command);
     console.log('Started Glue job:', result.JobRunId);
-    return result.JobRunId;
+    return result;
   } catch (error) {
     console.error('Error triggering Glue job:', error);
     throw error;
@@ -267,17 +299,13 @@ export async function triggerGlueJob() {
  * Get the status of a Glue job run
  */
 export async function getGlueJobStatus(jobRunId) {
-  if (!glue) {
-    throw new Error('AWS Glue is not available. Please ensure the AWS SDK includes Glue support.');
-  }
-
   try {
-    const params = {
+    const command = new GetJobRunCommand({
       JobName: GLUE_JOB_NAME,
       RunId: jobRunId
-    };
+    });
 
-    const result = await glue.getJobRun(params).promise();
+    const result = await glueClient.send(command);
     const jobRun = result.JobRun;
 
     return {

@@ -6,6 +6,7 @@ import MapViewer from './components/MapViewer';
 import AddCityWizard from './components/AddCityWizard';
 import LayerModal from './components/LayerModal';
 import IndicatorsSidebar from './components/IndicatorsSidebar';
+import CalculateIndicatorsModal from './components/CalculateIndicatorsModal';
 import {
   getAllCitiesWithDataStatus,
   loadCityFeatures,
@@ -19,6 +20,9 @@ import {
   moveCityData,
   setDataSource
 } from './utils/s3';
+import {
+  triggerGlueJobWithParams
+} from './utils/indicators';
 
 function App() {
   const [cities, setCities] = useState([]);
@@ -36,6 +40,8 @@ function App() {
   const [mapView, setMapView] = useState('street');
   // eslint-disable-next-line no-unused-vars
   const [features, setFeatures] = useState([]);
+  const [showCalculateIndicatorsModal, setShowCalculateIndicatorsModal] = useState(false);
+  const [isCalculatingIndicators, setIsCalculatingIndicators] = useState(false);
 
   // Domain colors for consistent styling
   const domainColors = {
@@ -460,6 +466,30 @@ function App() {
     }
   };
 
+  const handleCalculateIndicators = async (parameters) => {
+    try {
+      setIsCalculatingIndicators(true);
+      console.log('Starting indicator calculation with parameters:', parameters);
+      
+      // Call your Glue job trigger function
+      const result = await triggerGlueJobWithParams(parameters);
+      
+      console.log('Glue job started:', result.JobRunId);
+      
+      // Close modal on success
+      setShowCalculateIndicatorsModal(false);
+      
+      // Show success message
+      alert('Indicator calculation started. This may take several minutes.');
+      
+    } catch (error) {
+      console.error('Error starting calculation:', error);
+      alert(`Error starting calculation: ${error.message}`);
+    } finally {
+      setIsCalculatingIndicators(false);
+    }
+  };
+
   return (
     <div className="App">
       <Header
@@ -503,6 +533,7 @@ function App() {
         <IndicatorsSidebar
           selectedCity={selectedCity}
           dataSource={dataSource}
+          onCalculateIndicators={() => setShowCalculateIndicatorsModal(true)}
         />
       </div>
 
@@ -530,6 +561,19 @@ function App() {
           onSave={handleSaveLayer}
           editingLayer={editingLayer}
         />
+      )}
+
+      {showCalculateIndicatorsModal && (
+        <div className="wizard-overlay">
+          <CalculateIndicatorsModal
+            cities={cities}
+            selectedCity={selectedCity}
+            dataSource={dataSource}
+            onCancel={() => setShowCalculateIndicatorsModal(false)}
+            onCalculate={handleCalculateIndicators}
+            isLoading={isCalculatingIndicators}
+          />
+        </div>
       )}
     </div>
   );

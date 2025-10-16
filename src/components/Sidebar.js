@@ -369,7 +369,7 @@ const Sidebar = ({
   };
 
   const handleExportAll = async (format) => {
-    if (!window.confirm(`Export all layers as ${format.toUpperCase()}? This may take a few minutes.`)) return;
+    if (!window.confirm(`Export all layers as ${format.toUpperCase()}?`)) return;
 
     try {
       setExportingLayer('all');

@@ -159,84 +159,144 @@
   
   /* Controls section */
   .controls-section {
-    padding: 20px;
-    background: linear-gradient(135deg, #fafafa 0%, #ffffff 100%);
+    padding: 16px 20px;
     border-bottom: 1px solid #e5e7eb;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
+    background: #fafafa;
   }
   
-  .calculate-btn {
-    width: 100%;
-    background: linear-gradient(135deg, #0891b2 0%, #06b6d4 100%);
-    color: white;
-    border: none;
-    padding: 12px 20px;
-    border-radius: 8px;
+  .controls-buttons {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+  
+  .calculate-btn,
+  .export-btn {
+    flex: 1;
+    background: white;
+    border: 1px solid #e5e7eb;
+    padding: 10px 16px;
+    border-radius: 6px;
     cursor: pointer;
     transition: all 0.2s;
-    font-size: 14px;
-    font-weight: 600;
+    font-size: 13px;
+    font-weight: 500;
     display: flex;
     align-items: center;
     justify-content: center;
     gap: 8px;
-    box-shadow: 0 2px 8px rgba(8, 145, 178, 0.2);
+    color: #6b7280;
   }
   
-  .calculate-btn:hover:not(:disabled) {
-    transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(8, 145, 178, 0.3);
+  .calculate-btn:hover:not(:disabled),
+  .export-btn:hover:not(:disabled) {
+    background: #f9fafb;
+    border-color: #cbd5e1;
   }
   
-  .calculate-btn:active:not(:disabled) {
-    transform: translateY(0);
-  }
-  
-  .calculate-btn:disabled {
-    opacity: 0.6;
+  .calculate-btn:disabled,
+  .export-btn:disabled {
+    opacity: 0.5;
     cursor: not-allowed;
-    transform: none;
+  }
+  
+  .export-btn:hover:not(:disabled) {
+    color: #10b981;
+    border-color: #10b981;
+  }
+  
+  .export-menu-wrapper {
+    position: relative;
+    flex: 1;
+    z-index: 3000;
+  }
+  
+  .export-dropdown {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    right: 0;
+    background: white;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15), 0 4px 10px rgba(0, 0, 0, 0.1);
+    overflow: hidden;
+    z-index: 10000;
+  }
+  
+  .export-option {
+    padding: 10px 14px;
+    cursor: pointer;
+    transition: all 0.15s;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 13px;
+    font-weight: 500;
+    color: #374151;
+    border: none;
+    background: white;
+    width: 100%;
+    text-align: left;
+  }
+  
+  .export-option:hover {
+    background: #f9fafb;
+  }
+  
+  .export-option i {
+    width: 16px;
+    text-align: center;
+    color: #6b7280;
+  }
+  
+  .export-option .format-label {
+    flex: 1;
+  }
+  
+  .export-option .format-ext {
+    font-size: 11px;
+    color: #9ca3af;
+    font-weight: 500;
   }
   
   .calculation-status {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
+    margin-top: 8px;
   }
   
   .status-bar {
     width: 100%;
-    height: 6px;
+    height: 4px;
     background: #e5e7eb;
-    border-radius: 3px;
+    border-radius: 2px;
     overflow: hidden;
+    margin-bottom: 6px;
   }
   
   .status-fill {
     height: 100%;
-    background: linear-gradient(90deg, #0891b2 0%, #06b6d4 100%);
-    transition: width 0.5s ease;
-    border-radius: 3px;
+    background: linear-gradient(90deg, #0891b2, #10b981);
+    transition: width 0.3s ease;
   }
   
   .calculation-status small {
     font-size: 11px;
     color: #6b7280;
-    font-weight: 500;
+    display: block;
   }
   
   .date-range-selector {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
+    margin-top: 12px;
   }
   
   .date-range-selector label {
-    font-size: 13px;
-    font-weight: 600;
-    color: #374151;
+    display: block;
+    font-size: 12px;
+    font-weight: 500;
+    color: #6b7280;
+    margin-bottom: 6px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
   }
   
   .date-range-selector select {
@@ -246,8 +306,13 @@
     border-radius: 6px;
     font-size: 13px;
     background: white;
+    color: #374151;
     cursor: pointer;
     transition: all 0.2s;
+  }
+  
+  .date-range-selector select:hover:not(:disabled) {
+    border-color: #cbd5e1;
   }
   
   .date-range-selector select:focus {
@@ -257,8 +322,9 @@
   }
   
   .date-range-selector select:disabled {
-    opacity: 0.5;
+    background: #f9fafb;
     cursor: not-allowed;
+    opacity: 0.6;
   }
   
   /* Content area */
