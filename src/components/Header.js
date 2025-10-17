@@ -34,6 +34,14 @@ const Header = ({
   };
 
   const handleCitySelect = (city) => {
+    // Handle null case for deselecting
+    if (city === null) {
+      onCitySelect(null);
+      setShowDropdown(false);
+      setSearchQuery('');
+      return;
+    }
+  
     const progress = processingProgress?.[city.name];
     const isProcessing = progress && progress.status === 'processing';
     
@@ -65,6 +73,12 @@ const Header = ({
   const handleMapViewChange = (view) => {
     setShowSettings(false);
     onMapViewChange(view);
+  };
+
+  const handleHomeClick = () => {
+    onCitySelect(null);
+    setShowDropdown(false);
+    setSearchQuery('');
   };
 
   const getStatusCounts = () => {
@@ -164,7 +178,14 @@ const Header = ({
   return (
     <header className="header">
       <div className="header-main-content">
-        <div className="app-title">
+        <motion.div 
+          className="app-title" 
+          onClick={handleHomeClick}
+          whileHover={{ scale: 1.02 }}
+          whileTap={{ scale: 0.98 }}
+          style={{ cursor: 'pointer' }}
+          title="Return to home"
+        >
           <div className="title-row">
             <i className="fas fa-map-marked-alt"></i>
             <h1>CityExplorer</h1>
@@ -176,7 +197,7 @@ const Header = ({
               {statusCounts.processing > 0 && ` • ${statusCounts.processing} processing`}
             </small>
           </div>
-        </div>
+        </motion.div>
 
         <div className="header-controls">
           <div className="city-selector">

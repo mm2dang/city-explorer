@@ -148,16 +148,26 @@ function App() {
   };
 
   const handleCitySelect = async (city) => {
+    // Handle null case for deselecting city
+    if (city === null) {
+      console.log('City deselected');
+      setSelectedCity(null);
+      setActiveLayers({});
+      setFeatures([]);
+      setAvailableLayers({});
+      return;
+    }
+  
     console.log('City selected:', city.name);
     setSelectedCity(city);
     setActiveLayers({});
     setFeatures([]);
-
+  
     try {
       const layers = await getAvailableLayersForCity(city.name);
       console.log('Available layers for city:', layers);
       setAvailableLayers(layers);
-
+  
       const allLayersActive = {};
       Object.keys(layers).forEach(layerName => {
         allLayersActive[layerName] = true;

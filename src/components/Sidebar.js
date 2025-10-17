@@ -443,20 +443,37 @@ const Sidebar = ({
 
   if (!selectedCity) {
     return (
-      <div className="sidebar">
+      <motion.div
+        className={`sidebar ${isSidebarCollapsed ? 'collapsed' : ''}`}
+        animate={{ width: isSidebarCollapsed ? 80 : 360 }}
+        transition={{ duration: 0.3 }}
+      >
         <div className="sidebar-header">
           <div className="header-content">
-            <div className="header-text">
-              <h2>Data Layers</h2>
-            </div>
+            {!isSidebarCollapsed && (
+              <div className="header-text">
+                <h2>Data Layers</h2>
+              </div>
+            )}
           </div>
+          <motion.button
+            className="collapse-toggle-btn"
+            onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
+            whileHover={{ scale: 1.1 }}
+            whileTap={{ scale: 0.95 }}
+            title={isSidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          >
+            <i className={`fas fa-chevron-${isSidebarCollapsed ? 'right' : 'left'}`}></i>
+          </motion.button>
         </div>
-        <div className="no-layers-message">
-          <i className="fas fa-map-marked-alt"></i>
-          <h3>No City Selected</h3>
-          <p>Select a city from the header to view available data layers.</p>
-        </div>
-      </div>
+        {!isSidebarCollapsed && (
+          <div className="no-layers-message">
+            <i className="fas fa-map-marked-alt"></i>
+            <h3>No City Selected</h3>
+            <p>Select a city to view available data layers.</p>
+          </div>
+        )}
+      </motion.div>
     );
   }
 

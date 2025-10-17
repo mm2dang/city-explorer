@@ -215,7 +215,7 @@ const IndicatorsSidebar = ({ selectedCity, dataSource, onCalculateIndicators }) 
 
   const handleExportIndicators = async (format) => {
     if (!canExport) return;
-    
+  
     try {
       setIsExporting(true);
       setShowExportMenu(false);
@@ -226,7 +226,7 @@ const IndicatorsSidebar = ({ selectedCity, dataSource, onCalculateIndicators }) 
         throw new Error('No data available to export');
       }
   
-      const filename = selectedCity 
+      const filename = selectedCity
         ? `${selectedCity.name.replace(/[^a-z0-9]/gi, '_')}_indicators_${selectedDateRange}`
         : `all_cities_indicators_${selectedDateRange}`;
   
@@ -244,11 +244,25 @@ const IndicatorsSidebar = ({ selectedCity, dataSource, onCalculateIndicators }) 
         document.body.removeChild(link);
         URL.revokeObjectURL(url);
         console.log('CSV export completed');
+      } else if (format === 'json') {
+        // Export as JSON
+        const jsonContent = JSON.stringify(dataToExport, null, 2);
+        const blob = new Blob([jsonContent], { type: 'application/json;charset=utf-8;' });
+        const link = document.createElement('a');
+        const url = URL.createObjectURL(blob);
+        link.setAttribute('href', url);
+        link.setAttribute('download', `${filename}.json`);
+        link.style.visibility = 'hidden';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+        console.log('JSON export completed');
       } else if (format === 'parquet') {
-        // Export as Parquet using parquet-wasm (same as sidebar)
+        // Export as Parquet using parquet-wasm
         const { default: init } = await import('parquet-wasm');
         await init();
-        
+  
         // Convert data to Arrow Table format
         const columns = {};
         if (dataToExport.length > 0) {
@@ -256,21 +270,20 @@ const IndicatorsSidebar = ({ selectedCity, dataSource, onCalculateIndicators }) 
             columns[key] = dataToExport.map(row => row[key]);
           });
         }
-        
+  
         const { tableFromArrays, tableToIPC } = await import('apache-arrow');
         const arrowTable = tableFromArrays(columns);
         const ipcBuffer = tableToIPC(arrowTable, 'stream');
-        
+  
         const { Table, writeParquet, WriterPropertiesBuilder, Compression } = await import('parquet-wasm');
         const wasmTable = Table.fromIPCStream(ipcBuffer);
-        
+  
         // Write with Snappy compression
         const writerProperties = new WriterPropertiesBuilder()
           .setCompression(Compression.SNAPPY)
           .build();
-        
         const buffer = writeParquet(wasmTable, writerProperties);
-        
+  
         const blob = new Blob([buffer], { type: 'application/octet-stream' });
         const link = document.createElement('a');
         const url = URL.createObjectURL(blob);
@@ -518,6 +531,14 @@ const IndicatorsSidebar = ({ selectedCity, dataSource, onCalculateIndicators }) 
                         <i className="fas fa-file-csv"></i>
                         <span className="format-label">CSV</span>
                         <span className="format-ext">.csv</span>
+                      </button>
+                      <button
+                        className="export-option"
+                        onClick={() => handleExportIndicators('json')}
+                      >
+                        <i className="fas fa-file-code"></i>
+                        <span className="format-label">JSON</span>
+                        <span className="format-ext">.json</span>
                       </button>
                       <button
                         className="export-option"

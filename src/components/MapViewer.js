@@ -127,6 +127,8 @@ const MapViewer = ({
   const [featureCount, setFeatureCount] = useState(0);
   const loadFeaturesTimeoutRef = useRef(null);
   const cityMarkersLayerRef = useRef(null);
+  const abortControllerRef = useRef(null);
+  const isLoadingRef = useRef(false);
 
   // Initialize map
   useEffect(() => {
@@ -542,61 +544,67 @@ const cityIcon = L.divIcon({
   }, []);
 
   // Update map when city is selected
-  useEffect(() => {
-    if (!mapInstanceRef.current) return;
+useEffect(() => {
+  if (!mapInstanceRef.current) return;
 
-    clearAllLayers();
+  clearAllLayers();
 
-    if (!selectedCity) {
-      // Show world view when no city selected
-      mapInstanceRef.current.setView([20, 0], 2);
-      
-      // Clear stored city data
-      const mapContainer = mapInstanceRef.current.getContainer();
-      delete mapContainer.dataset.cityLat;
-      delete mapContainer.dataset.cityLng;
-      return;
+  if (!selectedCity) {
+    // Show world view when no city selected
+    mapInstanceRef.current.setView([20, 0], 2);
+    
+    // Clear stored city data
+    const mapContainer = mapInstanceRef.current.getContainer();
+    delete mapContainer.dataset.cityLat;
+    delete mapContainer.dataset.cityLng;
+    
+    // Display city markers after clearing layers
+    setTimeout(() => {
+      displayCityMarkers();
+    }, 100);
+    
+    return;
+  }
+
+  try {
+    console.log('MapViewer: Updating map for city:', selectedCity.name);
+
+    // Store city coordinates in map container for recenter button
+    const mapContainer = mapInstanceRef.current.getContainer();
+    if (selectedCity.latitude && selectedCity.longitude) {
+      mapContainer.dataset.cityLat = selectedCity.latitude;
+      mapContainer.dataset.cityLng = selectedCity.longitude;
     }
 
-    try {
-      console.log('MapViewer: Updating map for city:', selectedCity.name);
+    if (selectedCity.boundary) {
+      const boundary = JSON.parse(selectedCity.boundary);
 
-      // Store city coordinates in map container for recenter button
-      const mapContainer = mapInstanceRef.current.getContainer();
-      if (selectedCity.latitude && selectedCity.longitude) {
-        mapContainer.dataset.cityLat = selectedCity.latitude;
-        mapContainer.dataset.cityLng = selectedCity.longitude;
-      }
-
-      if (selectedCity.boundary) {
-        const boundary = JSON.parse(selectedCity.boundary);
-
-        const boundaryLayer = L.geoJSON(boundary, {
-          style: {
-            color: '#0891b2',
-            weight: 3,
-            opacity: 0.8,
-            fillOpacity: 0.1
-          }
-        });
-
-        boundaryLayer.addTo(mapInstanceRef.current);
-        boundaryLayerRef.current = boundaryLayer;
-
-        const bounds = boundaryLayer.getBounds();
-        if (bounds.isValid()) {
-          mapInstanceRef.current.fitBounds(bounds, { padding: [50, 50] });
+      const boundaryLayer = L.geoJSON(boundary, {
+        style: {
+          color: '#0891b2',
+          weight: 3,
+          opacity: 0.8,
+          fillOpacity: 0.1
         }
-      } else if (selectedCity.latitude && selectedCity.longitude) {
-        mapInstanceRef.current.setView([selectedCity.latitude, selectedCity.longitude], 12);
+      });
+
+      boundaryLayer.addTo(mapInstanceRef.current);
+      boundaryLayerRef.current = boundaryLayer;
+
+      const bounds = boundaryLayer.getBounds();
+      if (bounds.isValid()) {
+        mapInstanceRef.current.fitBounds(bounds, { padding: [50, 50] });
       }
-    } catch (error) {
-      console.error('Error updating map for selected city:', error);
-      if (selectedCity.latitude && selectedCity.longitude) {
-        mapInstanceRef.current.setView([selectedCity.latitude, selectedCity.longitude], 12);
-      }
+    } else if (selectedCity.latitude && selectedCity.longitude) {
+      mapInstanceRef.current.setView([selectedCity.latitude, selectedCity.longitude], 12);
     }
-  }, [selectedCity, clearAllLayers]);
+  } catch (error) {
+    console.error('Error updating map for selected city:', error);
+    if (selectedCity.latitude && selectedCity.longitude) {
+      mapInstanceRef.current.setView([selectedCity.latitude, selectedCity.longitude], 12);
+    }
+  }
+}, [selectedCity, clearAllLayers, displayCityMarkers]);
 
   // Load and display features
   const loadAndDisplayFeatures = useCallback(async () => {
@@ -608,12 +616,12 @@ const cityIcon = L.divIcon({
       });
       return;
     }
-
+  
     const safeActiveLayers = activeLayers || {};
     const activeLayerNames = Object.keys(safeActiveLayers).filter(layer => safeActiveLayers[layer]);
     
     console.log('MapViewer: Loading features for layers:', activeLayerNames);
-
+  
     if (activeLayerNames.length === 0) {
       Object.entries(clusterGroupsRef.current).forEach(([layerName, clusterGroup]) => {
         if (clusterGroup && mapInstanceRef.current.hasLayer(clusterGroup)) {
@@ -621,23 +629,41 @@ const cityIcon = L.divIcon({
         }
       });
       clusterGroupsRef.current = {};
-
+  
       if (nonPointLayerRef.current && mapInstanceRef.current.hasLayer(nonPointLayerRef.current)) {
         mapInstanceRef.current.removeLayer(nonPointLayerRef.current);
         nonPointLayerRef.current = null;
       }
-
+  
       setFeatureCount(0);
       return;
     }
-
+  
+    // Abort any existing loading operation
+    if (abortControllerRef.current) {
+      console.log('MapViewer: Aborting previous loading operation');
+      abortControllerRef.current.abort();
+    }
+  
+    // Create new abort controller for this operation
+    abortControllerRef.current = new AbortController();
+    const currentAbortController = abortControllerRef.current;
+  
     try {
       setIsLoadingData(true);
-
+      isLoadingRef.current = true;
+  
       console.log('MapViewer: Calling loadCityFeatures with active layers:', activeLayerNames);
       const features = await loadCityFeatures(selectedCity.name, safeActiveLayers);
+      
+      // Check if this operation was aborted
+      if (currentAbortController.signal.aborted) {
+        console.log('MapViewer: Loading was aborted, skipping feature display');
+        return;
+      }
+      
       console.log('MapViewer: Loaded features:', features.length);
-
+  
       // Clear existing cluster groups and non-point layers
       Object.entries(clusterGroupsRef.current).forEach(([layerName, clusterGroup]) => {
         if (clusterGroup && mapInstanceRef.current.hasLayer(clusterGroup)) {
@@ -645,12 +671,18 @@ const cityIcon = L.divIcon({
         }
       });
       clusterGroupsRef.current = {};
-
+  
       if (nonPointLayerRef.current && mapInstanceRef.current.hasLayer(nonPointLayerRef.current)) {
         mapInstanceRef.current.removeLayer(nonPointLayerRef.current);
         nonPointLayerRef.current = null;
       }
-
+  
+      // Check abort signal again before processing features
+      if (currentAbortController.signal.aborted) {
+        console.log('MapViewer: Loading was aborted before processing features');
+        return;
+      }
+  
       // Group features by layer and domain
       const groupedFeatures = {};
       features.forEach(feature => {
@@ -664,16 +696,22 @@ const cityIcon = L.divIcon({
           domainName
         });
       });
-
+  
       console.log('MapViewer: Grouped features by layer:', Object.keys(groupedFeatures));
-
+  
       let totalFeatures = 0;
       const safeAvailableLayers = availableLayers || {};
-
+  
       // Create clustered markers for each active layer
-      Object.entries(groupedFeatures).forEach(([layerName, layerFeatures]) => {
-        if (!safeActiveLayers[layerName]) return;
-
+      for (const [layerName, layerFeatures] of Object.entries(groupedFeatures)) {
+        // Check abort signal periodically during processing
+        if (currentAbortController.signal.aborted) {
+          console.log('MapViewer: Loading was aborted during feature processing');
+          return;
+        }
+  
+        if (!safeActiveLayers[layerName]) continue;
+  
         const clusterGroup = L.markerClusterGroup({
           maxClusterRadius: 80,
           spiderfyOnMaxZoom: true,
@@ -696,61 +734,64 @@ const cityIcon = L.divIcon({
           chunkInterval: 200,
           chunkDelay: 50
         });
-
-        // Event handler to ensure spiderfied markers are on top
+  
+        // Event handlers for spiderfied state
         clusterGroup.on('spiderfied', function(e) {
           const cluster = e.cluster;
           const markers = e.markers;
           
-          // Set high z-index for all spiderfied markers
           markers.forEach((marker, index) => {
             if (marker._icon) {
               marker._icon.style.zIndex = 10000 + index;
             }
           });
           
-          // Fade out the cluster icon when spiderfied
           if (cluster._icon) {
             cluster._icon.style.opacity = '0.3';
             cluster._icon.style.transition = 'opacity 0.3s';
           }
         });
-
-        // Reset cluster opacity when unspiderfied
+  
         clusterGroup.on('unspiderfied', function(e) {
           const cluster = e.cluster;
           if (cluster._icon) {
             cluster._icon.style.opacity = '1';
           }
         });
-
+  
         let markerCount = 0;
-
-        layerFeatures.forEach((feature) => {
+  
+        for (const feature of layerFeatures) {
+          // Check abort signal for every batch of features
+          if (markerCount % 100 === 0 && currentAbortController.signal.aborted) {
+            console.log('MapViewer: Loading was aborted during marker creation');
+            return;
+          }
+  
           try {
             if (!feature.geometry || !feature.geometry.type || !feature.geometry.coordinates) {
               console.warn(`MapViewer: Invalid geometry for feature in layer ${layerName}`, feature);
-              return;
+              continue;
             }
-
+  
             const { feature_name, domain_name } = feature.properties;
             const domainColor = domainColors[domain_name] || '#666666';
             const iconClass = safeAvailableLayers[layerName]?.icon || layerIcons[layerName] || 'fas fa-map-marker-alt';
-
+  
             if (feature.geometry.type === 'Point') {
               const { coordinates } = feature.geometry;
               if (!Array.isArray(coordinates) || coordinates.length < 2) {
                 console.warn(`MapViewer: Invalid point coordinates in layer ${layerName}`, coordinates);
-                return;
+                continue;
               }
-
+  
               const [lon, lat] = coordinates;
-
+  
               if (isNaN(lon) || isNaN(lat) || lon < -180 || lon > 180 || lat < -90 || lat > 90) {
                 console.warn(`MapViewer: Invalid coordinates in layer ${layerName}`, { lon, lat });
-                return;
+                continue;
               }
-
+  
               const customIcon = L.divIcon({
                 className: 'custom-marker-icon',
                 html: `
@@ -775,12 +816,12 @@ const cityIcon = L.divIcon({
                 popupAnchor: [0, -14],
                 domainColor: domainColor
               });
-
+  
               const marker = L.marker([lat, lon], {
                 icon: customIcon,
                 zIndexOffset: 1000
               });
-
+  
               marker.bindTooltip(`
                 <div style="font-family: Inter, sans-serif;">
                   <h4 style="margin: 0 0 8px 0; color: #1a202c; font-size: 14px;">
@@ -798,15 +839,14 @@ const cityIcon = L.divIcon({
                 opacity: 0.95,
                 className: 'feature-marker-tooltip'
               });
-
+  
               clusterGroup.addLayer(marker);
               markerCount++;
             } else {
-              // Handle non-point geometries (Polygon, LineString, etc.)
+              // Handle non-point geometries
               try {
-                // Calculate the true centroid
                 const centroid = calculateCentroid(feature.geometry);
-
+  
                 const centroidMarker = L.marker([centroid.lat, centroid.lng], {
                   icon: L.divIcon({
                     className: 'custom-marker-icon',
@@ -834,20 +874,16 @@ const cityIcon = L.divIcon({
                   }),
                   zIndexOffset: 1000
                 });
-
-                // Store the geometry data with the marker
+  
                 centroidMarker.featureGeometry = feature.geometry;
                 centroidMarker.featureColor = domainColor;
                 centroidMarker.geometryLayer = null;
-
-                // Handle click to show/hide geometry
+  
                 centroidMarker.on('click', function(e) {
-                  // Toggle geometry layer
                   if (this.geometryLayer && mapInstanceRef.current.hasLayer(this.geometryLayer)) {
                     mapInstanceRef.current.removeLayer(this.geometryLayer);
                     this.geometryLayer = null;
                   } else {
-                    // Create and add new geometry layer
                     this.geometryLayer = L.geoJSON(this.featureGeometry, {
                       style: {
                         color: this.featureColor,
@@ -857,17 +893,15 @@ const cityIcon = L.divIcon({
                         fillOpacity: 0.3
                       }
                     }).addTo(mapInstanceRef.current);
-
-                    // Bring geometry layer to front but below popups
+  
                     this.geometryLayer.bringToFront();
                     
-                    // Ensure tile layer stays at back
                     if (tileLayerRef.current) {
                       tileLayerRef.current.bringToBack();
                     }
                   }
                 });
-
+  
                 centroidMarker.bindTooltip(`
                   <div style="font-family: Inter, sans-serif;">
                     <h4 style="margin: 0 0 8px 0; color: #1a202c; font-size: 14px;">
@@ -887,7 +921,7 @@ const cityIcon = L.divIcon({
                   opacity: 0.95,
                   className: 'feature-marker-tooltip'
                 });
-
+  
                 clusterGroup.addLayer(centroidMarker);
                 markerCount++;
               } catch (error) {
@@ -897,35 +931,58 @@ const cityIcon = L.divIcon({
           } catch (error) {
             console.warn(`MapViewer: Error processing feature in layer ${layerName}:`, error);
           }
-        });
-
+        }
+  
         console.log(`MapViewer: Processed ${markerCount} features for layer ${layerName}`);
         totalFeatures += markerCount;
-
+  
+        // Final abort check before adding to map
+        if (currentAbortController.signal.aborted) {
+          console.log('MapViewer: Loading was aborted before adding cluster groups to map');
+          return;
+        }
+  
         if (clusterGroup.getLayers().length > 0) {
           clusterGroup.addTo(mapInstanceRef.current);
           clusterGroupsRef.current[layerName] = clusterGroup;
           console.log(`MapViewer: Added cluster group for ${layerName} with ${clusterGroup.getLayers().length} markers`);
         }
-      });
-
+      }
+  
       setFeatureCount(totalFeatures);
       console.log(`MapViewer: Total features displayed: ${totalFeatures}`);
-
+  
       setTimeout(() => {
-        mapInstanceRef.current.invalidateSize();
-        Object.values(clusterGroupsRef.current).forEach(group => {
-          if (group && typeof group.refreshClusters === 'function') {
-            group.refreshClusters();
-          }
-        });
+        // Check one more time before final map operations
+        if (currentAbortController.signal.aborted) {
+          console.log('MapViewer: Loading was aborted before final map refresh');
+          return;
+        }
+  
+        if (mapInstanceRef.current) {
+          mapInstanceRef.current.invalidateSize();
+          Object.values(clusterGroupsRef.current).forEach(group => {
+            if (group && typeof group.refreshClusters === 'function') {
+              group.refreshClusters();
+            }
+          });
+        }
       }, 100);
     } catch (error) {
+      // Check if error is due to abort
+      if (error.name === 'AbortError' || currentAbortController.signal.aborted) {
+        console.log('MapViewer: Loading was aborted');
+        return;
+      }
       console.error('MapViewer: Error loading and displaying features:', error);
     } finally {
-      setIsLoadingData(false);
+      // Only clear loading state if this operation wasn't aborted
+      if (!currentAbortController.signal.aborted) {
+        setIsLoadingData(false);
+        isLoadingRef.current = false;
+      }
     }
-  }, [selectedCity, activeLayers, domainColors, loadCityFeatures, availableLayers]);
+  }, [selectedCity, activeLayers, domainColors, loadCityFeatures, availableLayers]);  
 
   // Effect to load features when activeLayers change
   useEffect(() => {
@@ -943,6 +1000,19 @@ const cityIcon = L.divIcon({
       }
     };
   }, [loadAndDisplayFeatures]);
+
+  // Cleanup effect when selectedCity changes to null (returning to home)
+useEffect(() => {
+  if (!selectedCity && abortControllerRef.current) {
+    console.log('MapViewer: City deselected, aborting any ongoing loading operations');
+    abortControllerRef.current.abort();
+    abortControllerRef.current = null;
+    
+    // Immediately clear loading state
+    setIsLoadingData(false);
+    isLoadingRef.current = false;
+  }
+}, [selectedCity]);
 
   const showEnableLayersMessage = () => {
     alert('Enable layers in the sidebar to view features on the map.');

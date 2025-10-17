@@ -131,7 +131,7 @@ git push origin main
 
 ### Adding a City
 
-1. Click "Add City" in the header
+1. Click "Add City" in the header or select a city from the world map
 2. Step 1 - Search: Enter city name, province/state, and country. Search OpenStreetMap for results
 3. Step 2 - Details: Review/edit population and area (auto-fetched from Wikipedia)
 4. Step 3 - Boundary: Upload a GeoJSON file or draw the city boundary on the map
@@ -150,7 +150,7 @@ The app will:
 5. Markers will cluster automatically and show feature details on click
 
 #### Adding/Editing Map Layers
-1. Select a city from the header dropdown
+1. Select a city from the header dropdown or the world map
 2. From the layers sidebar, select "Add Layer" / an add icon for an existing domain, or select the edit icon beside any existing layer (skip to Step 3)
 3. Step 1 - Select the domain and a predefined layer name, or select "Add Custom Layer" to type a custom layer name and choose an icon
 4. Step 2 - Choose to upload a file or draw on a map (skip to Step 4)
@@ -162,12 +162,12 @@ The app will:
 
 For all cities:
 1. Click "Calculate Indicators" in the indicators sidebar
-2. Select an available date range to view and search results in the indicators sidebar
+2. Select an available date range to view and search results in the indicators sidebar, and optionally export it to a supported format (csv, parquet, json)
 
 For individual cities:
-1. Select a city from the header dropdown
+1. Select a city from the header dropdown or the world map
 2. Click "Calculate Indicators" in the indicators sidebar
-3. View indicator results for the selected city in the indicators sidebar
+3. View indicator results for the selected city in the indicators sidebar, and optionally export it to a supported format (csv, parquet, json)
 
 ## Data Storage
 
