@@ -106,8 +106,8 @@ npm start
 
 1. Clone the repo
 ```bash
-git clone https://github.com/mm2dang/osm-processor.git
-cd osm-processor
+git clone https://github.com/mm2dang/city-explorer
+cd cityexplorer
 ```
 2. Edit the code locally
 3. Check changes

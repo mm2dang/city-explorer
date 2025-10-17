@@ -17,7 +17,6 @@ import {
   saveCustomLayer,
   deleteLayer,
   loadLayerForEditing,
-  moveCityData,
   setDataSource
 } from './utils/s3';
 import {
@@ -251,45 +250,75 @@ function App() {
     setShowAddCityWizard(true);
   };
 
-  const handleUpdateCity = async (updatedCityData, startProcessing) => {
+  const handleUpdateCity = async (updatedCityData, startProcessing, shouldRefresh) => {
     try {
-      console.log('Updating city:', updatedCityData);
-      const oldParts = editingCity.name.split(',').map(p => p.trim());
-      const newParts = updatedCityData.name.split(',').map(p => p.trim());
+      console.log('Updating city:', updatedCityData, 'shouldRefresh:', shouldRefresh);
+      console.log('Editing city (old name):', editingCity?.name);
       
-      let oldCity, oldProvince, oldCountry;
-      let newCity, newProvince, newCountry;
-
-      if (oldParts.length === 2) {
-        [oldCity, oldCountry] = oldParts;
-        oldProvince = '';
-      } else {
-        [oldCity, oldProvince, oldCountry] = oldParts;
+      // Note: The actual save/move operations happen in the wizard's handleSubmit
+      // This function is called AFTER those operations complete
+      
+      // Always reload cities after any update to get fresh data from S3
+      console.log('Reloading all cities from S3 to get fresh metadata...');
+      setIsLoading(true);
+      
+      try {
+        const citiesWithStatus = await getAllCitiesWithDataStatus();
+        console.log(`Reloaded ${citiesWithStatus.length} cities from S3:`, citiesWithStatus);
+        
+        setCities(citiesWithStatus);
+  
+        const newStatus = {};
+        citiesWithStatus.forEach(city => {
+          newStatus[city.name] = city.hasDataLayers;
+        });
+        setCityDataStatus(newStatus);
+  
+        // If metadata was updated and this is the selected city, update it with fresh data
+        if (shouldRefresh) {
+          console.log('Looking for updated city in fresh data:', updatedCityData.name);
+          
+          // Find the city by its NEW name (after rename)
+          const freshCity = citiesWithStatus.find(c => c.name === updatedCityData.name);
+          if (freshCity) {
+            console.log('Found fresh city data:', freshCity);
+            console.log('Fresh boundary length:', freshCity.boundary?.length);
+            console.log('Fresh population:', freshCity.population);
+            console.log('Fresh coordinates:', { lat: freshCity.latitude, lon: freshCity.longitude });
+            
+            // Update selected city if it's currently selected (check both old and new names)
+            if (selectedCity && (selectedCity.name === updatedCityData.name || 
+                                 (editingCity && selectedCity.name === editingCity.name))) {
+              console.log('Updating selected city with fresh metadata');
+              setSelectedCity(freshCity);
+              
+              // Force map to update by clearing and reloading available layers
+              try {
+                const layers = await getAvailableLayersForCity(freshCity.name);
+                console.log('Reloaded available layers:', Object.keys(layers));
+                setAvailableLayers(layers);
+              } catch (error) {
+                console.warn('Error reloading layers:', error);
+              }
+            }
+          } else {
+            console.warn('Could not find updated city in fresh data:', updatedCityData.name);
+            console.log('Available cities:', citiesWithStatus.map(c => c.name));
+            
+            // If the city was renamed, try to find it by checking if the old name is gone
+            // This is a fallback in case timing issues occur
+            if (editingCity && editingCity.name !== updatedCityData.name) {
+              console.log('City was renamed, old name no longer exists as expected');
+            }
+          }
+        }
+      } catch (error) {
+        console.error('Error reloading cities:', error);
+        throw error;
+      } finally {
+        setIsLoading(false);
       }
-
-      if (newParts.length === 2) {
-        [newCity, newCountry] = newParts;
-        newProvince = '';
-      } else {
-        [newCity, newProvince, newCountry] = newParts;
-      }
-
-      const locationChanged =
-        oldCountry !== newCountry ||
-        oldProvince !== newProvince ||
-        oldCity !== newCity;
-
-      if (locationChanged) {
-        console.log('Location changed, moving data...');
-        await moveCityData(
-          oldCountry, oldProvince, oldCity,
-          newCountry, newProvince, newCity
-        );
-      }
-
-      await saveCityData(updatedCityData, newCountry, newProvince, newCity);
-      await loadCities();
-
+  
       if (startProcessing) {
         console.log('Starting background processing for updated city:', updatedCityData.name);
         setProcessingProgress(prev => ({
@@ -301,14 +330,14 @@ function App() {
             status: 'processing'
           }
         }));
-
+  
         startProcessing((cityName, progress) => {
           console.log(`Processing progress for ${cityName}:`, progress);
           setProcessingProgress(prev => ({
             ...prev,
             [cityName]: progress
           }));
-
+  
           if (progress.status === 'complete' && progress.saved > 0) {
             setCityDataStatus(prev => ({
               ...prev,
@@ -317,15 +346,11 @@ function App() {
           }
         });
       }
-
-      if (selectedCity?.name === editingCity.name) {
-        setSelectedCity(null);
-        setActiveLayers({});
-        setFeatures([]);
-      }
-
+  
       setShowAddCityWizard(false);
       setEditingCity(null);
+      
+      console.log('City update completed successfully');
     } catch (error) {
       console.error('Error updating city:', error);
       alert(`Error updating city: ${error.message}`);

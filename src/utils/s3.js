@@ -3,6 +3,33 @@ import { readParquet, writeParquet, Table, WriterPropertiesBuilder, Compression 
 import { tableFromArrays, tableToIPC, tableFromIPC } from 'apache-arrow';
 import * as turf from '@turf/turf';
 
+// Helper function to convert stream to ArrayBuffer - used throughout the module
+const streamToArrayBuffer = async (stream) => {
+  const reader = stream.getReader();
+  const chunks = [];
+  
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  
+  const totalLength = chunks.reduce((acc, chunk) => acc + chunk.length, 0);
+  const result = new Uint8Array(totalLength);
+  
+  let offset = 0;
+  for (const chunk of chunks) {
+    result.set(chunk, offset);
+    offset += chunk.length;
+  }
+  
+  return result.buffer;
+};
+
 // Proper WASM initialization for parquet-wasm
 let wasmInitialized = false;
 const initializeWasm = async () => {
@@ -225,7 +252,7 @@ const layerDefinitions = {
   social: [
     { tags: { amenity: ['bar'] }, filename: 'bars' },
     { tags: { amenity: ['cafe'] }, filename: 'cafes' },
-    { tags: { leisure: ['casino'] }, filename: 'leisure_facilities' },
+    { tags: { leisure: true }, filename: 'leisure_facilities' },
   ],
 };
 
@@ -301,7 +328,7 @@ export const getAllCities = async () => {
     console.log('--- Scanning data bucket for additional cities ---');
     const dataFiles = await scanS3Directory(`${DATA_SOURCE_PREFIX}/data/`, '.snappy.parquet');
     
-    // Extract unique cities from data files
+    // Extract unique cities from data files (use normalized names as keys)
     const dataCities = new Set();
     for (const filePath of dataFiles) {
       // Match pattern: data/country=X/province=Y/city=Z/domain=D/layer.snappy.parquet
@@ -313,36 +340,57 @@ export const getAllCities = async () => {
       }
     }
     
+    // Create a normalized lookup map for existing cities
+    const normalizedCityMap = new Map();
+    for (const [cityName] of cities) {
+      const parts = cityName.split(',').map(p => p.trim());
+      let normalizedKey;
+      if (parts.length === 3) {
+        const [c, p, co] = parts;
+        normalizedKey = `${normalizeName(c)}|${normalizeName(p)}|${normalizeName(co)}`;
+      } else if (parts.length === 2) {
+        const [c, co] = parts;
+        normalizedKey = `${normalizeName(c)}||${normalizeName(co)}`;
+      }
+      if (normalizedKey) {
+        normalizedCityMap.set(normalizedKey, cityName);
+      }
+    }
+    
     // Process unique cities found in data bucket
     for (const cityKey of dataCities) {
-      const [city, province, country] = cityKey.split('|');
-      const cityName = province ? `${city}, ${province}, ${country}` : `${city}, ${country}`;
+      // Check if this city already exists using normalized comparison
+      if (normalizedCityMap.has(cityKey)) {
+        console.log(`City ${cityKey} already loaded from population bucket, skipping`);
+        continue;
+      }
       
-      if (!cities.has(cityName)) {
-        console.log(`Found data-only city: ${cityName}`);
-        
-        try {
-          // Try to load from population bucket first
-          const cityData = await getCityData(country, province, city);
-          if (cityData) {
-            cities.set(cityData.name, cityData);
-          } else {
-            // Create minimal city entry for data-only cities
-            const minimalCity = {
-              name: cityName,
-              longitude: 0,
-              latitude: 0,
-              boundary: null,
-              population: null,
-              size: null,
-              sdg_region: null,
-            };
-            console.log(`Created minimal entry for: ${cityName}`);
-            cities.set(cityName, minimalCity);
-          }
-        } catch (error) {
-          console.warn(`Error processing data-only city ${cityName}:`, error);
+      const [city, province, country] = cityKey.split('|');
+      console.log(`Found data-only city: ${cityKey}`);
+      
+      try {
+        // Try to load from population bucket first
+        const cityData = await getCityData(country, province, city);
+        if (cityData) {
+          cities.set(cityData.name, cityData);
+          console.log(`Loaded metadata for data-only city: ${cityData.name}`);
+        } else {
+          // Create minimal city entry for data-only cities (truly no metadata)
+          const cityName = province ? `${city}, ${province}, ${country}` : `${city}, ${country}`;
+          const minimalCity = {
+            name: cityName,
+            longitude: 0,
+            latitude: 0,
+            boundary: null,
+            population: null,
+            size: null,
+            sdg_region: null,
+          };
+          console.log(`Created minimal entry for truly data-only city: ${cityName}`);
+          cities.set(cityName, minimalCity);
         }
+      } catch (error) {
+        console.warn(`Error processing data-only city ${cityKey}:`, error);
       }
     }
     
@@ -364,45 +412,26 @@ const getCityData = async (country, province, city) => {
     await initializeWasm();
     console.log(`=== Loading city data for: ${country}/${province}/${city} (source: ${DATA_SOURCE_PREFIX}) ===`);
     
-    // Helper function to convert stream to ArrayBuffer
-    const streamToArrayBuffer = async (stream) => {
-      const reader = stream.getReader();
-      const chunks = [];
-      
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          chunks.push(value);
-        }
-      } finally {
-        reader.releaseLock();
-      }
-      
-      // Calculate total length
-      const totalLength = chunks.reduce((acc, chunk) => acc + chunk.length, 0);
-      const result = new Uint8Array(totalLength);
-      
-      // Combine chunks
-      let offset = 0;
-      for (const chunk of chunks) {
-        result.set(chunk, offset);
-        offset += chunk.length;
-      }
-      
-      return result.buffer;
-    };
-    
     // Load city metadata from population bucket
     const cityMetaKey = buildPath('population', country, province, city);
-    
+
+    console.log(`=== Loading city metadata from S3 ===`);
+    console.log(`Bucket: ${BUCKET_NAME}`);
+    console.log(`Key: ${cityMetaKey}`);
+    console.log(`Full path: s3://${BUCKET_NAME}/${cityMetaKey}`);
+
     try {
       const getCommand = new GetObjectCommand({
         Bucket: BUCKET_NAME,
         Key: cityMetaKey,
+        ResponseCacheControl: 'no-cache, no-store, must-revalidate',
+        IfModifiedSince: new Date(0),
       });
       
       const fileResponse = await s3Client.send(getCommand);
+      console.log(`Successfully fetched file, ContentLength: ${fileResponse.ContentLength}`);
+      console.log(`Last Modified: ${fileResponse.LastModified}`);
+      console.log(`ETag: ${fileResponse.ETag}`);
       
       // Convert stream to ArrayBuffer for browser environment
       const arrayBuffer = await streamToArrayBuffer(fileResponse.Body);
@@ -451,16 +480,62 @@ export const saveCityData = async (cityData, country, province, city) => {
   try {
     await initializeWasm();
 
-    // Prepare data for parquet
+    // Validate population - remove all non-numeric characters including commas
+    let populationValue = null;
+    if (cityData.population) {
+      const popStr = String(cityData.population).replace(/[^0-9]/g, '');
+      if (popStr && popStr.length > 0) {
+        const popNum = parseInt(popStr, 10);
+        if (!isNaN(popNum) && popNum > 0) {
+          populationValue = popNum;
+        }
+      }
+    }
+
+    // Validate size - remove commas but keep decimals
+    let sizeValue = null;
+    if (cityData.size) {
+      const sizeStr = String(cityData.size).replace(/[^0-9.]/g, '');
+      if (sizeStr && sizeStr.length > 0) {
+        const sizeNum = parseFloat(sizeStr);
+        if (!isNaN(sizeNum) && sizeNum > 0) {
+          sizeValue = parseFloat(sizeNum.toFixed(2));
+        }
+      }
+    }
+
+    // Validate coordinates
+    let longitude = 0;
+    let latitude = 0;
+    const lon = Number(cityData.longitude);
+    const lat = Number(cityData.latitude);
+    
+    if (!isNaN(lon) && lon >= -180 && lon <= 180) {
+      longitude = parseFloat(lon.toFixed(6));
+    }
+    if (!isNaN(lat) && lat >= -90 && lat <= 90) {
+      latitude = parseFloat(lat.toFixed(6));
+    }
+
     const data = [{
-      name: cityData.name,
-      longitude: parseFloat(cityData.longitude) || 0,
-      latitude: parseFloat(cityData.latitude) || 0,
-      boundary: cityData.boundary,
-      population: cityData.population ? parseInt(cityData.population) : null,
-      size: cityData.size ? parseFloat(cityData.size) : null,
-      sdg_region: cityData.sdg_region || null,
+      name: String(cityData.name || '').trim(),
+      longitude: longitude,
+      latitude: latitude,
+      boundary: cityData.boundary ? String(cityData.boundary) : null,
+      population: populationValue,
+      size: sizeValue,
+      sdg_region: cityData.sdg_region ? String(cityData.sdg_region) : null,
     }];
+
+    console.log('Saving city data:', {
+      name: data[0].name,
+      longitude: data[0].longitude,
+      latitude: data[0].latitude,
+      population: data[0].population,
+      size: data[0].size,
+      sdg_region: data[0].sdg_region,
+      boundary_length: data[0].boundary ? data[0].boundary.length : 0
+    });
 
     // Create Table and write parquet file with Snappy compression
     const table = createParquetTable(data);
@@ -478,7 +553,12 @@ export const saveCityData = async (cityData, country, province, city) => {
     });
 
     await s3Client.send(command);
-    console.log('City data saved to population bucket successfully');
+    console.log('City data saved to population bucket successfully:', {
+      key: key,
+      size: buffer.length,
+      population: populationValue,
+      coordinates: [longitude, latitude]
+    });
   } catch (error) {
     console.error('Error saving city data to population bucket:', error);
     throw error;
@@ -508,7 +588,7 @@ export const moveCityData = async (oldCountry, oldProvince, oldCity, newCountry,
     const objectsToCopy = [];
     const objectsToDelete = [];
     
-    // Find all data layer files
+    // Find all data layer files - USE FULL PATH WITH PREFIX
     const dataPrefix = `${DATA_SOURCE_PREFIX}/data/country=${oldNormalizedCountry}/province=${oldNormalizedProvince}/city=${oldNormalizedCity}/`;
     console.log(`Scanning data prefix: ${dataPrefix}`);
     
@@ -523,12 +603,13 @@ export const moveCityData = async (oldCountry, oldProvince, oldCity, newCountry,
       const response = await s3Client.send(listCommand);
       
       if (response.Contents && response.Contents.length > 0) {
-        response.Contents.forEach(obj => {
+        for (const obj of response.Contents) {
           // Extract the domain and layer name from the key
           const match = obj.Key.match(/domain=([^/]+)\/(.+)$/);
           if (match) {
             const [, domain, fileName] = match;
-            const newKey = `data/country=${newNormalizedCountry}/province=${newNormalizedProvince}/city=${newNormalizedCity}/domain=${domain}/${fileName}`;
+            // BUILD NEW KEY WITH FULL PREFIX
+            const newKey = `${DATA_SOURCE_PREFIX}/data/country=${newNormalizedCountry}/province=${newNormalizedProvince}/city=${newNormalizedCity}/domain=${domain}/${fileName}`;
             
             objectsToCopy.push({
               oldKey: obj.Key,
@@ -538,7 +619,7 @@ export const moveCityData = async (oldCountry, oldProvince, oldCity, newCountry,
             
             console.log(`Will copy: ${obj.Key} -> ${newKey}`);
           }
-        });
+        }
       }
       
       continuationToken = response.NextContinuationToken;
@@ -559,34 +640,9 @@ export const moveCityData = async (oldCountry, oldProvince, oldCity, newCountry,
         
         const getResponse = await s3Client.send(getCommand);
         
-        // Convert stream to buffer
-        const streamToArrayBuffer = async (stream) => {
-          const reader = stream.getReader();
-          const chunks = [];
-          
-          try {
-            while (true) {
-              const { done, value } = await reader.read();
-              if (done) break;
-              chunks.push(value);
-            }
-          } finally {
-            reader.releaseLock();
-          }
-          
-          const totalLength = chunks.reduce((acc, chunk) => acc + chunk.length, 0);
-          const result = new Uint8Array(totalLength);
-          
-          let offset = 0;
-          for (const chunk of chunks) {
-            result.set(chunk, offset);
-            offset += chunk.length;
-          }
-          
-          return result;
-        };
-        
-        const objectData = await streamToArrayBuffer(getResponse.Body);
+        // Convert stream to buffer using shared helper function
+        const arrayBuffer = await streamToArrayBuffer(getResponse.Body);
+        const objectData = new Uint8Array(arrayBuffer);
         
         // Step 2: Put the object at the new location
         const putCommand = new PutObjectCommand({
@@ -776,35 +832,6 @@ export const loadCityFeatures = async (cityName, activeLayers) => {
       console.log('=== S3: No active layers selected ===');
       return [];
     }
-    
-    // Helper function to convert stream to ArrayBuffer
-    const streamToArrayBuffer = async (stream) => {
-      const reader = stream.getReader();
-      const chunks = [];
-      
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          chunks.push(value);
-        }
-      } finally {
-        reader.releaseLock();
-      }
-      
-      // Calculate total length
-      const totalLength = chunks.reduce((acc, chunk) => acc + chunk.length, 0);
-      const result = new Uint8Array(totalLength);
-      
-      // Combine chunks
-      let offset = 0;
-      for (const chunk of chunks) {
-        result.set(chunk, offset);
-        offset += chunk.length;
-      }
-      
-      return result.buffer;
-    };
     
     // Load features from individual layer files in data bucket
     for (const [domain, layers] of Object.entries(layerDefinitions)) {
@@ -1135,6 +1162,46 @@ export const loadCityFeatures = async (cityName, activeLayers) => {
   }
 };
 
+const validateBoundaryPolygon = (geometry) => {
+  if (!geometry || !geometry.coordinates) {
+    throw new Error('Invalid boundary geometry');
+  }
+
+  if (geometry.type === 'Polygon') {
+    for (let i = 0; i < geometry.coordinates.length; i++) {
+      const ring = geometry.coordinates[i];
+      if (!Array.isArray(ring) || ring.length < 4) {
+        throw new Error(
+          `Polygon ring ${i} has ${ring.length} positions. ` +
+          `Each LinearRing must have at least 4 positions (minimum valid polygon).`
+        );
+      }
+      const first = ring[0];
+      const last = ring[ring.length - 1];
+      if (first[0] !== last[0] || first[1] !== last[1]) {
+        throw new Error(`Polygon ring ${i} is not closed`);
+      }
+    }
+  } else if (geometry.type === 'MultiPolygon') {
+    for (let i = 0; i < geometry.coordinates.length; i++) {
+      for (let j = 0; j < geometry.coordinates[i].length; j++) {
+        const ring = geometry.coordinates[i][j];
+        if (!Array.isArray(ring) || ring.length < 4) {
+          throw new Error(
+            `MultiPolygon [${i}][${j}] has ${ring.length} positions. ` +
+            `Each LinearRing must have at least 4 positions.`
+          );
+        }
+        const first = ring[0];
+        const last = ring[ring.length - 1];
+        if (first[0] !== last[0] || first[1] !== last[1]) {
+          throw new Error(`MultiPolygon [${i}][${j}] is not closed`);
+        }
+      }
+    }
+  }
+};
+
 const cropFeaturesByBoundary = (features, boundary) => {
   try {
     if (!boundary || features.length === 0) {
@@ -1144,8 +1211,35 @@ const cropFeaturesByBoundary = (features, boundary) => {
     // Parse boundary if it's a string
     const boundaryGeometry = typeof boundary === 'string' ? JSON.parse(boundary) : boundary;
     
-    // Create a Turf polygon from the boundary
-    const boundaryPolygon = turf.polygon(boundaryGeometry.coordinates);
+    // Validate boundary polygon structure
+    try {
+      validateBoundaryPolygon(boundaryGeometry);
+    } catch (validationError) {
+      console.error('Invalid boundary polygon:', validationError.message);
+      throw validationError;
+    }
+    
+    // Convert boundary to appropriate Turf geometry
+    let boundaryPolygon;
+    try {
+      if (boundaryGeometry.type === 'Polygon') {
+        // For Polygon, pass coordinates directly
+        boundaryPolygon = turf.polygon(boundaryGeometry.coordinates);
+      } else if (boundaryGeometry.type === 'MultiPolygon') {
+        // For MultiPolygon, create a feature collection and use booleanIntersects with the feature
+        // We'll check intersection differently for MultiPolygon
+        boundaryPolygon = {
+          type: 'Feature',
+          geometry: boundaryGeometry,
+          properties: {}
+        };
+      } else {
+        throw new Error(`Unsupported geometry type: ${boundaryGeometry.type}`);
+      }
+    } catch (turfError) {
+      console.error('Error creating boundary geometry:', turfError);
+      throw new Error(`Failed to create geometry from boundary: ${turfError.message}`);
+    }
     
     const croppedFeatures = [];
     
@@ -1165,7 +1259,18 @@ const cropFeaturesByBoundary = (features, boundary) => {
         };
         
         // Check if feature intersects with boundary
-        const intersects = turf.booleanIntersects(turfFeature, boundaryPolygon);
+        let intersects = false;
+        try {
+          // booleanIntersects works with both Polygon and MultiPolygon features
+          if (boundaryGeometry.type === 'MultiPolygon') {
+            intersects = turf.booleanIntersects(turfFeature, boundaryPolygon);
+          } else {
+            intersects = turf.booleanIntersects(turfFeature, boundaryPolygon);
+          }
+        } catch (intersectError) {
+          console.warn('Error checking intersection for feature:', intersectError.message);
+          continue;
+        }
         
         if (intersects) {
           try {
@@ -1173,29 +1278,37 @@ const cropFeaturesByBoundary = (features, boundary) => {
             let croppedGeometry;
             
             if (geometry.type === 'Point') {
-              // For points, just check if they're within the boundary
-              const isWithin = turf.booleanPointInPolygon(turfFeature, boundaryPolygon);
+              // For points, check if they're within the boundary
+              let isWithin = false;
+              try {
+                isWithin = turf.booleanPointInPolygon(turfFeature, boundaryPolygon);
+              } catch (pointError) {
+                console.warn('Error checking point in polygon:', pointError.message);
+                continue;
+              }
+              
               if (isWithin) {
                 croppedGeometry = geometry;
               } else {
                 continue; // Skip points outside boundary
               }
             } else if (geometry.type === 'LineString' || geometry.type === 'MultiLineString') {
-              // Clip line to boundary
-              const clipped = turf.lineIntersect(turfFeature, boundaryPolygon);
-              if (clipped.features.length > 0) {
-                // Use the original line if it intersects
-                // For more precise clipping, use turf.lineSplit or custom logic
-                croppedGeometry = geometry;
-              } else {
-                continue;
-              }
+              // For lines, keep if they intersect (exact cropping is complex)
+              croppedGeometry = geometry;
             } else if (geometry.type === 'Polygon' || geometry.type === 'MultiPolygon') {
-              // Intersect polygon with boundary
-              const intersection = turf.intersect(turfFeature, boundaryPolygon);
+              // For polygons, try to intersect with boundary
+              let intersection;
+              try {
+                intersection = turf.intersect(turfFeature, boundaryPolygon);
+              } catch (intersectGeomError) {
+                console.warn('Error intersecting geometry with boundary:', intersectGeomError.message);
+                // If intersection fails but feature intersects, include original
+                croppedGeometry = geometry;
+              }
+              
               if (intersection && intersection.geometry) {
                 croppedGeometry = intersection.geometry;
-              } else {
+              } else if (!croppedGeometry) {
                 continue;
               }
             } else {
@@ -1203,21 +1316,25 @@ const cropFeaturesByBoundary = (features, boundary) => {
               croppedGeometry = geometry;
             }
             
-            // Add cropped feature
-            croppedFeatures.push({
-              ...feature,
-              geometry: croppedGeometry
-            });
+            // Add cropped feature only if we have valid geometry
+            if (croppedGeometry && croppedGeometry.type && croppedGeometry.coordinates) {
+              croppedFeatures.push({
+                ...feature,
+                geometry: croppedGeometry
+              });
+            }
             
           } catch (cropError) {
-            console.warn('Error cropping individual feature:', cropError);
+            console.warn('Error cropping individual feature:', cropError.message);
             // If cropping fails but feature intersects, include original
-            croppedFeatures.push(feature);
+            if (intersects) {
+              croppedFeatures.push(feature);
+            }
           }
         }
         
       } catch (featureError) {
-        console.warn('Error processing feature for cropping:', featureError);
+        console.warn('Error processing feature for cropping:', featureError.message);
       }
     }
     
@@ -1226,7 +1343,11 @@ const cropFeaturesByBoundary = (features, boundary) => {
     
   } catch (error) {
     console.error('Error in cropFeaturesByBoundary:', error);
-    return features; // Return original features if cropping fails
+    console.warn('Boundary geometry type:', boundary?.type);
+    console.warn('Boundary structure:', boundary);
+    console.warn('Features count:', features.length);
+    // Return original features if cropping fails to avoid losing data
+    return features;
   }
 };
 
@@ -1470,32 +1591,6 @@ export const loadLayerForEditing = async (cityName, domain, layerName) => {
     const key = buildPath('data', country, province, city, domain, layerName);
 
     console.log(`Loading layer for editing: ${key}`);
-
-    const streamToArrayBuffer = async (stream) => {
-      const reader = stream.getReader();
-      const chunks = [];
-      
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          chunks.push(value);
-        }
-      } finally {
-        reader.releaseLock();
-      }
-      
-      const totalLength = chunks.reduce((acc, chunk) => acc + chunk.length, 0);
-      const result = new Uint8Array(totalLength);
-      
-      let offset = 0;
-      for (const chunk of chunks) {
-        result.set(chunk, offset);
-        offset += chunk.length;
-      }
-      
-      return result.buffer;
-    };
 
     const command = new GetObjectCommand({
       Bucket: BUCKET_NAME,
@@ -1959,6 +2054,72 @@ export const deleteCityData = async (cityName) => {
     }
   } catch (error) {
     console.error('Error deleting city data:', error);
+    throw error;
+  }
+};
+
+// Delete only city metadata from population bucket (not data layers)
+export const deleteCityMetadata = async (country, province, city) => {
+  try {
+    const normalizedCity = normalizeName(city);
+    const normalizedProvince = normalizeName(province);
+    const normalizedCountry = normalizeName(country);
+
+    console.log(`Deleting city metadata for: ${country}/${province}/${city}`);
+    console.log(`Normalized: country=${normalizedCountry}, province=${normalizedProvince}, city=${normalizedCity}`);
+
+    const objectsToDelete = [];
+
+    // List and collect population data files only
+    const populationPrefix = `${DATA_SOURCE_PREFIX}/population/country=${normalizedCountry}/province=${normalizedProvince}/city=${normalizedCity}/`;
+    console.log(`Scanning population prefix: ${populationPrefix}`);
+    
+    let populationContinuationToken = null;
+    do {
+      const populationListCommand = new ListObjectsV2Command({
+        Bucket: BUCKET_NAME,
+        Prefix: populationPrefix,
+        ContinuationToken: populationContinuationToken,
+      });
+      const populationResponse = await s3Client.send(populationListCommand);
+      
+      if (populationResponse.Contents && populationResponse.Contents.length > 0) {
+        populationResponse.Contents.forEach(obj => {
+          objectsToDelete.push({ Key: obj.Key });
+          console.log(`Found population file to delete: ${obj.Key}`);
+        });
+      }
+      
+      populationContinuationToken = populationResponse.NextContinuationToken;
+    } while (populationContinuationToken);
+
+    console.log(`Total metadata files to delete: ${objectsToDelete.length}`);
+
+    if (objectsToDelete.length > 0) {
+      const deleteCommand = new DeleteObjectsCommand({
+        Bucket: BUCKET_NAME,
+        Delete: {
+          Objects: objectsToDelete,
+          Quiet: false,
+        },
+      });
+      
+      const deleteResponse = await s3Client.send(deleteCommand);
+      
+      if (deleteResponse.Deleted) {
+        console.log(`Deleted ${deleteResponse.Deleted.length} metadata objects`);
+      }
+      
+      if (deleteResponse.Errors && deleteResponse.Errors.length > 0) {
+        console.error('Errors during metadata deletion:', deleteResponse.Errors);
+      }
+      
+      console.log(`Successfully deleted metadata for ${city}`);
+    } else {
+      console.log(`No metadata files found to delete for ${city}`);
+    }
+  } catch (error) {
+    console.error('Error deleting city metadata:', error);
     throw error;
   }
 };

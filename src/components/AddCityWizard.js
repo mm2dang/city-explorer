@@ -6,7 +6,7 @@ import L from 'leaflet';
 import * as shp from 'shapefile';
 import proj4 from 'proj4';
 import { searchOSM, fetchWikipediaData, fetchOSMBoundary } from '../utils/osm';
-import { saveCityData, processCityFeatures, checkCityExists, moveCityData, deleteCityData } from '../utils/s3';
+import { saveCityData, processCityFeatures, checkCityExists, moveCityData, deleteCityData, deleteCityMetadata } from '../utils/s3';
 import { getSDGRegion } from '../utils/regions';
 import 'leaflet-draw/dist/leaflet.draw.css';
 import '../styles/AddCityWizard.css';
@@ -131,7 +131,7 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel }) => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [searchLoading, setSearchLoading] = useState(false);
   const [wikiLoading, setWikiLoading] = useState(false);
-  const [shouldProcessFeatures, setShouldProcessFeatures] = useState(true);
+  const [shouldProcessFeatures, setShouldProcessFeatures] = useState(false);
   const drawRef = useRef(null);
   const mapRef = useRef(null);
 
@@ -208,21 +208,26 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel }) => {
     setCityName(parsed.city);
     setProvince(parsed.province);
     setCountry(parsed.country);
-
-    // Try to get boundary from OSM
-    let boundaryData = null;
-    if (city.geojson && ['Polygon', 'MultiPolygon'].includes(city.geojson.type)) {
-      boundaryData = city.geojson;
-    } else if (city.osm_type === 'relation' && city.osm_id) {
-      try {
-        boundaryData = await fetchOSMBoundary(city.osm_id);
-      } catch (error) {
-        console.error('Error fetching boundary:', error);
+  
+    // Only set boundary from OSM if no boundary exists yet
+    // This prevents overwriting uploaded/drawn boundaries
+    if (!boundary) {
+      let boundaryData = null;
+      if (city.geojson && ['Polygon', 'MultiPolygon'].includes(city.geojson.type)) {
+        boundaryData = city.geojson;
+      } else if (city.osm_type === 'relation' && city.osm_id) {
+        try {
+          boundaryData = await fetchOSMBoundary(city.osm_id);
+        } catch (error) {
+          console.error('Error fetching boundary:', error);
+        }
+      }
+  
+      if (boundaryData) {
+        setBoundary(boundaryData);
       }
     }
-
-    setBoundary(boundaryData);
-
+  
     // Fetch Wikipedia data with URL
     setWikiLoading(true);
     try {
@@ -247,12 +252,53 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel }) => {
       drawRef.current.clearLayers();
       drawRef.current.addLayer(layer);
     }
-    setBoundary(layer.toGeoJSON().geometry);
+    
+    const geometry = layer.toGeoJSON().geometry;
+    
+    // Validate boundary before setting
+    const validation = validateBoundary(geometry);
+    if (!validation.valid) {
+      setUploadError(`Invalid boundary: ${validation.error}`);
+      return;
+    }
+    
+    setBoundary(geometry);
+    setUploadError('');
+    
+    // Update coordinates based on new boundary
+    const center = calculateBoundaryCenter(geometry);
+    if (center && selectedCity) {
+      setSelectedCity(prev => ({
+        ...prev,
+        lat: center.lat,
+        lon: center.lon
+      }));
+    }
   };
 
   const handleDrawEdited = (e) => {
     e.layers.eachLayer((layer) => {
-      setBoundary(layer.toGeoJSON().geometry);
+      const geometry = layer.toGeoJSON().geometry;
+      
+      // Validate boundary before setting
+      const validation = validateBoundary(geometry);
+      if (!validation.valid) {
+        setUploadError(`Invalid boundary: ${validation.error}`);
+        return;
+      }
+      
+      setBoundary(geometry);
+      setUploadError('');
+      
+      // Update coordinates based on edited boundary
+      const center = calculateBoundaryCenter(geometry);
+      if (center && selectedCity) {
+        setSelectedCity(prev => ({
+          ...prev,
+          lat: center.lat,
+          lon: center.lon
+        }));
+      }
     });
   };
 
@@ -303,13 +349,94 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel }) => {
     }
   }, [boundary]);
 
+  const validateBoundary = (geometry) => {
+    if (!geometry || !geometry.coordinates) {
+      return { valid: false, error: 'No geometry data' };
+    }
+  
+    if (geometry.type === 'Polygon') {
+      for (let i = 0; i < geometry.coordinates.length; i++) {
+        const ring = geometry.coordinates[i];
+        if (!Array.isArray(ring) || ring.length < 4) {
+          return {
+            valid: false,
+            error: `Ring ${i} has ${ring.length} positions. Each LinearRing must have at least 4 positions (minimum valid polygon).`
+          };
+        }
+        // Check if ring is closed
+        const first = ring[0];
+        const last = ring[ring.length - 1];
+        if (first[0] !== last[0] || first[1] !== last[1]) {
+          return {
+            valid: false,
+            error: `Ring ${i} is not closed. First and last coordinates must be the same.`
+          };
+        }
+      }
+    } else if (geometry.type === 'MultiPolygon') {
+      for (let i = 0; i < geometry.coordinates.length; i++) {
+        for (let j = 0; j < geometry.coordinates[i].length; j++) {
+          const ring = geometry.coordinates[i][j];
+          if (!Array.isArray(ring) || ring.length < 4) {
+            return {
+              valid: false,
+              error: `Polygon ${i}, Ring ${j} has ${ring.length} positions. Each LinearRing must have at least 4 positions.`
+            };
+          }
+          const first = ring[0];
+          const last = ring[ring.length - 1];
+          if (first[0] !== last[0] || first[1] !== last[1]) {
+            return {
+              valid: false,
+              error: `Polygon ${i}, Ring ${j} is not closed.`
+            };
+          }
+        }
+      }
+    }
+  
+    return { valid: true };
+  };
+
+  const calculateBoundaryCenter = (geometry) => {
+    try {
+      let coords = [];
+      
+      if (geometry.type === 'Polygon') {
+        coords = geometry.coordinates[0];
+      } else if (geometry.type === 'MultiPolygon') {
+        coords = geometry.coordinates[0][0];
+      } else {
+        return null;
+      }
+  
+      if (!coords || coords.length < 3) {
+        return null;
+      }
+  
+      let sumLat = 0, sumLon = 0;
+      for (const coord of coords) {
+        sumLon += coord[0];
+        sumLat += coord[1];
+      }
+  
+      return {
+        lat: (sumLat / coords.length).toString(),
+        lon: (sumLon / coords.length).toString()
+      };
+    } catch (error) {
+      console.error('Error calculating boundary center:', error);
+      return null;
+    }
+  };
+
   const handleFileUpload = async (e) => {
     const files = Array.from(e.target.files);
     if (!files || files.length === 0) return;
-
+  
     setUploadError('');
     setIsProcessing(true);
-
+  
     try {
       const geojsonFile = files.find(f => {
         const name = f.name.toLowerCase();
@@ -317,7 +444,7 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel }) => {
       });
       
       const shpFile = files.find(f => f.name.toLowerCase().endsWith('.shp'));
-
+  
       if (geojsonFile) {
         const reader = new FileReader();
         reader.onload = (event) => {
@@ -325,7 +452,7 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel }) => {
             const geojson = JSON.parse(event.target.result);
             let geometry;
             let crsInfo = null;
-
+  
             if (geojson.crs && geojson.crs.properties && geojson.crs.properties.name) {
               const crsName = geojson.crs.properties.name;
               if (crsName.includes('EPSG')) {
@@ -336,7 +463,7 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel }) => {
                 }
               }
             }
-
+  
             if (geojson.type === 'FeatureCollection') {
               if (!geojson.features || geojson.features.length === 0) {
                 setUploadError('FeatureCollection is empty');
@@ -355,19 +482,27 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel }) => {
               setIsProcessing(false);
               return;
             }
-
+  
             if (!['Polygon', 'MultiPolygon'].includes(geometry.type)) {
               setUploadError('Please upload a valid Polygon or MultiPolygon GeoJSON');
               setIsProcessing(false);
               return;
             }
-
+  
             if (!geometry.coordinates || geometry.coordinates.length === 0) {
               setUploadError('GeoJSON geometry has invalid or empty coordinates');
               setIsProcessing(false);
               return;
             }
-
+  
+            // Validate boundary
+            const validation = validateBoundary(geometry);
+            if (!validation.valid) {
+              setUploadError(`Invalid boundary: ${validation.error}`);
+              setIsProcessing(false);
+              return;
+            }
+  
             console.log('Successfully loaded GeoJSON boundary:', geometry);
             
             if (crsInfo && crsInfo !== 'EPSG:4326') {
@@ -383,6 +518,16 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel }) => {
             }
             
             setBoundary(geometry);
+            
+            // Update coordinates based on uploaded boundary
+            const center = calculateBoundaryCenter(geometry);
+            if (center && selectedCity) {
+              setSelectedCity(prev => ({
+                ...prev,
+                lat: center.lat,
+                lon: center.lon
+              }));
+            }
             
             if (drawRef.current) {
               drawRef.current.clearLayers();
@@ -410,7 +555,7 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel }) => {
           if (dbfFile) {
             dbfBuffer = await dbfFile.arrayBuffer();
           }
-
+  
           let prjWkt = null;
           const prjFile = files.find(f => f.name.toLowerCase().endsWith('.prj'));
           if (prjFile) {
@@ -419,7 +564,7 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel }) => {
           } else {
             console.warn('No PRJ file found - will assume WGS 1984 UTM Zone 19S (EPSG:32719)');
           }
-
+  
           const geojson = await shp.read(shpBuffer, dbfBuffer);
           
           if (!geojson || !geojson.features || geojson.features.length === 0) {
@@ -427,7 +572,7 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel }) => {
             setIsProcessing(false);
             return;
           }
-
+  
           let geometry = geojson.features[0].geometry;
           
           if (!['Polygon', 'MultiPolygon'].includes(geometry.type)) {
@@ -435,13 +580,13 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel }) => {
             setIsProcessing(false);
             return;
           }
-
+  
           if (!geometry.coordinates || geometry.coordinates.length === 0) {
             setUploadError('Shapefile geometry has invalid or empty coordinates');
             setIsProcessing(false);
             return;
           }
-
+  
           console.log('Original Shapefile boundary:', geometry);
           
           try {
@@ -453,8 +598,26 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel }) => {
             setIsProcessing(false);
             return;
           }
-
+  
+          // Validate boundary
+          const validation = validateBoundary(geometry);
+          if (!validation.valid) {
+            setUploadError(`Invalid boundary: ${validation.error}`);
+            setIsProcessing(false);
+            return;
+          }
+  
           setBoundary(geometry);
+          
+          // Update coordinates based on uploaded boundary
+          const center = calculateBoundaryCenter(geometry);
+          if (center && selectedCity) {
+            setSelectedCity(prev => ({
+              ...prev,
+              lat: center.lat,
+              lon: center.lon
+            }));
+          }
           
           if (drawRef.current) {
             drawRef.current.clearLayers();
@@ -489,7 +652,7 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel }) => {
       setUploadError(`Error processing file: ${error.message}`);
       setIsProcessing(false);
     }
-
+  
     e.target.value = '';
   };
 
@@ -512,6 +675,13 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel }) => {
       return;
     }
   
+  // Final boundary validation
+  const validation = validateBoundary(boundary);
+    if (!validation.valid) {
+      alert(`Invalid boundary: ${validation.error}`);
+      return;
+    }
+  
     setIsProcessing(true);
     try {
       const fullName = [cityName, province, country].filter(Boolean).join(', ');
@@ -519,7 +689,18 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel }) => {
       const isRename = editingCity && editingCity.name !== fullName;
       const boundaryActuallyChanged = hasBoundaryChanged();
       
-      if (!editingCity || isRename) {
+      // Check if new name already exists (only if renaming)
+      if (isRename) {
+        const existingCity = await checkCityExists(country, province, cityName);
+        if (existingCity) {
+          alert(`A city with this name already exists: ${fullName}\n\nPlease use a different name or edit the existing city.`);
+          setIsProcessing(false);
+          return;
+        }
+      }
+      
+      // For new cities, check if it exists
+      if (!editingCity) {
         const existingCity = await checkCityExists(country, province, cityName);
         if (existingCity) {
           alert(`A city with this name already exists: ${fullName}\n\nPlease use a different name or edit the existing city.`);
@@ -530,23 +711,58 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel }) => {
       
       const sdgRegion = getSDGRegion(country);
   
+      // Convert population properly - remove commas and any non-numeric characters
+      let populationValue = null;
+      if (wikiData.population) {
+        const popStr = String(wikiData.population).replace(/[^0-9]/g, '');
+        if (popStr && popStr.length > 0) {
+          const parsed = parseInt(popStr, 10);
+          if (!isNaN(parsed) && parsed > 0) {
+            populationValue = parsed;
+          }
+        }
+      }
+  
+      // Convert size properly - remove commas and keep decimals
+      let sizeValue = null;
+      if (wikiData.size) {
+        const sizeStr = String(wikiData.size).replace(/[^0-9.]/g, '');
+        if (sizeStr && sizeStr.length > 0) {
+          const parsed = parseFloat(sizeStr);
+          if (!isNaN(parsed) && parsed > 0) {
+            sizeValue = parsed;
+          }
+        }
+      }
+  
+      // Calculate coordinates from the current boundary (uploaded/drawn)
+      // This ensures coordinates match the actual boundary being saved
+      const center = calculateBoundaryCenter(boundary);
+      const finalLon = center ? parseFloat(center.lon) : parseFloat(selectedCity.lon);
+      const finalLat = center ? parseFloat(center.lat) : parseFloat(selectedCity.lat);
+  
       const cityData = {
         name: fullName,
-        longitude: parseFloat(selectedCity.lon),
-        latitude: parseFloat(selectedCity.lat),
-        boundary: JSON.stringify(boundary),
-        population: wikiData.population ? parseInt(wikiData.population) : null,
-        size: wikiData.size ? parseFloat(wikiData.size) : null,
+        longitude: finalLon,
+        latitude: finalLat,
+        boundary: JSON.stringify(boundary), // Use the current boundary state
+        population: populationValue,
+        size: sizeValue,
         sdg_region: sdgRegion
       };
   
-      await saveCityData(cityData, country, province, cityName);
+      console.log('City data to save:', cityData);
   
       if (editingCity) {
         const oldParsed = parseCityName(editingCity.name);
         
         if (isRename) {
-          console.log('City renamed, moving existing data...');
+          console.log('City renamed, moving data and saving new metadata...');
+          
+          // First, save the new city data
+          await saveCityData(cityData, country, province, cityName);
+          
+          // Then move the data layers
           await moveCityData(
             oldParsed.country,
             oldParsed.province,
@@ -556,10 +772,23 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel }) => {
             cityName
           );
           
+          // Finally, delete the old city metadata
           await deleteCityData(editingCity.name);
+          
+        } else {
+          // Just updating metadata, not renaming
+          console.log('Updating city metadata without rename - deleting old metadata first...');
+          
+          // Delete old metadata from population bucket only
+          await deleteCityMetadata(country, province, cityName);
+          
+          // Save new metadata
+          await saveCityData(cityData, country, province, cityName);
         }
         
+        // Only process features if boundary changed AND user checked the option
         if (boundaryActuallyChanged && shouldProcessFeatures) {
+          // Pass cityData and request reprocessing
           await onComplete(cityData, (progressHandler) => {
             setTimeout(async () => {
               try {
@@ -575,11 +804,17 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel }) => {
                 console.error('Background processing error:', error);
               }
             }, 1000);
-          });
+          }, true); // true = metadata updated, refresh needed
         } else {
-          await onComplete(cityData, null);
+          // Just metadata update, no reprocessing
+          await onComplete(cityData, null, true); // true = metadata updated, refresh needed
         }
       } else {
+        // New city
+        console.log('Adding new city...');
+        await saveCityData(cityData, country, province, cityName);
+        
+        // Only process if user checked the option
         if (shouldProcessFeatures) {
           await onComplete(cityData, (progressHandler) => {
             setTimeout(async () => {
@@ -596,15 +831,15 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel }) => {
                 console.error('Background processing error:', error);
               }
             }, 1000);
-          });
+          }, false); // false = new city, no refresh needed
         } else {
-          await onComplete(cityData, null);
+          await onComplete(cityData, null, false); // false = new city, no refresh needed
         }
       }
   
     } catch (error) {
       console.error('Error saving city:', error);
-      alert('Error saving city. Please try again.');
+      alert(`Error saving city: ${error.message}`);
     } finally {
       setIsProcessing(false);
     }

@@ -73,7 +73,7 @@ const layerDefs = {
   social: [
     { tags: { amenity: ['bar'] }, name: 'bars', icon: 'fas fa-wine-glass-alt' },
     { tags: { amenity: ['cafe'] }, name: 'cafes', icon: 'fas fa-coffee' },
-    { tags: { leisure: ['casino'] }, name: 'leisure_facilities', icon: 'fas fa-dice' },
+    { tags: { leisure: true }, name: 'leisure_facilities', icon: 'fas fa-dice' },
   ],
 };
 
@@ -1363,7 +1363,7 @@ useEffect(() => {
       });
   
       const query = `
-        [out:json][timeout:25];
+        [out:json][timeout:1000];
         (
           nwr${tagQuery}(${bbox});
         );

@@ -201,17 +201,23 @@ const Header = ({
 
         <div className="header-controls">
           <div className="city-selector">
-            <motion.button
-              className="city-selector-btn"
-              onClick={handleCityDropdownToggle}
-              whileHover={{ scale: 1.02 }}
-              whileTap={{ scale: 0.98 }}
-            >
-              <span>
-                {selectedCity ? selectedCity.name : 'Select a city'}
-              </span>
-              <i className={`fas fa-chevron-${showDropdown ? 'up' : 'down'}`}></i>
-            </motion.button>
+          <motion.button
+            className="city-selector-btn"
+            onClick={handleCityDropdownToggle}
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
+          >
+            <span>
+              {selectedCity ? (
+                // Display fresh city data from the cities array
+                (() => {
+                  const freshCity = cities.find(c => c.name === selectedCity.name);
+                  return freshCity ? freshCity.name : selectedCity.name;
+                })()
+              ) : 'Select a city'}
+            </span>
+            <i className={`fas fa-chevron-${showDropdown ? 'up' : 'down'}`}></i>
+          </motion.button>
 
             {showDropdown && (
               <motion.div

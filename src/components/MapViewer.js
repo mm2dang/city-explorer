@@ -1022,6 +1022,69 @@ useEffect(() => {
     }
   };
 
+  useEffect(() => {
+    if (!mapInstanceRef.current || !selectedCity) return;
+  
+    console.log('MapViewer: Selected city changed, updating display');
+    console.log('MapViewer: City data:', {
+      name: selectedCity.name,
+      lat: selectedCity.latitude,
+      lon: selectedCity.longitude,
+      population: selectedCity.population,
+      size: selectedCity.size,
+      boundaryLength: selectedCity.boundary?.length
+    });
+  
+    // Update stored coordinates in map container
+    const mapContainer = mapInstanceRef.current.getContainer();
+    if (selectedCity.latitude && selectedCity.longitude) {
+      mapContainer.dataset.cityLat = selectedCity.latitude;
+      mapContainer.dataset.cityLng = selectedCity.longitude;
+    }
+  
+    // Update boundary layer
+    if (selectedCity.boundary) {
+      try {
+        // Remove old boundary if it exists
+        if (boundaryLayerRef.current && mapInstanceRef.current.hasLayer(boundaryLayerRef.current)) {
+          console.log('MapViewer: Removing old boundary layer');
+          mapInstanceRef.current.removeLayer(boundaryLayerRef.current);
+          boundaryLayerRef.current = null;
+        }
+  
+        // Parse and add new boundary
+        const boundary = JSON.parse(selectedCity.boundary);
+        console.log('MapViewer: Parsed boundary type:', boundary.type);
+        console.log('MapViewer: Boundary coordinates sample:', boundary.coordinates?.[0]?.[0]);
+  
+        const boundaryLayer = L.geoJSON(boundary, {
+          style: {
+            color: '#0891b2',
+            weight: 3,
+            opacity: 0.8,
+            fillOpacity: 0.1
+          }
+        });
+  
+        boundaryLayer.addTo(mapInstanceRef.current);
+        boundaryLayerRef.current = boundaryLayer;
+  
+        const bounds = boundaryLayer.getBounds();
+        if (bounds.isValid()) {
+          console.log('MapViewer: Fitting map to new boundary');
+          mapInstanceRef.current.fitBounds(bounds, { padding: [50, 50] });
+        }
+  
+        console.log('MapViewer: Boundary updated successfully');
+      } catch (error) {
+        console.error('MapViewer: Error updating boundary:', error);
+      }
+    } else if (selectedCity.latitude && selectedCity.longitude) {
+      console.log('MapViewer: No boundary, centering on coordinates');
+      mapInstanceRef.current.setView([selectedCity.latitude, selectedCity.longitude], 12);
+    }
+  }, [selectedCity]);
+  
   return (
     <div className="map-viewer">
       <div ref={mapRef} className="map-container" />
