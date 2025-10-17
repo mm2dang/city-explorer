@@ -1001,21 +1001,25 @@ useEffect(() => {
     };
   }, [loadAndDisplayFeatures]);
 
-  // Cleanup effect when selectedCity changes to null (returning to home)
-useEffect(() => {
-  if (!selectedCity && abortControllerRef.current) {
-    console.log('MapViewer: City deselected, aborting any ongoing loading operations');
-    abortControllerRef.current.abort();
-    abortControllerRef.current = null;
-    
-    // Immediately clear loading state
-    setIsLoadingData(false);
-    isLoadingRef.current = false;
-  }
-}, [selectedCity]);
+  // Cleanup effect when selectedCity changes to null
+  useEffect(() => {
+    if (!selectedCity && abortControllerRef.current) {
+      console.log('MapViewer: City deselected, aborting any ongoing loading operations');
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+      
+      // Immediately clear loading state
+      setIsLoadingData(false);
+      isLoadingRef.current = false;
+    }
+  }, [selectedCity]);
 
   const showEnableLayersMessage = () => {
-    alert('Enable layers in the sidebar to view features on the map.');
+    if (!selectedCity) {
+      alert(`${cities.length} cities available. Click on a city marker to explore.`);
+    } else {
+      alert('Enable layers in the sidebar to view features on the map.');
+    }
   };
 
   return (
@@ -1036,8 +1040,17 @@ useEffect(() => {
         onClick={showEnableLayersMessage}
         style={{ cursor: 'pointer' }}
       >
-        <i className="fas fa-map-marker-alt"></i>
-        <span>{featureCount.toLocaleString()} features loaded</span>
+        {!selectedCity ? (
+          <>
+            <i className="fas fa-city"></i>
+            <span>{cities.length.toLocaleString()} {cities.length === 1 ? 'city' : 'cities'} available</span>
+          </>
+        ) : (
+          <>
+            <i className="fas fa-map-marker-alt"></i>
+            <span>{featureCount.toLocaleString()} features loaded</span>
+          </>
+        )}
       </div>
     </div>
   );
