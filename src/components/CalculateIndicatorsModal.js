@@ -137,7 +137,7 @@ const CalculateIndicatorsModal = ({ cities, selectedCity, dataSource, onCancel, 
       START_MONTH: startMonth,
       END_MONTH: endMonth,
       USE_OSM: dataSource === 'osm' ? 'true' : 'false',
-      JOB_NAME: 'monthly_indicators'
+      JOB_NAME: 'calculate_indicators'
     };
 
     for (const group of Object.values(cityGroups)) {

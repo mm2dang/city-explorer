@@ -68,7 +68,7 @@ cityexplorer/
 
 1. Clone the repository
 ```bash
-git clone https://github.com/mm2dang/osm-processor
+git clone https://github.com/mm2dang/city-explorer
 cd cityexplorer
 ```
 2. Install dependencies

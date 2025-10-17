@@ -23,7 +23,7 @@ const glueClient = new GlueClient({
 });
 
 const RESULT_BUCKET = process.env.REACT_APP_S3_RESULT_BUCKET_NAME;
-const GLUE_JOB_NAME = 'monthly_indicators';
+const GLUE_JOB_NAME = 'calculate_indicators';
 
 /**
  * Get available date ranges from S3 summary folder
