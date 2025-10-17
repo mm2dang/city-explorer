@@ -88,7 +88,8 @@ const LayerModal = ({
   cityBoundary,
   cityName,
   domainColors,
-  availableLayersByDomain
+  availableLayersByDomain,
+  mapView = 'street'
 }) => {
   const [step, setStep] = useState(1);
   const [layerName, setLayerName] = useState('');
@@ -116,13 +117,16 @@ const LayerModal = ({
   const reviewDrawnItemsRef = useRef(null);
   const reviewCentroidGroupRef = useRef(null);
 
+  useEffect(() => {
+    console.log('LayerModal received mapView prop:', mapView);
+  }, [mapView]);
+
   const predefinedLayers = useMemo(() => {
     const allLayers = layerDefs[selectedDomain] || [];
     const currentExistingLayers = selectedDomain && domainColors
       ? (availableLayersByDomain?.[selectedDomain] || [])
       : existingLayers;
     
-    // Filter out layers that already exist (unless we're editing that layer)
     return allLayers.filter(layer => {
       const layerExists = currentExistingLayers.some(existing => 
         existing.name === layer.name && (!editingLayer || editingLayer.name !== layer.name)
@@ -248,23 +252,23 @@ const LayerModal = ({
     return uniqueFeatures;
   };
 
-  const updatePopupContent = useCallback((layer, feature, index, finalLayerName, currentDomain) => {
+  const createPopupContent = useCallback((feature, index, finalLayerName, currentDomain, includeType = false) => {
     const featureName = feature.properties?.name || feature.properties?.feature_name || `Feature ${index + 1}`;
-    layer.bindPopup(`
+    return `
       <div style="font-family: Inter, sans-serif;">
         <h4 style="margin: 0 0 8px 0; color: #1a202c; font-size: 14px;">
           ${featureName}
         </h4>
         <p style="margin: 0; color: #64748b; font-size: 12px;">
           <strong>Layer:</strong> ${finalLayerName}<br>
-          <strong>Domain:</strong> ${currentDomain}${feature.geometry.type !== 'Point' ? `<br><strong>Type:</strong> ${feature.geometry.type}` : ''}
+          <strong>Domain:</strong> ${currentDomain}${includeType ? `<br><strong>Type:</strong> ${feature.geometry.type}` : ''}
         </p>
         <button class="edit-feature-btn" data-feature-index="${index}"
           style="margin-top: 8px; padding: 4px 8px; background: #0891b2; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px;">
           <i class="fas fa-edit"></i> Edit Name
         </button>
       </div>
-    `);
+    `;
   }, []);
 
   const updateFeaturesFromMap = useCallback((drawnItems) => {
@@ -321,7 +325,6 @@ const LayerModal = ({
     return '';
   }, [selectedDomain, existingLayers, editingLayer, domainColors, availableLayersByDomain]);
   
-
   const handleLayerNameChange = (e) => {
     const name = e.target.value;
     setCustomLayerName(name);
@@ -338,7 +341,6 @@ const LayerModal = ({
       setCustomLayerIcon('fas fa-map-marker-alt');
       setNameError('');
     } else {
-      // Check if layer already exists
       const currentExistingLayers = selectedDomain && domainColors
         ? (availableLayersByDomain?.[selectedDomain] || [])
         : existingLayers;
@@ -442,8 +444,14 @@ const LayerModal = ({
         minZoom: 2,
         maxZoom: 18
       }).setView([43.4643, -80.5204], 12);
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '© OpenStreetMap contributors'
+      const tileLayerUrl = mapView === 'satellite'
+        ? 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
+        : 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
+      const tileLayerAttribution = mapView === 'satellite'
+        ? 'Tiles © Esri'
+        : '© OpenStreetMap contributors';
+      L.tileLayer(tileLayerUrl, {
+        attribution: tileLayerAttribution
       }).addTo(map);
       setTimeout(() => {
         map.invalidateSize();
@@ -494,8 +502,8 @@ const LayerModal = ({
               className: 'custom-marker-icon',
               html: `<div style="
                 background-color: ${currentDomainColor};
-                width: 28px;
-                height: 28px;
+                width: 30px;
+                height: 30px;
                 border-radius: 50%;
                 border: 2px solid white;
                 box-shadow: 0 2px 4px rgba(0,0,0,0.3);
@@ -524,8 +532,8 @@ const LayerModal = ({
                 className: 'custom-marker-icon',
                 html: `<div style="
                   background-color: ${currentDomainColor};
-                  width: 28px;
-                  height: 28px;
+                  width: 30px;
+                  height: 30px;
                   border-radius: 50%;
                   border: 2px solid white;
                   box-shadow: 0 2px 4px rgba(0,0,0,0.3);
@@ -542,7 +550,12 @@ const LayerModal = ({
                 iconAnchor: [14, 14]
               })
             });
-            updatePopupContent(marker, feature, index, finalLayerName, selectedDomain);
+            const popupContent = createPopupContent(feature, index, finalLayerName, selectedDomain, false);
+            marker.bindPopup(popupContent, {
+              closeButton: true,
+              className: 'feature-marker-popup',
+              maxWidth: 400
+            });
             drawnItems.addLayer(marker);
             console.log(`Drawing map: Added point feature at index ${index}:`, feature);
           } else {
@@ -555,7 +568,11 @@ const LayerModal = ({
                 fillOpacity: 0.3
               }
             });
-            updatePopupContent(geoJsonLayer, feature, index, finalLayerName, selectedDomain);
+            const popupContent = createPopupContent(feature, index, finalLayerName, selectedDomain, true);
+            geoJsonLayer.bindPopup(popupContent, {
+              closeButton: true,
+              className: 'feature-marker-popup'
+            });
             geoJsonLayer.eachLayer(l => {
               drawnItems.addLayer(l);
             });
@@ -570,8 +587,8 @@ const LayerModal = ({
                     className: 'custom-marker-icon',
                     html: `<div style="
                       background-color: ${currentDomainColor};
-                      width: 28px;
-                      height: 28px;
+                      width: 30px;
+                      height: 30px;
                       border-radius: 50%;
                       border: 2px solid white;
                       box-shadow: 0 2px 4px rgba(0,0,0,0.3);
@@ -588,7 +605,11 @@ const LayerModal = ({
                     iconAnchor: [14, 14]
                   })
                 });
-                updatePopupContent(centroidMarker, feature, index, finalLayerName, selectedDomain);
+                const centroidPopupContent = createPopupContent(feature, index, finalLayerName, selectedDomain, true);
+                centroidMarker.bindPopup(centroidPopupContent, {
+                  closeButton: true,
+                  className: 'feature-marker-popup'
+                });
                 centroidGroup.addLayer(centroidMarker);
                 console.log(`Drawing map: Added centroid for feature at index ${index}`);
               }
@@ -616,7 +637,8 @@ const LayerModal = ({
         const popup = e.popup;
         const editButton = popup._contentNode.querySelector('.edit-feature-btn');
         if (editButton) {
-          editButton.addEventListener('click', () => {
+          editButton.addEventListener('click', (evt) => {
+            evt.stopPropagation();
             const featureIndex = parseInt(editButton.dataset.featureIndex);
             const feature = features[featureIndex];
             const currentName = feature.properties?.name || feature.properties?.feature_name || '';
@@ -643,16 +665,20 @@ const LayerModal = ({
         if (croppedFeature && validateFeature(croppedFeature, featureIndex)) {
           drawnItems.addLayer(layer);
           setFeatures(prev => [...prev, croppedFeature]);
-          console.log('Feature created in review map and cropped:', croppedFeature);
-          updatePopupContent(layer, croppedFeature, featureIndex, finalLayerName, selectedDomain);
+          console.log('Feature created in drawing map and cropped:', croppedFeature);
           
-          // Automatically open the edit name popup
+          const popupContent = createPopupContent(croppedFeature, featureIndex, finalLayerName, selectedDomain, croppedFeature.geometry.type !== 'Point');
+          layer.bindPopup(popupContent, {
+            closeButton: true,
+            className: 'feature-marker-popup'
+          });
+          
           setTimeout(() => {
             setEditingFeatureName(featureIndex);
             setFeatureNameInput(`Feature ${featureIndex + 1}`);
           }, 100);
         } else {
-          console.warn('Feature is outside city boundary in review map:', newFeature);
+          console.warn('Feature is outside city boundary in drawing map:', newFeature);
           alert('Feature is outside the city boundary and was not added.');
         }
       });
@@ -674,7 +700,7 @@ const LayerModal = ({
         console.log('Drawing map cleaned up');
       }
     };
-  }, [step, dataSource, cityBoundary, currentDomainColor, layerIcon, layerName, selectedDomain, isLoadingExisting, features, updatePopupContent, updateFeaturesFromMap, isCustomLayer, customLayerIcon, customLayerName, cropFeatureByBoundary]);
+  }, [step, dataSource, cityBoundary, currentDomainColor, layerIcon, layerName, selectedDomain, isLoadingExisting, features, updateFeaturesFromMap, isCustomLayer, customLayerIcon, customLayerName, cropFeatureByBoundary, createPopupContent, mapView]);
 
   useEffect(() => {
     if (
@@ -698,8 +724,14 @@ const LayerModal = ({
         minZoom: 2,
         maxZoom: 18
       }).setView([43.4643, -80.5204], 12);
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '© OpenStreetMap contributors'
+      const tileLayerUrl = mapView === 'satellite'
+        ? 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
+        : 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
+      const tileLayerAttribution = mapView === 'satellite'
+        ? 'Tiles © Esri'
+        : '© OpenStreetMap contributors';
+      L.tileLayer(tileLayerUrl, {
+        attribution: tileLayerAttribution
       }).addTo(map);
       setTimeout(() => {
         map.invalidateSize();
@@ -750,8 +782,8 @@ const LayerModal = ({
               className: 'custom-marker-icon',
               html: `<div style="
                 background-color: ${currentDomainColor};
-                width: 28px;
-                height: 28px;
+                width: 30px;
+                height: 30px;
                 border-radius: 50%;
                 border: 2px solid white;
                 box-shadow: 0 2px 4px rgba(0,0,0,0.3);
@@ -780,8 +812,8 @@ const LayerModal = ({
                 className: 'custom-marker-icon',
                 html: `<div style="
                   background-color: ${currentDomainColor};
-                  width: 28px;
-                  height: 28px;
+                  width: 30px;
+                  height: 30px;
                   border-radius: 50%;
                   border: 2px solid white;
                   box-shadow: 0 2px 4px rgba(0,0,0,0.3);
@@ -798,7 +830,12 @@ const LayerModal = ({
                 iconAnchor: [14, 14]
               })
             });
-            updatePopupContent(marker, feature, index, finalLayerName, selectedDomain);
+            const popupContent = createPopupContent(feature, index, finalLayerName, selectedDomain, false);
+            marker.bindPopup(popupContent, {
+              closeButton: true,
+              className: 'feature-marker-popup',
+              maxWidth: 400
+            });
             drawnItems.addLayer(marker);
             console.log(`Review map: Added point feature at index ${index}:`, feature);
           } else {
@@ -811,7 +848,11 @@ const LayerModal = ({
                 fillOpacity: 0.3
               }
             });
-            updatePopupContent(geoJsonLayer, feature, index, finalLayerName, selectedDomain);
+            const popupContent = createPopupContent(feature, index, finalLayerName, selectedDomain, true);
+            geoJsonLayer.bindPopup(popupContent, {
+              closeButton: true,
+              className: 'feature-marker-popup'
+            });
             geoJsonLayer.eachLayer(l => {
               drawnItems.addLayer(l);
             });
@@ -826,8 +867,8 @@ const LayerModal = ({
                     className: 'custom-marker-icon',
                     html: `<div style="
                       background-color: ${currentDomainColor};
-                      width: 28px;
-                      height: 28px;
+                      width: 30px;
+                      height: 30px;
                       border-radius: 50%;
                       border: 2px solid white;
                       box-shadow: 0 2px 4px rgba(0,0,0,0.3);
@@ -844,7 +885,11 @@ const LayerModal = ({
                     iconAnchor: [14, 14]
                   })
                 });
-                updatePopupContent(centroidMarker, feature, index, finalLayerName, selectedDomain);
+                const centroidPopupContent = createPopupContent(feature, index, finalLayerName, selectedDomain, true);
+                centroidMarker.bindPopup(centroidPopupContent, {
+                  closeButton: true,
+                  className: 'feature-marker-popup'
+                });
                 centroidGroup.addLayer(centroidMarker);
                 console.log(`Review map: Added centroid for feature at index ${index}`);
               }
@@ -872,7 +917,8 @@ const LayerModal = ({
         const popup = e.popup;
         const editButton = popup._contentNode.querySelector('.edit-feature-btn');
         if (editButton) {
-          editButton.addEventListener('click', () => {
+          editButton.addEventListener('click', (evt) => {
+            evt.stopPropagation();
             const featureIndex = parseInt(editButton.dataset.featureIndex);
             const feature = features[featureIndex];
             const currentName = feature.properties?.name || feature.properties?.feature_name || '';
@@ -900,7 +946,12 @@ const LayerModal = ({
           drawnItems.addLayer(layer);
           setFeatures(prev => [...prev, croppedFeature]);
           console.log('Feature created in review map and cropped:', croppedFeature);
-          updatePopupContent(layer, croppedFeature, featureIndex, finalLayerName, selectedDomain);
+          
+          const popupContent = createPopupContent(croppedFeature, featureIndex, finalLayerName, selectedDomain, croppedFeature.geometry.type !== 'Point');
+          layer.bindPopup(popupContent, {
+            closeButton: true,
+            className: 'feature-marker-popup'
+          });
         } else {
           console.warn('Feature is outside city boundary in review map:', newFeature);
           alert('Feature is outside the city boundary and was not added.');
@@ -924,7 +975,7 @@ const LayerModal = ({
         console.log('Review map cleaned up');
       }
     };
-  }, [step, cityBoundary, currentDomainColor, layerIcon, layerName, selectedDomain, features, updatePopupContent, updateReviewFeaturesFromMap, isCustomLayer, customLayerIcon, customLayerName, cropFeatureByBoundary]);
+  }, [step, cityBoundary, currentDomainColor, layerIcon, layerName, selectedDomain, features, updateReviewFeaturesFromMap, isCustomLayer, customLayerIcon, customLayerName, cropFeatureByBoundary, mapView, createPopupContent]);
 
   useEffect(() => {
     if (step === 4 && reviewMapInstanceRef.current && features.length > 0) {
@@ -945,8 +996,8 @@ const LayerModal = ({
                 className: 'custom-marker-icon',
                 html: `<div style="
                   background-color: ${currentDomainColor};
-                  width: 28px;
-                  height: 28px;
+                  width: 30px;
+                  height: 30px;
                   border-radius: 50%;
                   border: 2px solid white;
                   box-shadow: 0 2px 4px rgba(0,0,0,0.3);
@@ -963,7 +1014,12 @@ const LayerModal = ({
                 iconAnchor: [14, 14]
               })
             });
-            updatePopupContent(marker, feature, index, finalLayerName, selectedDomain);
+            const popupContent = createPopupContent(feature, index, finalLayerName, selectedDomain, false);
+            marker.bindPopup(popupContent, {
+              closeButton: true,
+              className: 'feature-marker-popup',
+              maxWidth: 400
+            });
             reviewDrawnItemsRef.current.addLayer(marker);
           } else {
             const geoJsonLayer = L.geoJSON(feature.geometry, {
@@ -975,7 +1031,11 @@ const LayerModal = ({
                 fillOpacity: 0.3
               }
             });
-            updatePopupContent(geoJsonLayer, feature, index, finalLayerName, selectedDomain);
+            const popupContent = createPopupContent(feature, index, finalLayerName, selectedDomain, true);
+            geoJsonLayer.bindPopup(popupContent, {
+              closeButton: true,
+              className: 'feature-marker-popup'
+            });
             geoJsonLayer.eachLayer(l => {
               reviewDrawnItemsRef.current.addLayer(l);
             });
@@ -989,8 +1049,8 @@ const LayerModal = ({
                     className: 'custom-marker-icon',
                     html: `<div style="
                       background-color: ${currentDomainColor};
-                      width: 28px;
-                      height: 28px;
+                      width: 30px;
+                      height: 30px;
                       border-radius: 50%;
                       border: 2px solid white;
                       box-shadow: 0 2px 4px rgba(0,0,0,0.3);
@@ -1007,7 +1067,11 @@ const LayerModal = ({
                     iconAnchor: [14, 14]
                   })
                 });
-                updatePopupContent(centroidMarker, feature, index, finalLayerName, selectedDomain);
+                const centroidPopupContent = createPopupContent(feature, index, finalLayerName, selectedDomain, true);
+                centroidMarker.bindPopup(centroidPopupContent, {
+                  closeButton: true,
+                  className: 'feature-marker-popup'
+                });
                 reviewCentroidGroupRef.current.addLayer(centroidMarker);
               }
             } catch (error) {
@@ -1022,7 +1086,132 @@ const LayerModal = ({
       }
       console.log('Review map refreshed with updated features:', features.length);
     }
-  }, [features, step, currentDomainColor, layerIcon, layerName, selectedDomain, isCustomLayer, customLayerIcon, customLayerName, updatePopupContent]);
+  }, [features, step, currentDomainColor, layerIcon, layerName, selectedDomain, isCustomLayer, customLayerIcon, customLayerName, createPopupContent]);
+
+  // Update tile layer when mapView changes (Drawing Map)
+useEffect(() => {
+  console.log('Drawing map mapView effect check:', { 
+    hasMap: !!mapInstanceRef.current, 
+    step, 
+    dataSource, 
+    mapView,
+    shouldRun: mapInstanceRef.current && step === 3 && dataSource === 'draw'
+  });
+  
+  if (!mapInstanceRef.current || step !== 3 || dataSource !== 'draw') {
+    return;
+  }
+
+  console.log('Drawing map mapView effect RUNNING - switching to:', mapView);
+
+  // Find and remove all existing tile layers
+  const tileLayers = [];
+  mapInstanceRef.current.eachLayer(layer => {
+    if (layer instanceof L.TileLayer) {
+      tileLayers.push(layer);
+    }
+  });
+
+  console.log(`Found ${tileLayers.length} tile layers to remove`);
+  
+  tileLayers.forEach(layer => {
+    mapInstanceRef.current.removeLayer(layer);
+  });
+
+  // Create and add new tile layer
+  let newTileLayer;
+  if (mapView === 'satellite') {
+    console.log('Creating satellite tile layer');
+    newTileLayer = L.tileLayer(
+      'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+      {
+        attribution: 'Tiles © Esri'
+      }
+    );
+  } else {
+    console.log('Creating street tile layer');
+    newTileLayer = L.tileLayer(
+      'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+      {
+        attribution: '© OpenStreetMap contributors'
+      }
+    );
+  }
+
+  newTileLayer.addTo(mapInstanceRef.current);
+  newTileLayer.bringToBack();
+  
+  // Force map to repaint
+  setTimeout(() => {
+    if (mapInstanceRef.current) {
+      mapInstanceRef.current.invalidateSize();
+    }
+  }, 100);
+  
+  console.log('Drawing map tile layer switched to:', mapView);
+}, [mapView, step, dataSource]);
+
+// Update tile layer when mapView changes (Review Map)
+useEffect(() => {
+  console.log('Review map mapView effect check:', { 
+    hasMap: !!reviewMapInstanceRef.current, 
+    step, 
+    mapView,
+    shouldRun: reviewMapInstanceRef.current && step === 4
+  });
+  
+  if (!reviewMapInstanceRef.current || step !== 4) {
+    return;
+  }
+
+  console.log('Review map mapView effect RUNNING - switching to:', mapView);
+
+  // Find and remove all existing tile layers
+  const tileLayers = [];
+  reviewMapInstanceRef.current.eachLayer(layer => {
+    if (layer instanceof L.TileLayer) {
+      tileLayers.push(layer);
+    }
+  });
+
+  console.log(`Found ${tileLayers.length} tile layers to remove`);
+  
+  tileLayers.forEach(layer => {
+    reviewMapInstanceRef.current.removeLayer(layer);
+  });
+
+  // Create and add new tile layer
+  let newTileLayer;
+  if (mapView === 'satellite') {
+    console.log('Creating satellite tile layer');
+    newTileLayer = L.tileLayer(
+      'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+      {
+        attribution: 'Tiles © Esri'
+      }
+    );
+  } else {
+    console.log('Creating street tile layer');
+    newTileLayer = L.tileLayer(
+      'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+      {
+        attribution: '© OpenStreetMap contributors'
+      }
+    );
+  }
+
+  newTileLayer.addTo(reviewMapInstanceRef.current);
+  newTileLayer.bringToBack();
+  
+  // Force map to repaint
+  setTimeout(() => {
+    if (reviewMapInstanceRef.current) {
+      reviewMapInstanceRef.current.invalidateSize();
+    }
+  }, 100);
+  
+  console.log('Review map tile layer switched to:', mapView);
+}, [mapView, step]);
 
   const updateFeatureName = () => {
     if (editingFeatureName === null) return;
@@ -1039,15 +1228,20 @@ const LayerModal = ({
     setFeatures(updatedFeatures);
     setEditingFeatureName(null);
     setFeatureNameInput('');
+    
     const refreshPopups = (drawnItems, centroidGroup) => {
       if (drawnItems) {
         drawnItems.eachLayer(layer => {
           const featureIndex = Array.from(drawnItems.getLayers()).indexOf(layer);
           if (featureIndex >= 0 && updatedFeatures[featureIndex]) {
-            updatePopupContent(layer, updatedFeatures[featureIndex], featureIndex, finalLayerName, selectedDomain);
-            if (layer.isPopupOpen()) {
-              layer.openPopup();
-            }
+            const feature = updatedFeatures[featureIndex];
+            const includeType = feature.geometry.type !== 'Point';
+            const popupContent = createPopupContent(feature, featureIndex, finalLayerName, selectedDomain, includeType);
+            layer.unbindPopup();
+            layer.bindPopup(popupContent, {
+              closeButton: true,
+              className: 'feature-marker-popup'
+            });
           }
         });
       }
@@ -1055,10 +1249,13 @@ const LayerModal = ({
         centroidGroup.eachLayer(layer => {
           const featureIndex = Array.from(centroidGroup.getLayers()).indexOf(layer);
           if (featureIndex >= 0 && updatedFeatures[featureIndex]) {
-            updatePopupContent(layer, updatedFeatures[featureIndex], featureIndex, finalLayerName, selectedDomain);
-            if (layer.isPopupOpen()) {
-              layer.openPopup();
-            }
+            const feature = updatedFeatures[featureIndex];
+            const popupContent = createPopupContent(feature, featureIndex, finalLayerName, selectedDomain, true);
+            layer.unbindPopup();
+            layer.bindPopup(popupContent, {
+              closeButton: true,
+              className: 'feature-marker-popup'
+            });
           }
         });
       }

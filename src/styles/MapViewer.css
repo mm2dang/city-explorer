@@ -444,4 +444,51 @@
   .overlay-content p {
     font-size: 14px;
   }
+
+  /* City marker tooltips */
+  .city-marker-tooltip {
+    background: white !important;
+    border: 1px solid #e2e8f0 !important;
+    border-radius: 12px !important;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.15) !important;
+    padding: 12px 16px !important;
+    font-family: Inter, sans-serif !important;
+    font-size: 13px !important;
+    line-height: 1.5 !important;
+    color: #374151 !important;
+    white-space: nowrap;
+  }
+
+  .city-marker-tooltip strong {
+    color: #1a202c;
+    font-weight: 600;
+    font-size: 14px;
+  }
+
+  .city-marker-tooltip::before {
+    border-top-color: white !important;
+  }
+
+  /* Feature marker tooltips */
+  .feature-marker-tooltip {
+    background: white !important;
+    border: 1px solid #e2e8f0 !important;
+    border-radius: 12px !important;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.15) !important;
+    padding: 12px 16px !important;
+    font-family: Inter, sans-serif !important;
+    font-size: 13px !important;
+    line-height: 1.5 !important;
+    color: #374151 !important;
+    max-width: 250px;
+    white-space: normal;
+  }
+
+  .feature-marker-tooltip::before {
+    border-top-color: white !important;
+  }
+
+  .leaflet-tooltip-top::before {
+    border-top-color: white !important;
+  }
 }

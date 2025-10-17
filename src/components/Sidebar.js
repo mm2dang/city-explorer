@@ -14,7 +14,8 @@ const Sidebar = ({
   onLayerToggle,
   domainColors,
   onLayerSave,
-  onLayerDelete
+  onLayerDelete,
+  mapView = 'street'
 }) => {
   const [expandedDomains, setExpandedDomains] = useState(new Set());
   const [isAddLayerModalOpen, setIsAddLayerModalOpen] = useState(false);
@@ -828,6 +829,7 @@ const Sidebar = ({
         cityName={selectedCity?.name}
         domainColors={domainColors}
         availableLayersByDomain={availableLayersByDomain} 
+        mapView={mapView}
       />
     </motion.div>
   );

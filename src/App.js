@@ -521,6 +521,7 @@ function App() {
           domainColors={domainColors}
           onLayerSave={handleSaveLayer}
           onLayerDelete={handleDeleteLayer}
+          mapView={mapView}
         />
         <MapViewer
           selectedCity={selectedCity}
@@ -529,6 +530,8 @@ function App() {
           loadCityFeatures={loadCityFeatures}
           availableLayers={availableLayers}
           mapView={mapView}
+          cities={cities}
+          onCitySelect={handleCitySelect}
         />
         <IndicatorsSidebar
           selectedCity={selectedCity}
@@ -550,16 +553,26 @@ function App() {
         </div>
       )}
 
-      {showLayerModal && (
+      {showLayerModal && selectedCity && (
         <LayerModal
-          cityName={selectedCity?.name}
-          cityBoundary={selectedCity?.boundary}
+          isOpen={showLayerModal}
+          cityName={selectedCity.name}
+          cityBoundary={selectedCity.boundary}
           onClose={() => {
             setShowLayerModal(false);
             setEditingLayer(null);
           }}
           onSave={handleSaveLayer}
           editingLayer={editingLayer}
+          domain={editingLayer?.domain}
+          domainColor={editingLayer?.domain ? domainColors[editingLayer.domain] : undefined}
+          existingLayers={Object.keys(availableLayers).map(name => ({
+            name,
+            ...availableLayers[name]
+          }))}
+          domainColors={domainColors}
+          availableLayersByDomain={availableLayers}
+          mapView={mapView}
         />
       )}
 

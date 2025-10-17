@@ -113,7 +113,9 @@ const MapViewer = ({
   domainColors = {},
   loadCityFeatures,
   availableLayers = {},
-  mapView = 'street'
+  mapView = 'street',
+  cities = [],
+  onCitySelect = () => {}
 }) => {
   const mapRef = useRef(null);
   const mapInstanceRef = useRef(null);
@@ -124,8 +126,9 @@ const MapViewer = ({
   const [isLoadingData, setIsLoadingData] = useState(false);
   const [featureCount, setFeatureCount] = useState(0);
   const loadFeaturesTimeoutRef = useRef(null);
+  const cityMarkersLayerRef = useRef(null);
 
-  // Initialize map - ONLY ONCE
+  // Initialize map
   useEffect(() => {
     if (!mapRef.current || mapInstanceRef.current) return;
   
@@ -346,6 +349,169 @@ const MapViewer = ({
     }, 200);
   }, [mapView]);
 
+  const displayCityMarkers = useCallback(() => {
+    if (!mapInstanceRef.current) return;
+  
+    // Remove existing city markers
+    if (cityMarkersLayerRef.current && mapInstanceRef.current.hasLayer(cityMarkersLayerRef.current)) {
+      mapInstanceRef.current.removeLayer(cityMarkersLayerRef.current);
+      cityMarkersLayerRef.current = null;
+    }
+  
+    // Only show city markers when no city is selected
+    if (selectedCity || cities.length === 0) return;
+  
+    console.log('MapViewer: Displaying city markers for world view');
+  
+    const cityMarkersGroup = L.layerGroup();
+  
+    cities.forEach(city => {
+      try {
+        let markerLat, markerLng;
+  
+        // Try to get centroid from boundary first
+        if (city.boundary) {
+          const boundary = JSON.parse(city.boundary);
+          const centroid = calculateCentroid(boundary);
+          markerLat = centroid.lat;
+          markerLng = centroid.lng;
+        } else if (city.latitude && city.longitude) {
+          // Fallback to city coordinates
+          markerLat = city.latitude;
+          markerLng = city.longitude;
+        } else {
+          console.warn(`MapViewer: No location data for city ${city.name}`);
+          return;
+        }
+  
+        // Create custom icon for city
+const cityIcon = L.divIcon({
+  className: 'city-marker-icon',
+  html: `
+    <div class="city-icon-wrapper" style="
+      background-color: #0891b2;
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      border: 3px solid white;
+      box-shadow: 0 3px 8px rgba(0,0,0,0.4);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      font-size: 14px;
+      cursor: pointer;
+      transition: all 0.2s;
+    ">
+      <i class="fas fa-city"></i>
+    </div>
+  `,
+  iconSize: [32, 32],
+  iconAnchor: [16, 16],
+  popupAnchor: [0, -16]
+});
+
+  const marker = L.marker([markerLat, markerLng], {
+    icon: cityIcon,
+    zIndexOffset: 2000
+  });
+
+  // Parse city name for display
+  const parsedName = city.name.split(',').map(p => p.trim());
+  const cityName = parsedName[0];
+  const province = parsedName[1] || '';
+  const country = parsedName[2] || parsedName[1] || '';
+
+  // Create tooltip content
+  let tooltipContent = `<strong>${cityName}</strong>`;
+  if (province && country) {
+    tooltipContent += `<br/>${province}, ${country}`;
+  } else if (country) {
+    tooltipContent += `<br/>${country}`;
+  }
+  if (city.population) {
+    tooltipContent += `<br/>Pop: ${city.population.toLocaleString()}`;
+  }
+  if (city.size) {
+    tooltipContent += `<br/>Area: ${city.size} km²`;
+  }
+
+  // Bind tooltip
+  marker.bindTooltip(tooltipContent, {
+    permanent: false,
+    direction: 'top',
+    offset: [0, -20],
+    opacity: 0.95,
+    className: 'city-marker-tooltip'
+  });
+
+  // Add hover effect
+  marker.on('mouseover', function(e) {
+    const innerDiv = this._icon?.querySelector('.city-icon-wrapper');
+    if (innerDiv) {
+      innerDiv.style.transform = 'scale(1.15)';
+      innerDiv.style.backgroundColor = '#0e7490';
+    }
+  });
+
+  marker.on('mouseout', function(e) {
+    const innerDiv = this._icon?.querySelector('.city-icon-wrapper');
+    if (innerDiv) {
+      innerDiv.style.transform = 'scale(1)';
+      innerDiv.style.backgroundColor = '#0891b2';
+    }
+  });
+
+        // Click handler to select city
+        marker.on('click', function(e) {
+          console.log('MapViewer: City marker clicked:', city.name);
+          onCitySelect(city);
+        });
+  
+        // Bind popup with city info
+        const location = parsedName.slice(1).join(', ');
+  
+        marker.bindPopup(`
+          <div style="font-family: Inter, sans-serif;">
+            <h4 style="margin: 0 0 8px 0; color: #1a202c; font-size: 16px; font-weight: 600;">
+              ${cityName}
+            </h4>
+            ${location ? `<p style="margin: 0 0 6px 0; color: #64748b; font-size: 13px;">${location}</p>` : ''}
+            ${city.population ? `
+              <p style="margin: 0 0 4px 0; color: #64748b; font-size: 12px;">
+                <i class="fas fa-users" style="margin-right: 4px;"></i>
+                Population: ${city.population.toLocaleString()}
+              </p>
+            ` : ''}
+            ${city.size ? `
+              <p style="margin: 0 0 4px 0; color: #64748b; font-size: 12px;">
+                <i class="fas fa-expand-arrows-alt" style="margin-right: 4px;"></i>
+                Area: ${city.size} km²
+              </p>
+            ` : ''}
+            <p style="margin: 8px 0 0 0; color: #0891b2; font-size: 11px; font-style: italic;">
+              Click to explore this city
+            </p>
+          </div>
+        `);
+  
+        cityMarkersGroup.addLayer(marker);
+      } catch (error) {
+        console.warn(`MapViewer: Error creating marker for city ${city.name}:`, error);
+      }
+    });
+  
+    if (cityMarkersGroup.getLayers().length > 0) {
+      cityMarkersGroup.addTo(mapInstanceRef.current);
+      cityMarkersLayerRef.current = cityMarkersGroup;
+      console.log(`MapViewer: Added ${cityMarkersGroup.getLayers().length} city markers`);
+    }
+  }, [cities, selectedCity, onCitySelect]);
+
+  useEffect(() => {
+    displayCityMarkers();
+  }, [displayCityMarkers]);
+
   // Clear all markers and layers
   const clearAllLayers = useCallback(() => {
     if (!mapInstanceRef.current) return;
@@ -365,6 +531,11 @@ const MapViewer = ({
     if (nonPointLayerRef.current && mapInstanceRef.current.hasLayer(nonPointLayerRef.current)) {
       mapInstanceRef.current.removeLayer(nonPointLayerRef.current);
       nonPointLayerRef.current = null;
+    }
+
+    if (cityMarkersLayerRef.current && mapInstanceRef.current.hasLayer(cityMarkersLayerRef.current)) {
+      mapInstanceRef.current.removeLayer(cityMarkersLayerRef.current);
+      cityMarkersLayerRef.current = null;
     }
 
     setFeatureCount(0);
@@ -610,7 +781,7 @@ const MapViewer = ({
                 zIndexOffset: 1000
               });
 
-              marker.bindPopup(`
+              marker.bindTooltip(`
                 <div style="font-family: Inter, sans-serif;">
                   <h4 style="margin: 0 0 8px 0; color: #1a202c; font-size: 14px;">
                     ${feature_name || 'Unnamed Feature'}
@@ -620,7 +791,13 @@ const MapViewer = ({
                     <strong>Domain:</strong> ${domain_name}
                   </p>
                 </div>
-              `);
+              `, {
+                permanent: false,
+                direction: 'top',
+                offset: [0, -20],
+                opacity: 0.95,
+                className: 'feature-marker-tooltip'
+              });
 
               clusterGroup.addLayer(marker);
               markerCount++;
@@ -665,41 +842,33 @@ const MapViewer = ({
 
                 // Handle click to show/hide geometry
                 centroidMarker.on('click', function(e) {
-                  // Remove existing geometry layer if it exists
+                  // Toggle geometry layer
                   if (this.geometryLayer && mapInstanceRef.current.hasLayer(this.geometryLayer)) {
                     mapInstanceRef.current.removeLayer(this.geometryLayer);
                     this.geometryLayer = null;
-                  }
+                  } else {
+                    // Create and add new geometry layer
+                    this.geometryLayer = L.geoJSON(this.featureGeometry, {
+                      style: {
+                        color: this.featureColor,
+                        weight: 3,
+                        opacity: 0.9,
+                        fillColor: this.featureColor,
+                        fillOpacity: 0.3
+                      }
+                    }).addTo(mapInstanceRef.current);
 
-                  // Create and add new geometry layer
-                  this.geometryLayer = L.geoJSON(this.featureGeometry, {
-                    style: {
-                      color: this.featureColor,
-                      weight: 3,
-                      opacity: 0.9,
-                      fillColor: this.featureColor,
-                      fillOpacity: 0.3
+                    // Bring geometry layer to front but below popups
+                    this.geometryLayer.bringToFront();
+                    
+                    // Ensure tile layer stays at back
+                    if (tileLayerRef.current) {
+                      tileLayerRef.current.bringToBack();
                     }
-                  }).addTo(mapInstanceRef.current);
-
-                  // Bring geometry layer to front but below popups
-                  this.geometryLayer.bringToFront();
-                  
-                  // Ensure tile layer stays at back
-                  if (tileLayerRef.current) {
-                    tileLayerRef.current.bringToBack();
                   }
                 });
 
-                // Remove geometry when popup closes
-                centroidMarker.on('popupclose', function() {
-                  if (this.geometryLayer && mapInstanceRef.current.hasLayer(this.geometryLayer)) {
-                    mapInstanceRef.current.removeLayer(this.geometryLayer);
-                    this.geometryLayer = null;
-                  }
-                });
-
-                centroidMarker.bindPopup(`
+                centroidMarker.bindTooltip(`
                   <div style="font-family: Inter, sans-serif;">
                     <h4 style="margin: 0 0 8px 0; color: #1a202c; font-size: 14px;">
                       ${feature_name || 'Unnamed Feature'}
@@ -711,7 +880,13 @@ const MapViewer = ({
                       <em style="color: #0891b2; font-size: 11px;">Click marker to view geometry</em>
                     </p>
                   </div>
-                `);
+                `, {
+                  permanent: false,
+                  direction: 'top',
+                  offset: [0, -20],
+                  opacity: 0.95,
+                  className: 'feature-marker-tooltip'
+                });
 
                 clusterGroup.addLayer(centroidMarker);
                 markerCount++;
