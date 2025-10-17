@@ -17,63 +17,63 @@ import '../styles/LayerModal.css';
 
 const layerDefs = {
   mobility: [
-    { name: 'roads', icon: 'fas fa-road' },
-    { name: 'sidewalks', icon: 'fas fa-walking' },
-    { name: 'parking', icon: 'fas fa-parking' },
-    { name: 'transit_stops', icon: 'fas fa-bus' },
-    { name: 'subways', icon: 'fas fa-subway' },
-    { name: 'railways', icon: 'fas fa-train' },
-    { name: 'airports', icon: 'fas fa-plane' },
-    { name: 'bicycle_parking', icon: 'fas fa-bicycle' },
+    { tags: { highway: true }, name: 'roads', icon: 'fas fa-road' },
+    { tags: { highway: ['footway'] }, name: 'sidewalks', icon: 'fas fa-walking' },
+    { tags: { amenity: ['parking', 'parking_space'] }, name: 'parking', icon: 'fas fa-parking' },
+    { tags: { highway: ['bus_stop'] }, name: 'transit_stops', icon: 'fas fa-bus' },
+    { tags: { railway: ['subway'] }, name: 'subways', icon: 'fas fa-subway' },
+    { tags: { railway: ['rail'] }, name: 'railways', icon: 'fas fa-train' },
+    { tags: { aeroway: ['runway'] }, name: 'airports', icon: 'fas fa-plane' },
+    { tags: { amenity: ['bicycle_parking'] }, name: 'bicycle_parking', icon: 'fas fa-bicycle' },
   ],
   governance: [
-    { name: 'police', icon: 'fas fa-shield-alt' },
-    { name: 'government_offices', icon: 'fas fa-landmark' },
-    { name: 'fire_stations', icon: 'fas fa-fire-extinguisher' },
+    { tags: { amenity: ['police'] }, name: 'police', icon: 'fas fa-shield-alt' },
+    { tags: { office: ['government'] }, name: 'government_offices', icon: 'fas fa-landmark' },
+    { tags: { amenity: ['fire_station'] }, name: 'fire_stations', icon: 'fas fa-fire-extinguisher' },
   ],
   health: [
-    { name: 'hospitals', icon: 'fas fa-hospital' },
-    { name: 'doctor_offices', icon: 'fas fa-user-md' },
-    { name: 'dentists', icon: 'fas fa-tooth' },
-    { name: 'clinics', icon: 'fas fa-clinic-medical' },
-    { name: 'pharmacies', icon: 'fas fa-pills' },
-    { name: 'acupuncture', icon: 'fas fa-hand-holding-heart' },
+    { tags: { amenity: ['hospital'] }, name: 'hospitals', icon: 'fas fa-hospital' },
+    { tags: { amenity: ['doctors'] }, name: 'doctor_offices', icon: 'fas fa-user-md' },
+    { tags: { amenity: ['dentist'] }, name: 'dentists', icon: 'fas fa-tooth' },
+    { tags: { amenity: ['clinic'] }, name: 'clinics', icon: 'fas fa-clinic-medical' },
+    { tags: { amenity: ['pharmacy'] }, name: 'pharmacies', icon: 'fas fa-pills' },
+    { tags: { healthcare: ['alternative'] }, name: 'acupuncture', icon: 'fas fa-hand-holding-heart' },
   ],
   economy: [
-    { name: 'factories', icon: 'fas fa-industry' },
-    { name: 'banks', icon: 'fas fa-university' },
-    { name: 'shops', icon: 'fas fa-store' },
-    { name: 'restaurants', icon: 'fas fa-utensils' },
+    { tags: { building: ['industrial'] }, name: 'factories', icon: 'fas fa-industry' },
+    { tags: { amenity: ['bank'] }, name: 'banks', icon: 'fas fa-university' },
+    { tags: { shop: true }, name: 'shops', icon: 'fas fa-store' },
+    { tags: { amenity: ['restaurant'] }, name: 'restaurants', icon: 'fas fa-utensils' },
   ],
   environment: [
-    { name: 'parks', icon: 'fas fa-tree' },
-    { name: 'open_green_spaces', icon: 'fas fa-leaf' },
-    { name: 'nature', icon: 'fas fa-mountain' },
-    { name: 'waterways', icon: 'fas fa-water' },
-    { name: 'lakes', icon: 'fas fa-tint' },
+    { tags: { leisure: ['park'] }, name: 'parks', icon: 'fas fa-tree' },
+    { tags: { landuse: ['greenfield'] }, name: 'open_green_spaces', icon: 'fas fa-leaf' },
+    { tags: { natural: true }, name: 'nature', icon: 'fas fa-mountain' },
+    { tags: { waterway: true }, name: 'waterways', icon: 'fas fa-water' },
+    { tags: { natural: ['water'] }, name: 'lakes', icon: 'fas fa-tint' },
   ],
   culture: [
-    { name: 'tourist_attractions', icon: 'fas fa-camera' },
-    { name: 'theme_parks', icon: 'fas fa-ticket' },
-    { name: 'gyms', icon: 'fas fa-dumbbell' },
-    { name: 'theatres', icon: 'fas fa-theater-masks' },
-    { name: 'stadiums', icon: 'fas fa-futbol' },
-    { name: 'places_of_worship', icon: 'fas fa-pray' },
+    { tags: { tourism: ['attraction'] }, name: 'tourist_attractions', icon: 'fas fa-camera' },
+    { tags: { tourism: ['theme_park'] }, name: 'theme_parks', icon: 'fas fa-ticket' },
+    { tags: { sport: true }, name: 'gyms', icon: 'fas fa-dumbbell' },
+    { tags: { amenity: ['theatre'] }, name: 'theatres', icon: 'fas fa-theater-masks' },
+    { tags: { leisure: ['stadium'] }, name: 'stadiums', icon: 'fas fa-futbol' },
+    { tags: { amenity: ['place_of_worship'] }, name: 'places_of_worship', icon: 'fas fa-pray' },
   ],
   education: [
-    { name: 'schools', icon: 'fas fa-school' },
-    { name: 'universities', icon: 'fas fa-university' },
-    { name: 'colleges', icon: 'fas fa-graduation-cap' },
-    { name: 'libraries', icon: 'fas fa-book' },
+    { tags: { amenity: ['school'] }, name: 'schools', icon: 'fas fa-school' },
+    { tags: { amenity: ['university'] }, name: 'universities', icon: 'fas fa-university' },
+    { tags: { amenity: ['college'] }, name: 'colleges', icon: 'fas fa-graduation-cap' },
+    { tags: { amenity: ['library'] }, name: 'libraries', icon: 'fas fa-book' },
   ],
   housing: [
-    { name: 'houses', icon: 'fas fa-home' },
-    { name: 'apartments', icon: 'fas fa-building' },
+    { tags: { building: ['house'] }, name: 'houses', icon: 'fas fa-home' },
+    { tags: { building: ['apartments'] }, name: 'apartments', icon: 'fas fa-building' },
   ],
   social: [
-    { name: 'bars', icon: 'fas fa-wine-glass-alt' },
-    { name: 'cafes', icon: 'fas fa-coffee' },
-    { name: 'leisure_facilities', icon: 'fas fa-dice' },
+    { tags: { amenity: ['bar'] }, name: 'bars', icon: 'fas fa-wine-glass-alt' },
+    { tags: { amenity: ['cafe'] }, name: 'cafes', icon: 'fas fa-coffee' },
+    { tags: { leisure: ['casino'] }, name: 'leisure_facilities', icon: 'fas fa-dice' },
   ],
 };
 
@@ -116,6 +116,8 @@ const LayerModal = ({
   const reviewMapInstanceRef = useRef(null);
   const reviewDrawnItemsRef = useRef(null);
   const reviewCentroidGroupRef = useRef(null);
+  const [osmTags, setOsmTags] = useState([{ key: '', value: '' }]);
+  const [isFetchingOSM, setIsFetchingOSM] = useState(false);
 
   useEffect(() => {
     console.log('LayerModal received mapView prop:', mapView);
@@ -365,6 +367,41 @@ const LayerModal = ({
       }
     }
   };
+
+  useEffect(() => {
+    // Prefill OSM tags for predefined layers
+    if (!isCustomLayer && layerName && selectedDomain) {
+      const domainLayers = layerDefs[selectedDomain] || [];
+      const layerDef = domainLayers.find(l => l.name === layerName);
+      
+      if (layerDef && layerDef.tags) {
+        console.log('Found layer definition with tags:', layerDef);
+        // Convert tags object to array format
+        const tagArray = [];
+        Object.entries(layerDef.tags).forEach(([key, value]) => {
+          if (value === true) {
+            tagArray.push({ key, value: '*' });
+          } else if (Array.isArray(value)) {
+            value.forEach(val => {
+              tagArray.push({ key, value: val });
+            });
+          } else {
+            tagArray.push({ key, value: String(value) });
+          }
+        });
+        
+        console.log('Setting OSM tags:', tagArray);
+        if (tagArray.length > 0) {
+          setOsmTags(tagArray);
+        }
+      } else {
+        console.log('No layer definition found for:', layerName);
+      }
+    } else if (isCustomLayer) {
+      // Reset to empty tags for custom layers
+      setOsmTags([{ key: '', value: '' }]);
+    }
+  }, [layerName, isCustomLayer, selectedDomain]);
 
   useEffect(() => {
     const loadExistingLayerData = async () => {
@@ -1265,6 +1302,206 @@ useEffect(() => {
     console.log('Feature name updated:', updatedFeatures[editingFeatureName]);
   };
 
+  const handleAddOsmTag = () => {
+    setOsmTags([...osmTags, { key: '', value: '' }]);
+  };
+  
+  const handleRemoveOsmTag = (index) => {
+    if (osmTags.length > 1) {
+      setOsmTags(osmTags.filter((_, i) => i !== index));
+    }
+  };
+  
+  const handleOsmTagChange = (index, field, value) => {
+    const newTags = [...osmTags];
+    newTags[index][field] = value;
+    setOsmTags(newTags);
+  };
+
+  const handleFetchFromOSM = async () => {
+    if (!cityBoundary) {
+      alert('City boundary is required to fetch from OSM');
+      return;
+    }
+  
+    // Validate tags
+    const validTags = osmTags.filter(tag => tag.key.trim() !== '');
+    if (validTags.length === 0) {
+      alert('Please add at least one OSM tag');
+      return;
+    }
+  
+    setIsFetchingOSM(true);
+    const finalLayerName = isCustomLayer ? customLayerName : layerName;
+  
+    try {
+      // Parse boundary
+      let boundaryGeojson;
+      if (typeof cityBoundary === 'string') {
+        boundaryGeojson = JSON.parse(cityBoundary);
+      } else {
+        boundaryGeojson = cityBoundary;
+      }
+  
+      // Get bounding box
+      const coords = boundaryGeojson.type === 'Polygon' 
+        ? boundaryGeojson.coordinates[0]
+        : boundaryGeojson.coordinates[0][0];
+      
+      const lons = coords.map(([lon]) => lon);
+      const lats = coords.map(([, lat]) => lat);
+      const bbox = `${Math.min(...lats)},${Math.min(...lons)},${Math.max(...lats)},${Math.max(...lons)}`;
+  
+      // Build Overpass query
+      let tagQuery = '';
+      validTags.forEach(tag => {
+        if (tag.value === '*') {
+          tagQuery += `["${tag.key}"]`;
+        } else {
+          tagQuery += `["${tag.key}"="${tag.value}"]`;
+        }
+      });
+  
+      const query = `
+        [out:json][timeout:25];
+        (
+          nwr${tagQuery}(${bbox});
+        );
+        out geom;
+      `;
+  
+      console.log('Fetching from Overpass API with query:', query);
+  
+      const response = await fetch('https://overpass-api.de/api/interpreter', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: `data=${encodeURIComponent(query)}`,
+      });
+  
+      if (!response.ok) {
+        throw new Error(`Overpass API error: ${response.statusText}`);
+      }
+  
+      const data = await response.json();
+      console.log('Received OSM data:', data);
+  
+      if (!data.elements || data.elements.length === 0) {
+        alert('No features found with these tags in the city boundary');
+        return;
+      }
+  
+      // Process OSM elements to GeoJSON features
+      const newFeatures = [];
+      const boundaryFeature = {
+        type: 'Feature',
+        geometry: boundaryGeojson.geometry || boundaryGeojson,
+        properties: {}
+      };
+  
+      for (const element of data.elements) {
+        try {
+          let geometry = null;
+          
+          if (element.type === 'node' && element.lon !== undefined && element.lat !== undefined) {
+            geometry = {
+              type: 'Point',
+              coordinates: [parseFloat(element.lon), parseFloat(element.lat)]
+            };
+          } else if (element.type === 'way' && element.geometry) {
+            const coords = element.geometry.map(g => [g.lon, g.lat]);
+            
+            if (coords.length >= 2) {
+              const isClosed = coords.length >= 4 && 
+                Math.abs(coords[0][0] - coords[coords.length-1][0]) < 0.0001 && 
+                Math.abs(coords[0][1] - coords[coords.length-1][1]) < 0.0001;
+              
+              if (isClosed) {
+                geometry = { type: 'Polygon', coordinates: [coords] };
+              } else {
+                geometry = { type: 'LineString', coordinates: coords };
+              }
+            }
+          } else if (element.type === 'relation' && element.geometry) {
+            // Use first coordinate as point
+            const coord = element.geometry.find(g => g.lon !== undefined && g.lat !== undefined);
+            if (coord) {
+              geometry = {
+                type: 'Point',
+                coordinates: [parseFloat(coord.lon), parseFloat(coord.lat)]
+              };
+            }
+          }
+  
+          if (!geometry) continue;
+  
+          // Check if within boundary
+          const feature = { type: 'Feature', geometry, properties: {} };
+          let isInside = false;
+          
+          try {
+            if (geometry.type === 'Point') {
+              isInside = turf.booleanPointInPolygon(feature, boundaryFeature);
+            } else {
+              isInside = turf.booleanIntersects(feature, boundaryFeature);
+            }
+          } catch (error) {
+            console.warn('Error checking intersection:', error);
+            continue;
+          }
+  
+          if (!isInside) continue;
+  
+          // Crop to boundary if needed
+          const croppedFeature = cropFeatureByBoundary(feature, cityBoundary);
+          if (!croppedFeature) continue;
+  
+          // Extract feature name
+          const featureName = element.tags?.name || 
+                             element.tags?.brand || 
+                             element.tags?.operator || 
+                             element.tags?.ref || 
+                             'Unnamed Feature';
+  
+          newFeatures.push({
+            type: 'Feature',
+            geometry: croppedFeature.geometry,
+            properties: {
+              name: featureName,
+              feature_name: featureName,
+              layer_name: finalLayerName,
+              domain_name: selectedDomain,
+              ...element.tags
+            }
+          });
+        } catch (error) {
+          console.warn('Error processing OSM element:', error);
+        }
+      }
+  
+      if (newFeatures.length === 0) {
+        alert('No features found within the city boundary');
+        return;
+      }
+  
+      console.log(`Fetched ${newFeatures.length} features from OSM`);
+  
+      // Combine with existing features or replace
+      const combined = appendMode ? [...features, ...newFeatures] : newFeatures;
+      const unique = removeDuplicateFeatures(combined);
+      
+      setFeatures(unique);
+      setStep(4);
+  
+      alert(`Successfully fetched ${newFeatures.length} features from OpenStreetMap`);
+  
+    } catch (error) {
+      console.error('Error fetching from OSM:', error);
+      alert(`Error fetching from OpenStreetMap: ${error.message}`);
+    } finally {
+      setIsFetchingOSM(false);
+    }
+  };
+
   const handleFileUpload = async (e) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
@@ -1932,6 +2169,14 @@ useEffect(() => {
                     <h4>Draw on Map</h4>
                     <p>Manually draw features</p>
                   </button>
+                  <button
+                    className={`source-option ${dataSource === 'osm' ? 'selected' : ''}`}
+                    onClick={() => setDataSource('osm')}
+                  >
+                    <i className="fas fa-map-marked-alt"></i>
+                    <h4>Fetch from OSM</h4>
+                    <p>Query OpenStreetMap using tags</p>
+                  </button>
                 </div>
                 <div className="form-actions">
                   <button className="btn-secondary" onClick={() => setStep(1)}>
@@ -1982,6 +2227,97 @@ useEffect(() => {
                       <div className="processing-indicator">
                         <i className="fas fa-spinner fa-spin"></i>
                         Processing file...
+                      </div>
+                    )}
+                  </div>
+                ) : dataSource === 'osm' ? (
+                  <div className="osm-section">
+                    <div className="form-group">
+                      <label>OpenStreetMap Tags</label>
+                      <small>Define tags to query from OpenStreetMap. Use "*" as value to match any value for that key.</small>
+                      
+                      <div className="osm-tags-list" style={{ marginTop: '12px' }}>
+                        {osmTags.map((tag, index) => (
+                          <div key={index} className="osm-tag-row" style={{ 
+                            display: 'flex', 
+                            gap: '8px', 
+                            marginBottom: '8px',
+                            alignItems: 'center'
+                          }}>
+                            <input
+                              type="text"
+                              placeholder="Key (e.g., amenity)"
+                              value={tag.key}
+                              onChange={(e) => handleOsmTagChange(index, 'key', e.target.value)}
+                              style={{ flex: '1' }}
+                            />
+                            <input
+                              type="text"
+                              placeholder="Value (e.g., restaurant or *)"
+                              value={tag.value}
+                              onChange={(e) => handleOsmTagChange(index, 'value', e.target.value)}
+                              style={{ flex: '1' }}
+                            />
+                            <button
+                              className="btn-secondary"
+                              onClick={() => handleRemoveOsmTag(index)}
+                              disabled={osmTags.length === 1}
+                              style={{ padding: '8px 12px', minWidth: 'unset' }}
+                            >
+                              <i className="fas fa-trash"></i>
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                      
+                      <button
+                        className="btn-secondary"
+                        onClick={handleAddOsmTag}
+                        style={{ marginTop: '8px' }}
+                      >
+                        <i className="fas fa-plus"></i> Add Tag
+                      </button>
+                    </div>
+            
+                    <div className="form-group">
+                      <label className="toggle-label">
+                        <input
+                          type="checkbox"
+                          checked={appendMode}
+                          onChange={(e) => setAppendMode(e.target.checked)}
+                        />
+                        <span style={{ marginLeft: '8px' }}>
+                          {appendMode ? 'Append to existing features' : 'Replace existing features'}
+                        </span>
+                      </label>
+                      <small>
+                        {appendMode
+                          ? 'New features will be added to existing ones (duplicates removed)'
+                          : 'New features will replace all existing features'}
+                      </small>
+                    </div>
+            
+                    <button
+                      className="btn-primary"
+                      onClick={handleFetchFromOSM}
+                      disabled={isFetchingOSM || osmTags.every(t => !t.key.trim())}
+                      style={{ width: '100%', marginTop: '16px' }}
+                    >
+                      {isFetchingOSM ? (
+                        <>
+                          <i className="fas fa-spinner fa-spin"></i> Fetching from OSM...
+                        </>
+                      ) : (
+                        <>
+                          <i className="fas fa-download"></i> Fetch Features
+                        </>
+                      )}
+                    </button>
+            
+                    {isFetchingOSM && (
+                      <div className="processing-indicator">
+                        <i className="fas fa-spinner fa-spin"></i>
+                        Querying OpenStreetMap...
                       </div>
                     )}
                   </div>

@@ -1365,7 +1365,7 @@ export const saveCustomLayer = async (cityName, layerData, boundary = null) => {
     console.log(`Saving custom layer: ${layerData.name} for ${cityName} with icon: ${layerData.icon}`);
     console.log(`Initial feature count: ${layerData.features.length}`);
 
-    // Prepare features with proper structure INCLUDING the icon
+    // Prepare features with proper structure
     const features = layerData.features.map(f => ({
       type: 'Feature',
       geometry: f.geometry,
@@ -1379,12 +1379,8 @@ export const saveCustomLayer = async (cityName, layerData, boundary = null) => {
     }));
 
     console.log(`Prepared ${features.length} features for saving`);
-
-    // IMPORTANT: Features are already cropped in LayerModal.js before being passed here
-    // We should NOT crop them again as it may cause issues with already-cropped geometries
-    // Just save them directly
     
-    // However, we still want to validate that we have features to save
+    // Validate that we have features to save
     if (features.length === 0) {
       console.warn(`No features to save for layer ${layerData.name}`);
       throw new Error('No features to save. All features may have been outside the city boundary.');
