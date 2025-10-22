@@ -107,9 +107,11 @@ const CalculateIndicatorsModal = ({ cities, selectedCity, dataSource, onCancel, 
       alert('Please select at least one city');
       return;
     }
-
-    // Group cities by country and province for Glue parameters
-    const cityGroups = {};
+  
+    // Build parameters for Glue job - each city needs its own entry
+    const cityList = [];
+    const provinceList = [];
+    const countryList = [];
     
     for (const cityName of selectedCities) {
       const parts = cityName.split(',').map(p => p.trim());
@@ -118,46 +120,34 @@ const CalculateIndicatorsModal = ({ cities, selectedCity, dataSource, onCancel, 
       if (parts.length === 2) {
         [city, country] = parts;
         province = '';
-      } else {
+      } else if (parts.length === 3) {
         [city, province, country] = parts;
+      } else {
+        // Handle edge cases
+        console.warn(`Unexpected city format: ${cityName}`);
+        continue;
       }
       
-      const key = `${country}|${province}`;
-      if (!cityGroups[key]) {
-        cityGroups[key] = { cities: [], country, province };
-      }
-      cityGroups[key].cities.push(city);
+      // Add each city individually to maintain position matching
+      cityList.push(city);
+      provinceList.push(province || '');  // Empty string if no province
+      countryList.push(country);
     }
-
-    // Build parameters for Glue job
-    const parameters = {
-      CITY: [],
-      PROVINCE: [],
-      COUNTRY: [],
+  
+    // Convert arrays to comma-delimited strings
+    const glueParameters = {
+      CITY: cityList.join(','),
+      PROVINCE: provinceList.join(','),
+      COUNTRY: countryList.join(','),
       START_MONTH: startMonth,
       END_MONTH: endMonth,
       USE_OSM: dataSource === 'osm' ? 'true' : 'false',
       JOB_NAME: 'calculate_indicators'
     };
-
-    for (const group of Object.values(cityGroups)) {
-      parameters.CITY.push(group.cities.join(','));
-      parameters.PROVINCE.push(group.province || '');
-      parameters.COUNTRY.push(group.country);
-    }
-
-    // Convert arrays to comma-delimited strings
-    const glueParameters = {
-      CITY: parameters.CITY.join(','),
-      PROVINCE: parameters.PROVINCE.join(','),
-      COUNTRY: parameters.COUNTRY.join(','),
-      START_MONTH: parameters.START_MONTH,
-      END_MONTH: parameters.END_MONTH,
-      USE_OSM: parameters.USE_OSM,
-      JOB_NAME: parameters.JOB_NAME
-    };
-
+  
     console.log('Calling Glue job with parameters:', glueParameters);
+    console.log(`Cities: ${cityList.length}, Provinces: ${provinceList.length}, Countries: ${countryList.length}`);
+    
     onCalculate(glueParameters);
   };
 

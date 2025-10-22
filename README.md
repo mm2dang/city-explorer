@@ -69,7 +69,7 @@ cityexplorer/
 1. Clone the repository
 ```bash
 git clone https://github.com/mm2dang/city-explorer
-cd cityexplorer
+cd city-explorer
 ```
 2. Install dependencies
 ```bash
@@ -91,10 +91,6 @@ REACT_APP_S3_RESULT_BUCKET_NAME=qoli-mobile-ping-indicators-dev
 REACT_APP_OVERPASS_API_URL=https://overpass-api.de/api/interpreter
 REACT_APP_NOMINATIM_API_URL=https://nominatim.openstreetmap.org
 REACT_APP_WIKIPEDIA_API_URL=https://en.wikipedia.org/w/api.php
-
-# Application Configuration (optional)
-REACT_APP_MAX_CITIES=100
-REACT_APP_MAX_FEATURES_PER_DOMAIN=10000
 ```
 4. Run the development server
 ```bash
@@ -107,7 +103,7 @@ npm start
 1. Clone the repo
 ```bash
 git clone https://github.com/mm2dang/city-explorer
-cd cityexplorer
+cd city-explorer
 ```
 2. Edit the code locally
 3. Check changes
