@@ -591,68 +591,80 @@ const Sidebar = ({
                       <i className="fas fa-plus"></i>
                       Add Layer
                     </button>
-                    <div className="bulk-export-wrapper">
-                      <button
-                        className="bulk-action-btn export"
-                        onClick={() => setShowExportAllMenu(!showExportAllMenu)}
-                        disabled={exportingLayer === 'all'}
-                      >
-                        <i className="fas fa-download"></i>
-                        {exportingLayer === 'all' ? 'Exporting...' : 'Export All'}
-                      </button>
-                      {showExportAllMenu && (
-                        <div className="export-dropdown">
+                    {totalLayers > 0 && (
+                      <>
+                        <div className="bulk-export-wrapper">
                           <button
-                            className="export-option"
-                            onClick={() => handleExportAll('parquet')}
+                            className="bulk-action-btn export"
+                            onClick={() => setShowExportAllMenu(!showExportAllMenu)}
+                            disabled={exportingLayer === 'all'}
                           >
-                            <i className="fas fa-database"></i>
-                            <span className="format-label">Parquet</span>
-                            <span className="format-ext">.parquet</span>
+                            <i className="fas fa-download"></i>
+                            {exportingLayer === 'all' ? 'Exporting...' : 'Export All'}
                           </button>
-                          <button
-                            className="export-option"
-                            onClick={() => handleExportAll('csv')}
-                          >
-                            <i className="fas fa-file-csv"></i>
-                            <span className="format-label">CSV</span>
-                            <span className="format-ext">.csv</span>
-                          </button>
-                          <button
-                            className="export-option"
-                            onClick={() => handleExportAll('geojson')}
-                          >
-                            <i className="fas fa-map-marked-alt"></i>
-                            <span className="format-label">GeoJSON</span>
-                            <span className="format-ext">.geojson</span>
-                          </button>
-                          <button
-                            className="export-option"
-                            onClick={() => handleExportAll('shapefile')}
-                          >
-                            <i className="fas fa-layer-group"></i>
-                            <span className="format-label">Shapefile</span>
-                            <span className="format-ext">.shp</span>
-                          </button>
+                          {showExportAllMenu && (
+                            <div className="export-dropdown">
+                              <button
+                                className="export-option"
+                                onClick={() => handleExportAll('parquet')}
+                              >
+                                <i className="fas fa-database"></i>
+                                <span className="format-label">Parquet</span>
+                                <span className="format-ext">.parquet</span>
+                              </button>
+                              <button
+                                className="export-option"
+                                onClick={() => handleExportAll('csv')}
+                              >
+                                <i className="fas fa-file-csv"></i>
+                                <span className="format-label">CSV</span>
+                                <span className="format-ext">.csv</span>
+                              </button>
+                              <button
+                                className="export-option"
+                                onClick={() => handleExportAll('geojson')}
+                              >
+                                <i className="fas fa-map-marked-alt"></i>
+                                <span className="format-label">GeoJSON</span>
+                                <span className="format-ext">.geojson</span>
+                              </button>
+                              <button
+                                className="export-option"
+                                onClick={() => handleExportAll('shapefile')}
+                              >
+                                <i className="fas fa-layer-group"></i>
+                                <span className="format-label">Shapefile</span>
+                                <span className="format-ext">.shp</span>
+                              </button>
+                            </div>
+                          )}
                         </div>
-                      )}
-                    </div>
-                    <button
-                      className="bulk-action-btn delete"
-                      onClick={handleDeleteAll}
-                    >
-                      <i className="fas fa-trash-alt"></i>
-                      Delete All
-                    </button>
+                        <button
+                          className="bulk-action-btn delete"
+                          onClick={handleDeleteAll}
+                        >
+                          <i className="fas fa-trash-alt"></i>
+                          Delete All
+                        </button>
+                      </>
+                    )}
                   </div>
                 </div>
                 <div className="layers-scroll-content">
                   {Object.keys(filteredAndSortedDomains).length === 0 ? (
-                    <div className="no-results-message">
-                      <i className="fas fa-search"></i>
-                      <h3>No Results</h3>
-                      <p>No layers or domains match "{searchQuery}"</p>
-                    </div>
+                    totalLayers === 0 ? (
+                      <div className="no-results-message">
+                        <i className="fas fa-layer-group"></i>
+                        <h3>No Layers Yet</h3>
+                        <p>Click "Add Layer" above to create your first data layer.</p>
+                      </div>
+                    ) : (
+                      <div className="no-results-message">
+                        <i className="fas fa-search"></i>
+                        <h3>No Results</h3>
+                        <p>No layers or domains match "{searchQuery}"</p>
+                      </div>
+                    )
                   ) : (
                     Object.entries(filteredAndSortedDomains).map(([domain, layers]) => {
                       const allActive = layers.every(layer => activeLayers[layer.name]);
