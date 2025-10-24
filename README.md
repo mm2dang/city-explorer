@@ -23,6 +23,7 @@ cityexplorer/
 │   ├── utils/
 │   │   ├── s3.js                            # AWS S3 operations and data processing
 │   │   ├── indicators.js                    # AWS mobile ping data operations
+│   │   ├── connectivity.js                  # Calculate connectivity metrics
 │   │   ├── osm.js                           # OpenStreetMap and Wikipedia API calls
 │   │   ├── regions.js                       # UN SDG region mapping
 │   │   └── exportUtils.js                   # Export layers to local computer
@@ -185,7 +186,7 @@ s3://qoli-mobile-ping-geometries-dev
 │                       ├── parks.snappy.parquet
 │                       └── ... (other layers)
 │
-└──  city/
+└── city/
     ├── population/
     │   └── country={country}/
     │       └── province={province}/
@@ -200,29 +201,61 @@ s3://qoli-mobile-ping-geometries-dev
                         ├── roads.snappy.parquet
                         ├── parks.snappy.parquet
                         └── ... (other layers)
-
 ```
 
-#### Results Bucket
+#### Mobile Ping Indicators Bucket
 ```
-qoli-mobile-ping-indicators-dev
+s3://qoli-mobile-ping-indicators-dev
 ├── osm/
-|    └── summary/
-|       └── {start-date_to_end-date}/
-|            ├── part-00000-00000000-0000-0000-0000-000000000000-0000.csv.gz
-|            └── ... (other .csv.gz files)
-|
-└──  city/
-    └── summary/
-        └── {start-date_to_end-date}/
-            ├── part-00000-00000000-0000-0000-0000-000000000000-0000.csv.gz
-            └── ... (other .csv.gz files)
+│   ├── summary/
+│   │   └── {start-date}_to_{end-date}/
+│   │       ├── part-00000-*.csv.gz
+│   │       └── ... (other .csv.gz files)
+│   │
+│   └── results/
+│       └── country={country}/
+│           └── province={province}/
+│               └── city={city}/
+│                   └── month={YYYY-MM}/
+│                       ├── part-00000-*.snappy.parquet
+│                       └── ... (other .snappy.parquet files)
+│
+└── city/
+    ├── summary/
+    │   └── {start-date}_to_{end-date}/
+    │       ├── part-00000-*.csv.gz
+    │       └── ... (other .csv.gz files)
+    │
+    └── results/
+        └── country={country}/
+            └── province={province}/
+                └── city={city}/
+                    └── month={YYYY-MM}/
+                        ├── part-00000-*.snappy.parquet
+                        └── ... (other .snappy.parquet files)
 ```
 
-### Parquet Schema
+#### Connectivity Indicators Bucket
+```
+s3://qoli-mobile-ping-connectivity-dev
+├── summary/
+│   └── {start-date}_to_{end-date}/
+│       ├── part-*-connectivity.csv.gz
+│       └── ... (other .csv.gz files)
+│
+└── results/
+    └── country={country}/
+        └── province={province}/
+            └── city={city}/
+                └── quarter={YYYY-Q#}/
+                    ├── part-*.snappy.parquet
+                    └── ... (other .snappy.parquet files)
+```
+
 #### City Data
 **File name**: `city_data.snappy.parquet`
-**Fields**: 
+
+**Fields**:
 - `name`: string
 - `longitude`: float
 - `latitude`: float
@@ -233,6 +266,7 @@ qoli-mobile-ping-indicators-dev
 
 #### Feature Data
 **File name**: ex. `roads.snappy.parquet`
+
 **Fields**:
 - `feature_name`: string (nullable)
 - `geometry_type`: string (Point, LineString, Polygon, Multi*)
@@ -242,29 +276,42 @@ qoli-mobile-ping-indicators-dev
 - `layer_name`: string
 - `domain_name`: string
 
-### Result Summary
-**File name**: ex. `part-00000-00000000-0000-0000-0000-000000000000-0000.csv.gz`
-**Fields**
+#### Monthly Mobile Ping Results
+**File name**: ex. `part-00000-*.snappy.parquet`
+
+**Location**: `{dataSource}/results/country={country}/province={province}/city={city}/month={YYYY-MM}/`
+
+**Fields**:
+- `out_at_night`: float (%)
+- `leisure_dwell_time`: float (minutes)
+- `cultural_visits`: float (visits)
+
+#### Quarterly Connectivity Results
+**File name**: ex. `part-*.snappy.parquet`
+
+**Location**: `results/country={country}/province={province}/city={city}/quarter={YYYY-Q#}/`
+
+**Fields**:
 - `city`: string
 - `province`: string
 - `country`: string
-- `out_at_night`: float
-- `leisure_dwell_time`: float
-- `cultural_visits`: float
-- `coverage`: float
-- `speed`: float
-- `latency`: float
+- `quarter`: string (YYYY-Q#)
+- `speed`: float (kbps)
+- `latency`: float (ms)
+- `coverage`: float (%)
 
-## Technologies Used
+#### Summary CSV (Both Mobile Ping and Connectivity)
+**File name**: ex. `part-00000-*.csv.gz` or `part-*-connectivity.csv.gz`
 
-- **React 18**: UI framework
-- **Leaflet**: Interactive maps with marker clustering
-- **React Leaflet**: React bindings for Leaflet
-- **Leaflet Draw**: Boundary drawing tools
-- **Framer Motion**: Smooth animations
-- **AWS SDK v3**: S3 operations
-- **Parquet-WASM**: Client-side Parquet read/write
-- **Apache Arrow**: Columnar data processing
-- **Turf.js**: Geospatial analysis
-- **OpenStreetMap APIs**: Nominatim (geocoding), Overpass (features)
-- **Wikipedia API**: Population data enrichment
+**Location**: `{dataSource}/summary/{start-date}_to_{end-date}/`
+
+**Fields**:
+- `city`: string
+- `province`: string (nullable)
+- `country`: string
+- `out_at_night`: float (%, nullable)
+- `leisure_dwell_time`: float (minutes, nullable)
+- `cultural_visits`: float (visits, nullable)
+- `coverage`: float (%, nullable)
+- `speed`: float (kbps, nullable)
+- `latency`: float (ms, nullable)

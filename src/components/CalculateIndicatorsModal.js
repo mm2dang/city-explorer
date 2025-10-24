@@ -141,7 +141,7 @@ const CalculateIndicatorsModal = ({ cities, selectedCity, dataSource, onCancel, 
       END_MONTH: endMonth,
       USE_OSM: dataSource === 'osm' ? 'true' : 'false',
       JOB_NAME: 'calculate_indicators',
-      CALCULATE_CONNECTIVITY: calculateConnectivity ? 'true' : 'false'  // ← This was missing
+      CALCULATE_CONNECTIVITY: calculateConnectivity ? 'true' : 'false'
     };
   
     console.log('Starting calculation with parameters:', glueParameters);
