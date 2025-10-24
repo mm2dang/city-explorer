@@ -11,6 +11,8 @@ cityexplorer/
 │   ├── manifest.json
 │   └── worker.js                            # Web Worker for OSM data processing
 ├── src/
+│   ├── assets/
+│   │   └── confetti.js
 │   ├── components/
 │   │   ├── Header.js                        # City selector and status display
 │   │   ├── Sidebar.js                       # Domain and layer controls

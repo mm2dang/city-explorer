@@ -22,6 +22,7 @@ import {
 import {
   triggerGlueJobWithParams
 } from './utils/indicators';
+import confetti from './assets/confetti';
 
 function App() {
   const [cities, setCities] = useState([]);
@@ -243,6 +244,7 @@ function App() {
 
       setShowAddCityWizard(false);
       setEditingCity(null);
+      confetti();
     } catch (error) {
       console.error('Error adding city:', error);
       alert(`Error adding city: ${error.message}`);
@@ -259,9 +261,6 @@ function App() {
     try {
       console.log('Updating city:', updatedCityData, 'shouldRefresh:', shouldRefresh);
       console.log('Editing city (old name):', editingCity?.name);
-      
-      // Note: The actual save/move operations happen in the wizard's handleSubmit
-      // This function is called AFTER those operations complete
       
       // Always reload cities after any update to get fresh data from S3
       console.log('Reloading all cities from S3 to get fresh metadata...');
@@ -311,7 +310,6 @@ function App() {
             console.log('Available cities:', citiesWithStatus.map(c => c.name));
             
             // If the city was renamed, try to find it by checking if the old name is gone
-            // This is a fallback in case timing issues occur
             if (editingCity && editingCity.name !== updatedCityData.name) {
               console.log('City was renamed, old name no longer exists as expected');
             }
@@ -356,6 +354,7 @@ function App() {
       setEditingCity(null);
       
       console.log('City update completed successfully');
+      confetti();
     } catch (error) {
       console.error('Error updating city:', error);
       alert(`Error updating city: ${error.message}`);
@@ -460,6 +459,7 @@ function App() {
       setShowLayerModal(false);
       setEditingLayer(null);
       console.log('Layer saved successfully');
+      confetti();
     } catch (error) {
       console.error('Error saving layer:', error);
       alert(`Error saving layer: ${error.message}`);
@@ -526,12 +526,19 @@ function App() {
       console.log('Glue job started:', result.JobRunId);
       
       setShowCalculateIndicatorsModal(false);
-      alert('Indicator calculation started. This may take several minutes.');
-
+      
+      // Conditional alert message based on connectivity calculation
+      const alertMessage = shouldCalculateConnectivity
+        ? 'Indicator calculation started. This may take several minutes.\n\nPlease keep this browser tab open until connectivity calculations are complete.'
+        : 'Indicator calculation started. This may take several minutes.';
+      
+      alert(alertMessage);
+      confetti();
+  
       if (connectivityPromise) {
         await connectivityPromise;
       }
-
+  
     } catch (error) {
       console.error('Error starting calculation:', error);
       alert(`Error starting calculation: ${error.message}`);
