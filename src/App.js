@@ -795,6 +795,7 @@ function App() {
           mapView={mapView}
           cities={cities}
           onCitySelect={handleCitySelect}
+          processingProgress={processingProgress}
         />
         <IndicatorsSidebar
           selectedCity={selectedCity}

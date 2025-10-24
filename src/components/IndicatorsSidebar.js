@@ -1,12 +1,15 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import {
   getAvailableDateRanges,
   getAvailableConnectivityDateRanges,
   getSummaryDataWithConnectivity,
-  getGlueJobStatus
+  getGlueJobStatus,
+  getMonthlyIndicatorData,
+  getQuarterlyConnectivityData
 } from '../utils/indicators';
 import Papa from 'papaparse';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import '../styles/IndicatorsSidebar.css';
 
 const IndicatorsSidebar = ({ selectedCity, dataSource, onCalculateIndicators }) => {
@@ -24,6 +27,9 @@ const IndicatorsSidebar = ({ selectedCity, dataSource, onCalculateIndicators }) 
   const [isExporting, setIsExporting] = useState(false);
   const [connectivityProgress, setConnectivityProgress] = useState(null);
   const [isCalculatingConnectivity, setIsCalculatingConnectivity] = useState(false);
+  const [expandedIndicator, setExpandedIndicator] = useState(null);
+  const [timeSeriesData, setTimeSeriesData] = useState({});
+  const [loadingTimeSeries, setLoadingTimeSeries] = useState({});
 
   // Indicator definitions with labels and descriptions
   const indicators = useMemo(() => ({
@@ -32,42 +38,54 @@ const IndicatorsSidebar = ({ selectedCity, dataSource, onCalculateIndicators }) 
       description: 'Proportion of people seen after dark (8 PM - 4 AM)',
       color: '#8b5cf6',
       unit: '%',
-      icon: 'fa-moon'
+      icon: 'fa-moon',
+      type: 'mobile_ping',
+      frequency: 'monthly'
     },
     leisure_dwell_time: {
       label: 'Leisure Dwell Time',
       description: 'Average dwell time in cultural or recreational sites',
       color: '#10b981',
       unit: 'min',
-      icon: 'fa-clock'
+      icon: 'fa-clock',
+      type: 'mobile_ping',
+      frequency: 'monthly'
     },
     cultural_visits: {
       label: 'Cultural Visits',
       description: 'Average number of visits to cultural or recreational sites per month',
       color: '#f59e0b',
       unit: 'visits',
-      icon: 'fa-palette'
+      icon: 'fa-palette',
+      type: 'mobile_ping',
+      frequency: 'monthly'
     },
     coverage: {
       label: 'Coverage',
-      description: 'Proportion of people with mobile internet access',
+      description: 'Mobile phone subscriptions per 100 people (country-wide)',
       color: '#3b82f6',
       unit: '%',
-      icon: 'fa-signal'
+      icon: 'fa-signal',
+      type: 'connectivity',
+      frequency: 'quarterly'
     },
     speed: {
       label: 'Speed',
       description: 'Mobile internet download speed',
       color: '#ef4444',
       unit: 'kbps',
-      icon: 'fa-tachometer-alt'
+      icon: 'fa-tachometer-alt',
+      type: 'connectivity',
+      frequency: 'quarterly'
     },
     latency: {
       label: 'Latency',
       description: 'Mobile internet download latency',
       color: '#ec4899',
       unit: 'ms',
-      icon: 'fa-stopwatch'
+      icon: 'fa-stopwatch',
+      type: 'connectivity',
+      frequency: 'quarterly'
     }
   }), []);
 
@@ -249,7 +267,26 @@ const IndicatorsSidebar = ({ selectedCity, dataSource, onCalculateIndicators }) 
   }, [selectedCity, summaryData]);
 
   // Check if export should be enabled
-  const canExport = summaryData.length > 0;
+  const canExport = useMemo(() => {
+    if (summaryData.length === 0) return false;
+    
+    const indicatorKeys = Object.keys(indicators);
+    
+    // If a city is selected, check if that city has valid indicator data
+    if (selectedCity) {
+      // If selectedCityData is null, no data is available for this city
+      if (!selectedCityData) return false;
+      
+      return indicatorKeys.some(key => 
+        selectedCityData[key] != null && !isNaN(selectedCityData[key])
+      );
+    }
+    
+    // If no city is selected, check if any city has at least one valid indicator value
+    return summaryData.some(row => 
+      indicatorKeys.some(key => row[key] != null && !isNaN(row[key]))
+    );
+  }, [summaryData, indicators, selectedCity, selectedCityData]);
 
   const handleExportIndicators = async (format) => {
     if (!canExport) return;
@@ -397,6 +434,10 @@ const IndicatorsSidebar = ({ selectedCity, dataSource, onCalculateIndicators }) 
         {Object.entries(indicators).map(([key, info], index) => {
           const value = selectedCityData[key];
           const hasValue = value != null && !isNaN(value);
+          const isExpanded = expandedIndicator === key;
+          const isLoading = loadingTimeSeries[key];
+          const chartData = timeSeriesData[key] || [];
+          
           return (
             <motion.div
               key={key}
@@ -406,6 +447,7 @@ const IndicatorsSidebar = ({ selectedCity, dataSource, onCalculateIndicators }) 
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.3, delay: index * 0.05 }}
               whileHover={{ scale: 1.02 }}
+              onClick={() => handleIndicatorClick(key)}
             >
               <div className="indicator-card-header">
                 <div
@@ -418,6 +460,9 @@ const IndicatorsSidebar = ({ selectedCity, dataSource, onCalculateIndicators }) 
                   <h4>{info.label}</h4>
                   <p>{info.description}</p>
                 </div>
+                <div className="expand-indicator">
+                  <i className={`fas fa-chevron-${isExpanded ? 'up' : 'down'}`}></i>
+                </div>
               </div>
               <div className="indicator-card-value">
                 <span className="value" style={{ color: info.color }}>
@@ -425,6 +470,61 @@ const IndicatorsSidebar = ({ selectedCity, dataSource, onCalculateIndicators }) 
                 </span>
                 <span className="unit">{info.unit}</span>
               </div>
+              <AnimatePresence>
+                {isExpanded && (
+                  <motion.div
+                    className="indicator-chart"
+                    initial={{ height: 0, opacity: 0 }}
+                    animate={{ height: 'auto', opacity: 1 }}
+                    exit={{ height: 0, opacity: 0 }}
+                    transition={{ duration: 0.3 }}
+                  >
+                    {isLoading ? (
+                      <div className="chart-loading">
+                        <i className="fas fa-spinner fa-spin"></i>
+                        <span>Loading time series...</span>
+                      </div>
+                    ) : chartData.length === 0 ? (
+                      <div className="chart-no-data">
+                        <i className="fas fa-chart-line"></i>
+                        <span>No time series data available</span>
+                      </div>
+                    ) : (
+                      <ResponsiveContainer width="100%" height={200}>
+                        <LineChart data={chartData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                          <XAxis 
+                            dataKey={info.frequency === 'monthly' ? 'month' : 'quarter'}
+                            tick={{ fontSize: 11 }}
+                            stroke="#9ca3af"
+                          />
+                          <YAxis 
+                            tick={{ fontSize: 11 }}
+                            stroke="#9ca3af"
+                          />
+                          <Tooltip 
+                            contentStyle={{
+                              background: 'white',
+                              border: '1px solid #e5e7eb',
+                              borderRadius: '6px',
+                              fontSize: '12px'
+                            }}
+                            formatter={(value) => [Number(value).toFixed(2) + ' ' + info.unit, info.label]}
+                          />
+                          <Line 
+                            type="monotone" 
+                            dataKey="value" 
+                            stroke={info.color}
+                            strokeWidth={2}
+                            dot={{ fill: info.color, r: 4 }}
+                            activeDot={{ r: 6 }}
+                          />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    )}
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </motion.div>
           );
         })}
@@ -501,6 +601,63 @@ const IndicatorsSidebar = ({ selectedCity, dataSource, onCalculateIndicators }) 
         </div>
       </div>
     );
+  };
+
+  const parseSelectedCityName = (fullName) => {
+    const parts = fullName.split(',').map(p => p.trim());
+    if (parts.length === 2) {
+      return { city: parts[0], province: '', country: parts[1] };
+    }
+    return { city: parts[0], province: parts[1], country: parts[2] };
+  };
+
+  const handleIndicatorClick = async (indicatorKey) => {
+    if (!selectedCity || !selectedDateRange) return;
+    
+    // Toggle collapse if already expanded
+    if (expandedIndicator === indicatorKey) {
+      setExpandedIndicator(null);
+      return;
+    }
+    
+    setExpandedIndicator(indicatorKey);
+    
+    // Check if data already loaded
+    if (timeSeriesData[indicatorKey]) return;
+    
+    setLoadingTimeSeries(prev => ({ ...prev, [indicatorKey]: true }));
+    
+    try {
+      const indicator = indicators[indicatorKey];
+      const { city, province, country } = parseSelectedCityName(selectedCity.name);
+      
+      let data;
+      if (indicator.type === 'mobile_ping') {
+        data = await getMonthlyIndicatorData(
+          dataSource,
+          country,
+          province,
+          city,
+          indicatorKey,
+          selectedDateRange
+        );
+      } else {
+        data = await getQuarterlyConnectivityData(
+          country,
+          province,
+          city,
+          indicatorKey,
+          selectedDateRange
+        );
+      }
+      
+      setTimeSeriesData(prev => ({ ...prev, [indicatorKey]: data }));
+    } catch (error) {
+      console.error('Error loading time series:', error);
+      alert(`Failed to load time series data: ${error.message}`);
+    } finally {
+      setLoadingTimeSeries(prev => ({ ...prev, [indicatorKey]: false }));
+    }
   };
 
   return (

@@ -115,7 +115,8 @@ const MapViewer = ({
   availableLayers = {},
   mapView = 'street',
   cities = [],
-  onCitySelect = () => {}
+  onCitySelect = () => {},
+  processingProgress = {}
 }) => {
   const mapRef = useRef(null);
   const mapInstanceRef = useRef(null);
@@ -368,6 +369,10 @@ const MapViewer = ({
     const cityMarkersGroup = L.layerGroup();
   
     cities.forEach(city => {
+      // Check if city is currently processing
+      const progress = processingProgress?.[city.name];
+      const isProcessing = progress && progress.status === 'processing';
+      
       try {
         let markerLat, markerLng;
   
@@ -387,31 +392,32 @@ const MapViewer = ({
         }
   
         // Create custom icon for city
-const cityIcon = L.divIcon({
-  className: 'city-marker-icon',
-  html: `
-    <div class="city-icon-wrapper" style="
-      background-color: #0891b2;
-      width: 32px;
-      height: 32px;
-      border-radius: 50%;
-      border: 3px solid white;
-      box-shadow: 0 3px 8px rgba(0,0,0,0.4);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      color: white;
-      font-size: 14px;
-      cursor: pointer;
-      transition: all 0.2s;
-    ">
-      <i class="fas fa-city"></i>
-    </div>
-  `,
-  iconSize: [32, 32],
-  iconAnchor: [16, 16],
-  popupAnchor: [0, -16]
-});
+        const cityIcon = L.divIcon({
+          className: 'city-marker-icon',
+          html: `
+            <div class="city-icon-wrapper" style="
+              background-color: ${isProcessing ? '#94a3b8' : '#0891b2'};
+              width: 32px;
+              height: 32px;
+              border-radius: 50%;
+              border: 3px solid white;
+              box-shadow: 0 3px 8px rgba(0,0,0,0.4);
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              color: white;
+              font-size: 14px;
+              cursor: ${isProcessing ? 'not-allowed' : 'pointer'};
+              transition: all 0.2s;
+              opacity: ${isProcessing ? '0.6' : '1'};
+            ">
+              <i class="fas ${isProcessing ? 'fa-spinner fa-spin' : 'fa-city'}"></i>
+            </div>
+          `,
+          iconSize: [32, 32],
+          iconAnchor: [16, 16],
+          popupAnchor: [0, -16]
+        });
 
   const marker = L.marker([markerLat, markerLng], {
     icon: cityIcon,
@@ -448,24 +454,30 @@ const cityIcon = L.divIcon({
   });
 
   // Add hover effect
-  marker.on('mouseover', function(e) {
-    const innerDiv = this._icon?.querySelector('.city-icon-wrapper');
-    if (innerDiv) {
-      innerDiv.style.transform = 'scale(1.15)';
-      innerDiv.style.backgroundColor = '#0e7490';
-    }
-  });
-
-  marker.on('mouseout', function(e) {
-    const innerDiv = this._icon?.querySelector('.city-icon-wrapper');
-    if (innerDiv) {
-      innerDiv.style.transform = 'scale(1)';
-      innerDiv.style.backgroundColor = '#0891b2';
-    }
-  });
+  if (!isProcessing) {
+    marker.on('mouseover', function(e) {
+      const innerDiv = this._icon?.querySelector('.city-icon-wrapper');
+      if (innerDiv) {
+        innerDiv.style.transform = 'scale(1.15)';
+        innerDiv.style.backgroundColor = '#0e7490';
+      }
+    });
+  
+    marker.on('mouseout', function(e) {
+      const innerDiv = this._icon?.querySelector('.city-icon-wrapper');
+      if (innerDiv) {
+        innerDiv.style.transform = 'scale(1)';
+        innerDiv.style.backgroundColor = '#0891b2';
+      }
+    });
+  }
 
         // Click handler to select city
         marker.on('click', function(e) {
+          if (isProcessing) {
+            console.log('MapViewer: City marker click blocked - city is processing:', city.name);
+            return;
+          }
           console.log('MapViewer: City marker clicked:', city.name);
           onCitySelect(city);
         });
@@ -508,7 +520,7 @@ const cityIcon = L.divIcon({
       cityMarkersLayerRef.current = cityMarkersGroup;
       console.log(`MapViewer: Added ${cityMarkersGroup.getLayers().length} city markers`);
     }
-  }, [cities, selectedCity, onCitySelect]);
+  }, [cities, selectedCity, onCitySelect, processingProgress]);
 
   useEffect(() => {
     displayCityMarkers();

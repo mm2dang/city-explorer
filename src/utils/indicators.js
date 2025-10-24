@@ -754,3 +754,300 @@ export async function mergeSummaryWithConnectivity(summaryData, dataSource, date
     return summaryData;
   }
 }
+
+/**
+ * Get monthly indicator data for a specific city and indicator
+ */
+export async function getMonthlyIndicatorData(dataSource, country, province, city, indicatorKey, dateRange) {
+  try {
+    console.log(`[TimeSeries] Starting monthly data fetch:`, {
+      dataSource,
+      country,
+      province,
+      city,
+      indicatorKey,
+      dateRange
+    });
+    
+    const [startDate, endDate] = dateRange.split('_to_');
+    const months = generateMonthRange(startDate, endDate);
+    
+    const normalizedCountry = country.toLowerCase().replace(/\s+/g, '_');
+    const normalizedProvince = province ? province.toLowerCase().replace(/\s+/g, '_') : '';
+    const normalizedCity = city.toLowerCase().replace(/\s+/g, '_');
+
+    const monthlyData = [];
+
+    for (const month of months) {
+      try {
+        const prefix = normalizedProvince
+          ? `${dataSource}/results/country=${normalizedCountry}/province=${normalizedProvince}/city=${normalizedCity}/month=${month}/`
+          : `${dataSource}/results/country=${normalizedCountry}/city=${normalizedCity}/month=${month}/`;
+
+        console.log(`[TimeSeries] Searching path: s3://${RESULT_BUCKET}/${prefix}`);
+
+        const command = new ListObjectsV2Command({
+          Bucket: RESULT_BUCKET,
+          Prefix: prefix
+        });
+
+        const result = await s3Client.send(command);
+        const parquetFiles = (result.Contents || []).filter(obj => 
+          obj.Key.endsWith('.parquet') || obj.Key.endsWith('.snappy.parquet')
+        );
+
+        console.log(`[TimeSeries] Found ${parquetFiles.length} parquet files for ${month}`);
+
+        if (parquetFiles.length > 0) {
+          const getCommand = new GetObjectCommand({
+            Bucket: RESULT_BUCKET,
+            Key: parquetFiles[0].Key
+          });
+
+          console.log(`[TimeSeries] Reading file: ${parquetFiles[0].Key}`);
+          const response = await s3Client.send(getCommand);
+          let buffer;
+          
+          if (response.Body instanceof Blob) {
+            const arrayBuffer = await response.Body.arrayBuffer();
+            buffer = new Uint8Array(arrayBuffer);
+          } else if (response.Body.transformToByteArray) {
+            buffer = await response.Body.transformToByteArray();
+          } else {
+            const reader = response.Body.getReader();
+            const chunks = [];
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              chunks.push(value);
+            }
+            const totalLength = chunks.reduce((acc, chunk) => acc + chunk.length, 0);
+            buffer = new Uint8Array(totalLength);
+            let offset = 0;
+            for (const chunk of chunks) {
+              buffer.set(chunk, offset);
+              offset += chunk.length;
+            }
+          }
+
+          console.log(`[TimeSeries] Buffer size: ${buffer.length} bytes`);
+
+          // Initialize parquet-wasm if needed
+          const parquetWasm = await import('parquet-wasm');
+          if (!window.parquetWasmInitialized) {
+            await parquetWasm.default();
+            window.parquetWasmInitialized = true;
+          }
+          
+          // Read parquet and convert to Arrow IPC
+          const wasmTable = parquetWasm.readParquet(buffer);
+          const ipcBytes = wasmTable.intoIPCStream();
+          
+          // Import Apache Arrow
+          const { tableFromIPC } = await import('apache-arrow');
+          const arrowTable = tableFromIPC(ipcBytes);
+          
+          const numRows = arrowTable.numRows;
+          const numCols = arrowTable.numCols;
+          
+          console.log(`[TimeSeries] Parquet has ${numRows} rows, ${numCols} columns`);
+          
+          if (numRows > 0) {
+            const schema = arrowTable.schema;
+            const fieldNames = schema.fields.map(f => f.name);
+            console.log(`[TimeSeries] Column names:`, fieldNames);
+            
+            const fieldIndex = schema.fields.findIndex(f => f.name === indicatorKey);
+            
+            if (fieldIndex === -1) {
+              console.warn(`[TimeSeries] Column '${indicatorKey}' not found. Available columns:`, fieldNames);
+              continue;
+            }
+            
+            console.log(`[TimeSeries] Found column '${indicatorKey}' at index ${fieldIndex}`);
+            
+            const column = arrowTable.getChildAt(fieldIndex);
+            const value = column.get(0);
+            
+            console.log(`[TimeSeries] Raw value for ${month}:`, value, `(type: ${typeof value})`);
+            
+            if (value != null && !isNaN(value)) {
+              const numericValue = typeof value === 'bigint' ? Number(value) : parseFloat(value);
+              console.log(`[TimeSeries] ✓ Added value for ${month}: ${numericValue}`);
+              monthlyData.push({
+                month,
+                value: numericValue
+              });
+            } else {
+              console.warn(`[TimeSeries] Invalid value for ${month}:`, value);
+            }
+          }
+        }
+      } catch (monthError) {
+        console.error(`[TimeSeries] Error loading data for month ${month}:`, monthError);
+      }
+    }
+
+    console.log(`[TimeSeries] ✓ Loaded ${monthlyData.length} months of ${indicatorKey} data for ${city}`);
+    console.log(`[TimeSeries] Data:`, monthlyData);
+    return monthlyData;
+  } catch (error) {
+    console.error('[TimeSeries] Error getting monthly indicator data:', error);
+    throw error;
+  }
+}
+
+/**
+ * Get quarterly connectivity data for a specific city and indicator
+ */
+export async function getQuarterlyConnectivityData(country, province, city, indicatorKey, dateRange) {
+  try {
+    console.log(`[TimeSeries] Starting quarterly connectivity data fetch:`, {
+      country,
+      province,
+      city,
+      indicatorKey,
+      dateRange
+    });
+    
+    const [startDate, endDate] = dateRange.split('_to_');
+    const months = generateMonthRange(startDate, endDate);
+    const quarters = getQuarters(months);
+    
+    const normalizedCountry = country.toLowerCase().replace(/\s+/g, '_');
+    const normalizedProvince = province ? province.toLowerCase().replace(/\s+/g, '_') : '';
+    const normalizedCity = city.toLowerCase().replace(/\s+/g, '_');
+
+    const quarterlyData = [];
+
+    for (const quarter of quarters) {
+      try {
+        const prefix = normalizedProvince
+          ? `results/country=${normalizedCountry}/province=${normalizedProvince}/city=${normalizedCity}/quarter=${quarter}/`
+          : `results/country=${normalizedCountry}/city=${normalizedCity}/quarter=${quarter}/`;
+
+        console.log(`[TimeSeries] Searching path: s3://${CONNECTIVITY_RESULT_BUCKET}/${prefix}`);
+
+        const command = new ListObjectsV2Command({
+          Bucket: CONNECTIVITY_RESULT_BUCKET,
+          Prefix: prefix
+        });
+
+        const result = await s3Client.send(command);
+        const parquetFiles = (result.Contents || []).filter(obj => 
+          obj.Key.endsWith('.parquet') || obj.Key.endsWith('.snappy.parquet')
+        );
+
+        console.log(`[TimeSeries] Found ${parquetFiles.length} parquet files for ${quarter}`);
+
+        if (parquetFiles.length > 0) {
+          const getCommand = new GetObjectCommand({
+            Bucket: CONNECTIVITY_RESULT_BUCKET,
+            Key: parquetFiles[0].Key
+          });
+
+          console.log(`[TimeSeries] Reading file: ${parquetFiles[0].Key}`);
+          const response = await s3Client.send(getCommand);
+          let buffer;
+          
+          if (response.Body instanceof Blob) {
+            const arrayBuffer = await response.Body.arrayBuffer();
+            buffer = new Uint8Array(arrayBuffer);
+          } else if (response.Body.transformToByteArray) {
+            buffer = await response.Body.transformToByteArray();
+          } else {
+            const reader = response.Body.getReader();
+            const chunks = [];
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              chunks.push(value);
+            }
+            const totalLength = chunks.reduce((acc, chunk) => acc + chunk.length, 0);
+            buffer = new Uint8Array(totalLength);
+            let offset = 0;
+            for (const chunk of chunks) {
+              buffer.set(chunk, offset);
+              offset += chunk.length;
+            }
+          }
+
+          console.log(`[TimeSeries] Buffer size: ${buffer.length} bytes`);
+
+          // Initialize parquet-wasm if needed
+          const parquetWasm = await import('parquet-wasm');
+          if (!window.parquetWasmInitialized) {
+            await parquetWasm.default();
+            window.parquetWasmInitialized = true;
+          }
+          
+          // Read parquet and convert to Arrow IPC
+          const wasmTable = parquetWasm.readParquet(buffer);
+          const ipcBytes = wasmTable.intoIPCStream();
+          
+          // Import Apache Arrow
+          const { tableFromIPC } = await import('apache-arrow');
+          const arrowTable = tableFromIPC(ipcBytes);
+          
+          const numRows = arrowTable.numRows;
+          const numCols = arrowTable.numCols;
+          
+          console.log(`[TimeSeries] Parquet has ${numRows} rows, ${numCols} columns`);
+          
+          if (numRows > 0) {
+            const schema = arrowTable.schema;
+            const fieldNames = schema.fields.map(f => f.name);
+            console.log(`[TimeSeries] Column names:`, fieldNames);
+            
+            const fieldIndex = schema.fields.findIndex(f => f.name === indicatorKey);
+            
+            if (fieldIndex === -1) {
+              console.warn(`[TimeSeries] Column '${indicatorKey}' not found. Available columns:`, fieldNames);
+              continue;
+            }
+            
+            console.log(`[TimeSeries] Found column '${indicatorKey}' at index ${fieldIndex}`);
+            
+            const column = arrowTable.getChildAt(fieldIndex);
+            const value = column.get(0);
+            
+            console.log(`[TimeSeries] Raw value for ${quarter}:`, value, `(type: ${typeof value})`);
+            
+            if (value != null && !isNaN(value)) {
+              const numericValue = typeof value === 'bigint' ? Number(value) : parseFloat(value);
+              console.log(`[TimeSeries] ✓ Added value for ${quarter}: ${numericValue}`);
+              quarterlyData.push({
+                quarter,
+                value: numericValue
+              });
+            } else {
+              console.warn(`[TimeSeries] Invalid value for ${quarter}:`, value);
+            }
+          }
+        }
+      } catch (quarterError) {
+        console.error(`[TimeSeries] Error loading data for quarter ${quarter}:`, quarterError);
+      }
+    }
+
+    console.log(`[TimeSeries] ✓ Loaded ${quarterlyData.length} quarters of ${indicatorKey} data for ${city}`);
+    console.log(`[TimeSeries] Data:`, quarterlyData);
+    return quarterlyData;
+  } catch (error) {
+    console.error('[TimeSeries] Error getting quarterly connectivity data:', error);
+    throw error;
+  }
+}
+
+/**
+ * Get quarters from a list of months
+ */
+export function getQuarters(months) {
+  const quarters = new Set();
+  for (const month of months) {
+    const [year, monthNum] = month.split('-').map(Number);
+    const quarter = Math.floor((monthNum - 1) / 3) + 1;
+    quarters.add(`${year}-Q${quarter}`);
+  }
+  return Array.from(quarters).sort();
+}
