@@ -20,6 +20,8 @@ const CalculateIndicatorsModal = ({ cities, selectedCity, dataSource, onCancel, 
   const [sortBy, setSortBy] = useState('city');
   const [sortOrder, setSortOrder] = useState('asc');
 
+  const [calculateConnectivity, setCalculateConnectivity] = useState(true);
+
   // Filter and sort cities
   const filteredAndSortedCities = useMemo(() => {
     // First filter by search query
@@ -108,7 +110,6 @@ const CalculateIndicatorsModal = ({ cities, selectedCity, dataSource, onCancel, 
       return;
     }
   
-    // Build parameters for Glue job - each city needs its own entry
     const cityList = [];
     const provinceList = [];
     const countryList = [];
@@ -123,18 +124,15 @@ const CalculateIndicatorsModal = ({ cities, selectedCity, dataSource, onCancel, 
       } else if (parts.length === 3) {
         [city, province, country] = parts;
       } else {
-        // Handle edge cases
         console.warn(`Unexpected city format: ${cityName}`);
         continue;
       }
       
-      // Add each city individually to maintain position matching
       cityList.push(city);
-      provinceList.push(province || '');  // Empty string if no province
+      provinceList.push(province || '');
       countryList.push(country);
     }
   
-    // Convert arrays to comma-delimited strings
     const glueParameters = {
       CITY: cityList.join(','),
       PROVINCE: provinceList.join(','),
@@ -142,11 +140,11 @@ const CalculateIndicatorsModal = ({ cities, selectedCity, dataSource, onCancel, 
       START_MONTH: startMonth,
       END_MONTH: endMonth,
       USE_OSM: dataSource === 'osm' ? 'true' : 'false',
-      JOB_NAME: 'calculate_indicators'
+      JOB_NAME: 'calculate_indicators',
+      CALCULATE_CONNECTIVITY: calculateConnectivity ? 'true' : 'false'  // ← This was missing
     };
   
-    console.log('Calling Glue job with parameters:', glueParameters);
-    console.log(`Cities: ${cityList.length}, Provinces: ${provinceList.length}, Countries: ${countryList.length}`);
+    console.log('Starting calculation with parameters:', glueParameters);
     
     onCalculate(glueParameters);
   };
@@ -212,6 +210,21 @@ const CalculateIndicatorsModal = ({ cities, selectedCity, dataSource, onCancel, 
                     />
                   </div>
                 </div>
+              </div>
+              <div className="form-group">
+                <label className="checkbox-option">
+                  <input
+                    type="checkbox"
+                    checked={calculateConnectivity}
+                    onChange={(e) => setCalculateConnectivity(e.target.checked)}
+                  />
+                  <span className="checkbox-label">
+                    Calculate connectivity metrics (speed, latency)
+                  </span>
+                </label>
+                <small className="form-hint">
+                  Connectivity calculation may take additional time
+                </small>
               </div>
             </motion.div>
           )}

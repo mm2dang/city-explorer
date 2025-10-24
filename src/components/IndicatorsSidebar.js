@@ -2,7 +2,8 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import {
   getAvailableDateRanges,
-  getSummaryData,
+  getAvailableConnectivityDateRanges,
+  getSummaryDataWithConnectivity,
   getGlueJobStatus
 } from '../utils/indicators';
 import Papa from 'papaparse';
@@ -21,6 +22,8 @@ const IndicatorsSidebar = ({ selectedCity, dataSource, onCalculateIndicators }) 
   const [jobId, setJobId] = useState(null);
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
+  const [connectivityProgress, setConnectivityProgress] = useState(null);
+  const [isCalculatingConnectivity, setIsCalculatingConnectivity] = useState(false);
 
   // Indicator definitions with labels and descriptions
   const indicators = useMemo(() => ({
@@ -71,10 +74,18 @@ const IndicatorsSidebar = ({ selectedCity, dataSource, onCalculateIndicators }) 
   // Load available date ranges
   const loadDateRanges = useCallback(async () => {
     try {
-      const ranges = await getAvailableDateRanges(dataSource);
-      setAvailableDateRanges(ranges);
-      if (ranges.length > 0 && !selectedDateRange) {
-        setSelectedDateRange(ranges[0]); // Select most recent by default
+      // Load both Glue results and connectivity results date ranges
+      const [glueRanges, connectivityRanges] = await Promise.all([
+        getAvailableDateRanges(dataSource).catch(() => []),
+        getAvailableConnectivityDateRanges(dataSource).catch(() => [])
+      ]);
+      
+      // Merge and deduplicate
+      const allRanges = [...new Set([...glueRanges, ...connectivityRanges])].sort().reverse();
+      
+      setAvailableDateRanges(allRanges);
+      if (allRanges.length > 0 && !selectedDateRange) {
+        setSelectedDateRange(allRanges[0]); // Select most recent by default
       }
     } catch (error) {
       console.error('Error loading date ranges:', error);
@@ -86,7 +97,9 @@ const IndicatorsSidebar = ({ selectedCity, dataSource, onCalculateIndicators }) 
     if (!selectedDateRange) return;
     setIsLoading(true);
     try {
-      const data = await getSummaryData(dataSource, selectedDateRange);
+      // Load cities to get boundaries for connectivity calculation
+      const cities = []; // Get from your app state or props
+      const data = await getSummaryDataWithConnectivity(dataSource, selectedDateRange, cities);
       setSummaryData(data);
     } catch (error) {
       console.error('Error loading summary data:', error);
@@ -156,6 +169,31 @@ const IndicatorsSidebar = ({ selectedCity, dataSource, onCalculateIndicators }) 
       document.removeEventListener('mousedown', handleClickOutside);
     };
   }, [showExportMenu]);
+
+  // Listen for connectivity progress updates from App.js
+  useEffect(() => {
+    const handleConnectivityProgress = (e) => {
+      const progress = e.detail;
+      setConnectivityProgress(progress);
+      setIsCalculatingConnectivity(true);
+    };
+
+    const handleConnectivityComplete = () => {
+      setIsCalculatingConnectivity(false);
+      setConnectivityProgress(null);
+      if (selectedDateRange) {
+        loadSummaryData();
+      }
+    };
+
+    window.addEventListener('connectivity-progress', handleConnectivityProgress);
+    window.addEventListener('connectivity-complete', handleConnectivityComplete);
+
+    return () => {
+      window.removeEventListener('connectivity-progress', handleConnectivityProgress);
+      window.removeEventListener('connectivity-complete', handleConnectivityComplete);
+    };
+  }, [selectedDateRange, loadSummaryData]);
 
   const handleSort = (key) => {
     let direction = 'asc';
@@ -504,14 +542,14 @@ const IndicatorsSidebar = ({ selectedCity, dataSource, onCalculateIndicators }) 
         <div className="indicators-content">
           <div className="controls-section">
             <div className="controls-buttons">
-              <button
-                className="calculate-btn"
-                onClick={onCalculateIndicators}
-                disabled={isCalculating}
-              >
-                <i className={`fas ${isCalculating ? 'fa-spinner fa-spin' : 'fa-calculator'}`}></i>
-                {isCalculating ? 'Calculating...' : 'Calculate Indicators'}
-              </button>
+            <button
+              className="calculate-btn"
+              onClick={() => onCalculateIndicators()}
+              disabled={isCalculating || isCalculatingConnectivity}
+            >
+              <i className={`fas ${isCalculating || isCalculatingConnectivity ? 'fa-spinner fa-spin' : 'fa-calculator'}`}></i>
+              {isCalculating || isCalculatingConnectivity ? 'Calculating...' : 'Calculate Indicators'}
+            </button>
               {canExport && (
                 <div className="export-menu-wrapper">
                   <button
@@ -553,8 +591,13 @@ const IndicatorsSidebar = ({ selectedCity, dataSource, onCalculateIndicators }) 
                 </div>
               )}
             </div>
+            {/* Show Glue job status */}
             {isCalculating && calculationStatus && (
               <div className="calculation-status">
+                <div className="status-header">
+                  <i className="fas fa-cog"></i>
+                  <span>Indicator Calculation</span>
+                </div>
                 <div className="status-bar">
                   <div
                     className="status-fill"
@@ -562,6 +605,31 @@ const IndicatorsSidebar = ({ selectedCity, dataSource, onCalculateIndicators }) 
                   />
                 </div>
                 <small>{calculationStatus.state}: {calculationStatus.message || 'Processing...'}</small>
+              </div>
+            )}
+            {/* Show connectivity calculation status */}
+            {isCalculatingConnectivity && connectivityProgress && (
+              <div className="calculation-status connectivity-status">
+                <div className="status-header">
+                  <i className="fas fa-signal"></i>
+                  <span>Connectivity Calculation</span>
+                </div>
+                <div className="status-bar">
+                  <div
+                    className="status-fill"
+                    style={{ 
+                      width: `${(connectivityProgress.current / connectivityProgress.total) * 100}%`,
+                      background: '#3b82f6'
+                    }}
+                  />
+                </div>
+                <small>
+                  {connectivityProgress.current} of {connectivityProgress.total} cities
+                  {connectivityProgress.currentCity && ` - ${connectivityProgress.currentCity}`}
+                </small>
+                {connectivityProgress.currentProgress && (
+                  <small className="sub-progress">{connectivityProgress.currentProgress.message}</small>
+                )}
               </div>
             )}
             <div className="date-range-selector">

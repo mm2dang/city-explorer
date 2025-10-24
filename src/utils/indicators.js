@@ -23,49 +23,16 @@ const glueClient = new GlueClient({
 });
 
 const RESULT_BUCKET = process.env.REACT_APP_S3_RESULT_BUCKET_NAME;
+const CONNECTIVITY_RESULT_BUCKET = process.env.REACT_APP_S3_CONNECTIVITY_BUCKET_NAME || 'qoli-mobile-ping-connectivity-dev';
 const GLUE_JOB_NAME = 'calculate_indicators';
 
-/**
- * Get available date ranges from S3 summary folder
- */
-export async function getAvailableDateRanges(dataSource) {
-  try {
-    const prefix = `${dataSource}/summary/`;
-    
-    const command = new ListObjectsV2Command({
-      Bucket: RESULT_BUCKET,
-      Prefix: prefix,
-      Delimiter: '/'
-    });
-
-    const result = await s3Client.send(command);
-    
-    // Extract date ranges from folder names
-    const dateRanges = (result.CommonPrefixes || [])
-      .map(prefix => {
-        const parts = prefix.Prefix.split('/');
-        return parts[parts.length - 2]; // Get the date range folder name
-      })
-      .filter(range => range.match(/^\d{4}-\d{2}_to_\d{4}-\d{2}$/))
-      .sort()
-      .reverse(); // Most recent first
-
-    console.log(`Found ${dateRanges.length} date ranges for ${dataSource}:`, dateRanges);
-    return dateRanges;
-  } catch (error) {
-    console.error('Error getting available date ranges:', error);
-    throw error;
-  }
-}
-
-/**
- * Read and decompress a gzipped CSV file from S3
- */
 /**
  * Read and decompress a gzipped CSV file from S3
  */
 async function readGzippedCsv(bucket, key) {
   try {
+    console.log(`[CSV] Reading: s3://${bucket}/${key}`);
+    
     const command = new GetObjectCommand({
       Bucket: bucket,
       Key: key
@@ -104,8 +71,12 @@ async function readGzippedCsv(bucket, key) {
       }
     }
     
+    console.log(`[CSV] Downloaded ${buffer.length} bytes`);
+    
     // Decompress the gzipped content
     const decompressed = pako.ungzip(buffer, { to: 'string' });
+    console.log(`[CSV] Decompressed to ${decompressed.length} characters`);
+    console.log(`[CSV] First 200 chars:`, decompressed.substring(0, 200));
     
     // Parse CSV
     return new Promise((resolve, reject) => {
@@ -113,17 +84,96 @@ async function readGzippedCsv(bucket, key) {
         header: true,
         dynamicTyping: true,
         skipEmptyLines: true,
+        transformHeader: (header) => {
+          // Trim whitespace from headers
+          return header.trim();
+        },
         complete: (results) => {
+          console.log(`[CSV] Parsed ${results.data.length} rows`);
+          if (results.data.length > 0) {
+            console.log(`[CSV] First row:`, results.data[0]);
+            console.log(`[CSV] Headers:`, Object.keys(results.data[0]));
+          }
+          if (results.errors.length > 0) {
+            console.warn(`[CSV] Parse errors:`, results.errors);
+          }
           resolve(results.data);
         },
         error: (error) => {
+          console.error(`[CSV] Parse error:`, error);
           reject(error);
         }
       });
     });
   } catch (error) {
-    console.error(`Error reading gzipped CSV ${key}:`, error);
+    console.error(`[CSV] Error reading gzipped CSV ${key}:`, error);
     throw error;
+  }
+}
+
+/**
+ * Get available date ranges from S3 summary folder
+ */
+export async function getAvailableDateRanges(dataSource) {
+  try {
+    const prefix = `${dataSource}/summary/`;
+    
+    const command = new ListObjectsV2Command({
+      Bucket: RESULT_BUCKET,
+      Prefix: prefix,
+      Delimiter: '/'
+    });
+
+    const result = await s3Client.send(command);
+    
+    // Extract date ranges from folder names
+    const dateRanges = (result.CommonPrefixes || [])
+      .map(prefix => {
+        const parts = prefix.Prefix.split('/');
+        return parts[parts.length - 2]; // Get the date range folder name
+      })
+      .filter(range => range.match(/^\d{4}-\d{2}_to_\d{4}-\d{2}$/))
+      .sort()
+      .reverse(); // Most recent first
+
+    console.log(`Found ${dateRanges.length} date ranges for ${dataSource}:`, dateRanges);
+    return dateRanges;
+  } catch (error) {
+    console.error('Error getting available date ranges:', error);
+    throw error;
+  }
+}
+
+/**
+ * Get available date ranges from S3 connectivity folder
+ */
+export async function getAvailableConnectivityDateRanges(dataSource) {
+  try {
+    const prefix = `summary/`;
+    
+    const command = new ListObjectsV2Command({
+      Bucket: CONNECTIVITY_RESULT_BUCKET,
+      Prefix: prefix,
+      Delimiter: '/'
+    });
+
+    const result = await s3Client.send(command);
+    
+    // Extract date ranges from folder names
+    const dateRanges = (result.CommonPrefixes || [])
+      .map(prefix => {
+        const parts = prefix.Prefix.split('/');
+        return parts[parts.length - 2]; // Get the date range folder name
+      })
+      .filter(range => range.match(/^\d{4}-\d{2}_to_\d{4}-\d{2}$/))
+      .sort()
+      .reverse(); // Most recent first
+
+    console.log(`Found ${dateRanges.length} connectivity date ranges:`, dateRanges);
+    return dateRanges;
+  } catch (error) {
+    console.error('Error getting connectivity date ranges:', error);
+    return [];
   }
 }
 
@@ -168,6 +218,55 @@ export async function getSummaryData(dataSource, dateRange) {
   }
 }
 
+export async function getSummaryDataWithConnectivity(dataSource, dateRange, cities) {
+  try {
+    console.log(`[Summary] Loading data for ${dataSource}, ${dateRange}`);
+    
+    // Try to load Glue summary data, but don't fail if it doesn't exist
+    let summaryData = [];
+    try {
+      summaryData = await getSummaryData(dataSource, dateRange);
+      console.log(`[Summary] Loaded ${summaryData.length} rows from Glue results`);
+    } catch (error) {
+      console.log('[Summary] No Glue summary data found, will use connectivity-only data');
+    }
+    
+    // Try to merge with connectivity results
+    summaryData = await mergeSummaryWithConnectivity(summaryData, dataSource, dateRange);
+    
+    // If still no data, create skeleton data from connectivity results only
+    if (summaryData.length === 0) {
+      console.log('[Summary] Creating skeleton data from connectivity results');
+      const connectivityResults = await loadConnectivityResults(dataSource, dateRange);
+      
+      if (connectivityResults.length === 0) {
+        console.warn('[Summary] No data available from either source');
+        return [];
+      }
+      
+      summaryData = connectivityResults.map(r => ({
+        city: r.city,
+        province: r.province || '',
+        country: r.country,
+        out_at_night: null,
+        leisure_dwell_time: null,
+        cultural_visits: null,
+        coverage: null,
+        speed: r.speed,
+        latency: r.latency
+      }));
+      
+      console.log(`[Summary] Created ${summaryData.length} skeleton rows from connectivity data`);
+    }
+
+    console.log(`[Summary] Final data count: ${summaryData.length} rows`);
+    return summaryData;
+  } catch (error) {
+    console.error('[Summary] Error getting summary data with connectivity:', error);
+    throw error;
+  }
+}
+
 /**
  * Get monthly indicator data for a specific city
  */
@@ -175,8 +274,8 @@ export async function getMonthlyIndicators(dataSource, country, province, city, 
   try {
     // Parse date range to get start and end months
     const [startDate, endDate] = dateRange.split('_to_');
-    const startMonth = startDate; // e.g., "2024-06"
-    const endMonth = endDate; // e.g., "2025-06"
+    const startMonth = startDate;
+    const endMonth = endDate;
 
     // Generate list of months in range
     const months = generateMonthRange(startMonth, endMonth);
@@ -211,24 +310,90 @@ export async function getMonthlyIndicators(dataSource, country, province, city, 
         if (parquetFiles.length > 0) {
           console.log(`Found ${parquetFiles.length} parquet files for ${month}`);
           
-          // Fallback: use summary data
-          const summaryData = await getSummaryData(dataSource, dateRange);
-          const cityData = summaryData.find(row => 
-            row.city.toLowerCase() === city.toLowerCase() &&
-            row.country.toLowerCase() === country.toLowerCase() &&
-            (!province || row.province.toLowerCase() === province.toLowerCase())
-          );
-
-          if (cityData) {
-            monthlyData.push({
-              month,
-              out_at_night: cityData.out_at_night,
-              leisure_dwell_time: cityData.leisure_dwell_time,
-              cultural_visits: cityData.cultural_visits,
-              coverage: cityData.coverage,
-              speed: cityData.speed,
-              latency: cityData.latency
+          // Read the first parquet file
+          try {
+            const getCommand = new GetObjectCommand({
+              Bucket: RESULT_BUCKET,
+              Key: parquetFiles[0].Key
             });
+
+            const response = await s3Client.send(getCommand);
+            
+            // Convert stream to buffer
+            let buffer;
+            if (response.Body instanceof Blob) {
+              const arrayBuffer = await response.Body.arrayBuffer();
+              buffer = new Uint8Array(arrayBuffer);
+            } else if (response.Body.transformToByteArray) {
+              buffer = await response.Body.transformToByteArray();
+            } else {
+              const reader = response.Body.getReader();
+              const chunks = [];
+              while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                chunks.push(value);
+              }
+              const totalLength = chunks.reduce((acc, chunk) => acc + chunk.length, 0);
+              buffer = new Uint8Array(totalLength);
+              let offset = 0;
+              for (const chunk of chunks) {
+                buffer.set(chunk, offset);
+                offset += chunk.length;
+              }
+            }
+
+            // Use parquet-wasm to read the file
+            const parquetWasm = await import('parquet-wasm');
+            await parquetWasm.default(); // Initialize WASM
+            
+            const arrowTable = parquetWasm.readParquet(buffer);
+            
+            // Extract data from Arrow table
+            const numRows = arrowTable.numRows;
+            const numCols = arrowTable.numCols;
+            
+            if (numRows > 0) {
+              const schema = arrowTable.schema;
+              const row = {};
+              
+              for (let colIdx = 0; colIdx < numCols; colIdx++) {
+                const column = arrowTable.getChildAt(colIdx);
+                const fieldName = schema.fields[colIdx].name;
+                row[fieldName] = column.get(0);
+              }
+              
+              monthlyData.push({
+                month,
+                out_at_night: row.out_at_night || 0,
+                leisure_dwell_time: row.leisure_dwell_time || 0,
+                cultural_visits: row.cultural_visits || 0,
+                coverage: row.coverage || 0,
+                speed: row.speed || 0,
+                latency: row.latency || 0
+              });
+            }
+          } catch (parquetError) {
+            console.error(`Error reading parquet file for ${month}:`, parquetError);
+            // Fallback to summary data
+            const summaryData = await getSummaryData(dataSource, dateRange);
+            const cityData = summaryData.find(row => 
+              row.city.toLowerCase() === city.toLowerCase() &&
+              row.country.toLowerCase() === country.toLowerCase() &&
+              (!province || row.province.toLowerCase() === province.toLowerCase())
+            );
+
+            if (cityData) {
+              monthlyData.push({
+                month,
+                out_at_night: cityData.out_at_night,
+                leisure_dwell_time: cityData.leisure_dwell_time,
+                cultural_visits: cityData.cultural_visits,
+                coverage: cityData.coverage,
+                speed: cityData.speed,
+                latency: cityData.latency
+              });
+            }
           }
         }
       } catch (error) {
@@ -371,5 +536,221 @@ function getStatusMessage(jobRun) {
       return 'Calculation was stopped';
     default:
       return state;
+  }
+}
+
+/**
+ * Load connectivity results from S3
+ */
+export async function loadConnectivityResults(dataSource, dateRange) {
+  try {
+    const prefix = `summary/${dateRange}/`;
+    
+    console.log(`[Connectivity] Loading from: s3://${CONNECTIVITY_RESULT_BUCKET}/${prefix}`);
+    
+    // List all CSV files in the date range folder
+    const listCommand = new ListObjectsV2Command({
+      Bucket: CONNECTIVITY_RESULT_BUCKET,
+      Prefix: prefix
+    });
+
+    const result = await s3Client.send(listCommand);
+    
+    console.log(`[Connectivity] S3 list returned ${(result.Contents || []).length} objects`);
+    
+    // Filter for CSV.gz files
+    const csvFiles = (result.Contents || []).filter(obj => 
+      obj.Key.endsWith('.csv.gz') || obj.Key.endsWith('-connectivity.csv.gz')
+    );
+
+    console.log(`[Connectivity] Found ${csvFiles.length} connectivity CSV files:`);
+    csvFiles.forEach(file => console.log(`  - ${file.Key} (${file.Size} bytes)`));
+
+    if (csvFiles.length === 0) {
+      console.warn(`[Connectivity] No CSV files found in ${prefix}`);
+      return [];
+    }
+
+    // Read and combine all CSV files
+    let allData = [];
+    for (const file of csvFiles) {
+      try {
+        console.log(`[Connectivity] Reading file: ${file.Key}`);
+        const data = await readGzippedCsv(CONNECTIVITY_RESULT_BUCKET, file.Key);
+        console.log(`[Connectivity] File contained ${data.length} rows`);
+        
+        // Validate and normalize the data
+        const validData = data
+          .filter(row => {
+            // Check if row has required fields
+            const hasRequiredFields = row.city && row.country;
+            if (!hasRequiredFields) {
+              console.warn(`[Connectivity] Skipping row with missing fields:`, row);
+            }
+            return hasRequiredFields;
+          })
+          .map(row => ({
+            city: String(row.city || '').trim(),
+            province: String(row.province || '').trim(),
+            country: String(row.country || '').trim(),
+            speed: parseFloat(row.speed) || 0,
+            latency: parseFloat(row.latency) || 0,
+            coverage: parseFloat(row.coverage) || 0 // Include coverage field
+          }));
+        
+        console.log(`[Connectivity] After validation: ${validData.length} valid rows`);
+        allData = allData.concat(validData);
+      } catch (error) {
+        console.error(`[Connectivity] Error reading file ${file.Key}:`, error);
+      }
+    }
+
+    console.log(`[Connectivity] Total loaded: ${allData.length} connectivity results`);
+    if (allData.length > 0) {
+      console.log(`[Connectivity] Sample data:`, allData.slice(0, 3));
+    }
+    return allData;
+    
+  } catch (error) {
+    if (error.name === 'NoSuchKey' || error.Code === 'NoSuchKey') {
+      console.log(`[Connectivity] No connectivity results found for ${dateRange}`);
+      return [];
+    }
+    console.error('[Connectivity] Error loading connectivity results:', error);
+    return [];
+  }
+}
+
+/**
+ * Merge connectivity results with summary data (FULL JOIN)
+ */
+export async function mergeSummaryWithConnectivity(summaryData, dataSource, dateRange) {
+  try {
+    const connectivityResults = await loadConnectivityResults(dataSource, dateRange);
+    
+    console.log(`[Connectivity] Performing full join: ${summaryData.length} summary rows + ${connectivityResults.length} connectivity rows`);
+    
+    // Create lookup map for connectivity data
+    const connectivityMap = new Map();
+    for (const result of connectivityResults) {
+      const city = String(result.city || '').toLowerCase().trim();
+      const province = String(result.province || '').toLowerCase().trim();
+      const country = String(result.country || '').toLowerCase().trim();
+
+      if (!city || !country) {
+        console.warn('[Connectivity] Skipping result with missing city/country:', result);
+        continue;
+      }
+
+      // Create multiple lookup keys for flexibility
+      const keys = [
+        `${city}|${province}|${country}`,
+        `${city}||${country}`, // Without province
+        `${city}|${country}` // Alternative format
+      ];
+      
+      const connectivityValue = {
+        speed: parseFloat(result.speed) || 0,
+        latency: parseFloat(result.latency) || 0,
+        coverage: parseFloat(result.coverage) || 0, // Include coverage
+        city: result.city,
+        province: result.province,
+        country: result.country
+      };
+      
+      keys.forEach(key => connectivityMap.set(key, connectivityValue));
+    }
+
+    console.log(`[Connectivity] Created ${connectivityMap.size} lookup entries`);
+
+    // Track which connectivity entries were merged
+    const mergedConnectivityKeys = new Set();
+
+    // Merge connectivity data into summary data
+    let mergedCount = 0;
+    const mergedData = summaryData.map(row => {
+      const city = String(row.city || '').toLowerCase().trim();
+      const province = String(row.province || '').toLowerCase().trim();
+      const country = String(row.country || '').toLowerCase().trim();
+
+      if (!city || !country) {
+        console.warn('[Connectivity] Skipping summary row with missing city/country:', row);
+        return row;
+      }
+
+      // Try multiple lookup keys
+      const lookupKeys = [
+        `${city}|${province}|${country}`,
+        `${city}||${country}`,
+        `${city}|${country}`
+      ];
+      
+      let connectivity = null;
+      let matchedKey = null;
+      for (const key of lookupKeys) {
+        connectivity = connectivityMap.get(key);
+        if (connectivity) {
+          matchedKey = key;
+          break;
+        }
+      }
+
+      if (connectivity) {
+        mergedCount++;
+        mergedConnectivityKeys.add(matchedKey);
+        console.log(`[Connectivity] ✓ Merged data for ${row.city}: speed=${connectivity.speed.toFixed(2)}, latency=${connectivity.latency.toFixed(2)}, coverage=${connectivity.coverage.toFixed(2)}`);
+        return { 
+          ...row, 
+          speed: connectivity.speed, 
+          latency: connectivity.latency,
+          coverage: connectivity.coverage // Override with connectivity coverage
+        };
+      } else {
+        console.log(`[Connectivity] ✗ No connectivity match for ${row.city}, keeping row with existing coverage`);
+        return {
+          ...row,
+          speed: null,
+          latency: null,
+          coverage: row.coverage || null // Keep existing coverage if available
+        };
+      }
+    });
+    
+    // Add connectivity-only rows (those not in summary data)
+    const connectivityOnlyRows = [];
+    for (const [key, connectivity] of connectivityMap.entries()) {
+      if (!mergedConnectivityKeys.has(key)) {
+        // This connectivity result wasn't matched with any summary row
+        // Only add it once per unique city (skip alternative key formats)
+        const primaryKey = `${connectivity.city.toLowerCase().trim()}|${String(connectivity.province || '').toLowerCase().trim()}|${connectivity.country.toLowerCase().trim()}`;
+        if (key === primaryKey) {
+          console.log(`[Connectivity] Adding connectivity-only row for ${connectivity.city}`);
+          connectivityOnlyRows.push({
+            city: connectivity.city,
+            province: connectivity.province || '',
+            country: connectivity.country,
+            out_at_night: null,
+            leisure_dwell_time: null,
+            cultural_visits: null,
+            coverage: connectivity.coverage, // Use coverage from connectivity
+            speed: connectivity.speed,
+            latency: connectivity.latency
+          });
+        }
+      }
+    }
+    
+    const finalData = [...mergedData, ...connectivityOnlyRows];
+    
+    console.log(`[Connectivity] Full join complete:`);
+    console.log(`  - Summary rows with connectivity: ${mergedCount}`);
+    console.log(`  - Summary rows without connectivity: ${summaryData.length - mergedCount}`);
+    console.log(`  - Connectivity-only rows: ${connectivityOnlyRows.length}`);
+    console.log(`  - Total rows: ${finalData.length}`);
+    
+    return finalData;
+  } catch (error) {
+    console.error('[Connectivity] Error merging connectivity data:', error);
+    return summaryData;
   }
 }

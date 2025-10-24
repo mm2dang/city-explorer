@@ -94,6 +94,11 @@ function App() {
     return () => clearTimeout(timeoutId);
   }, [activeLayers, selectedCity]);
 
+  useEffect(() => {
+    // Make cities available globally
+    window.citiesData = cities;
+  }, [cities]);
+
   const loadCities = async () => {
     setIsLoading(true);
     try {
@@ -506,23 +511,246 @@ function App() {
       setIsCalculatingIndicators(true);
       console.log('Starting indicator calculation with parameters:', parameters);
       
-      // Call your Glue job trigger function
-      const result = await triggerGlueJobWithParams(parameters);
+      const shouldCalculateConnectivity = parameters.CALCULATE_CONNECTIVITY === 'true';
       
+      let connectivityPromise = null;
+      if (shouldCalculateConnectivity) {
+        connectivityPromise = calculateConnectivityForCities(parameters, (progress) => {
+          window.dispatchEvent(new CustomEvent('connectivity-progress', { detail: progress }));
+        }).catch(error => {
+          console.error('Connectivity calculation failed:', error);
+        });
+      }
+      
+      const result = await triggerGlueJobWithParams(parameters);
       console.log('Glue job started:', result.JobRunId);
       
-      // Close modal on success
       setShowCalculateIndicatorsModal(false);
-      
-      // Show success message
       alert('Indicator calculation started. This may take several minutes.');
-      
+
+      if (connectivityPromise) {
+        await connectivityPromise;
+      }
+
     } catch (error) {
       console.error('Error starting calculation:', error);
       alert(`Error starting calculation: ${error.message}`);
     } finally {
       setIsCalculatingIndicators(false);
     }
+  };
+  
+  const calculateConnectivityForCities = async (glueParameters, onConnectivityProgress) => {
+    console.log('=== CONNECTIVITY CALCULATION STARTED ===');
+    console.log('Parameters:', glueParameters);
+    
+    // Import connectivity function and save function
+    const { calculateConnectivityMetrics, saveConnectivityResults } = await import('./utils/connectivity');
+    
+    const cityNames = glueParameters.CITY.split(',').map(c => c.trim());
+    const provinces = glueParameters.PROVINCE.split(',').map(p => p.trim());
+    const countries = glueParameters.COUNTRY.split(',').map(c => c.trim());
+    const startMonth = glueParameters.START_MONTH;
+    const endMonth = glueParameters.END_MONTH;
+    
+    console.log(`Cities to process: ${cityNames.length}`);
+    console.log('City list:', cityNames);
+    console.log('Date range:', startMonth, 'to', endMonth);
+    
+    const generateMonthRange = (startMonth, endMonth) => {
+      const months = [];
+      const [startYear, startMon] = startMonth.split('-').map(Number);
+      const [endYear, endMon] = endMonth.split('-').map(Number);
+  
+      let currentYear = startYear;
+      let currentMonth = startMon;
+  
+      while (currentYear < endYear || (currentYear === endYear && currentMonth <= endMon)) {
+        const monthStr = `${currentYear}-${String(currentMonth).padStart(2, '0')}`;
+        months.push(monthStr);
+  
+        currentMonth++;
+        if (currentMonth > 12) {
+          currentMonth = 1;
+          currentYear++;
+        }
+      }
+      return months;
+    };
+    
+    const months = generateMonthRange(startMonth, endMonth);
+    console.log(`Generated ${months.length} months:`, months);
+    
+    // Fetch coverage data by country (cache to avoid duplicate API calls)
+    const coverageByCountry = new Map();
+    const uniqueCountries = [...new Set(countries)];
+    
+    console.log(`\n--- Fetching World Bank coverage data for ${uniqueCountries.length} countries ---`);
+    
+    for (const country of uniqueCountries) {
+      try {
+        // Dynamically import the coverage function
+        const connectivityModule = await import('./utils/connectivity');
+        const getCountryCode = connectivityModule.getCountryCode || ((name) => {
+          // Inline fallback if not exported
+          const map = {
+            'canada': 'CAN',
+            'united states': 'USA',
+            'mexico': 'MEX',
+            'brazil': 'BRA',
+            'united kingdom': 'GBR',
+            'france': 'FRA',
+            'germany': 'DEU',
+            'spain': 'ESP',
+            'italy': 'ITA',
+            'china': 'CHN',
+            'india': 'IND',
+            'japan': 'JPN',
+            'australia': 'AUS'
+          };
+          return map[name.toLowerCase().trim()] || null;
+        });
+        
+        const fetchWorldBankCoverage = connectivityModule.fetchWorldBankCoverage || (async (code) => {
+          const url = `https://api.worldbank.org/v2/country/${code}/indicator/IT.CEL.SETS.P2?format=json&per_page=10&mrnev=1`;
+          const response = await fetch(url);
+          if (!response.ok) return 0;
+          const data = await response.json();
+          if (!data || !Array.isArray(data) || data.length < 2 || !Array.isArray(data[1]) || data[1].length === 0) return 0;
+          const records = data[1];
+          for (const record of records) {
+            if (record.value !== null && !isNaN(record.value)) {
+              return parseFloat(record.value);
+            }
+          }
+          return 0;
+        });
+        
+        const countryCode = getCountryCode(country);
+        if (countryCode) {
+          const coverage = await fetchWorldBankCoverage(countryCode);
+          coverageByCountry.set(country.toLowerCase().trim(), coverage);
+          console.log(`[Coverage] ${country}: ${coverage}%`);
+        } else {
+          console.warn(`[Coverage] No country code mapping for: ${country}`);
+          coverageByCountry.set(country.toLowerCase().trim(), 0);
+        }
+      } catch (error) {
+        console.error(`[Coverage] Error fetching coverage for ${country}:`, error);
+        coverageByCountry.set(country.toLowerCase().trim(), 0);
+      }
+    }
+    
+    const connectivityResults = [];
+    const startTime = Date.now();
+    
+    for (let i = 0; i < cityNames.length; i++) {
+      const cityStartTime = Date.now();
+      const cityName = cityNames[i];
+      const province = provinces[i] || '';
+      const country = countries[i];
+      
+      const fullCityName = province 
+        ? `${cityName}, ${province}, ${country}`
+        : `${cityName}, ${country}`;
+      
+      console.log(`\n--- Processing City ${i + 1}/${cityNames.length}: ${fullCityName} ---`);
+      console.log('Looking up city in cities array...');
+      console.log('Total cities available:', cities.length);
+        
+      const cityObj = cities.find(c => 
+        c.name.toLowerCase() === fullCityName.toLowerCase()
+      );
+      
+      if (!cityObj) {
+        console.error(`City not found: ${fullCityName}`);
+        console.log('Available cities:', cities.map(c => c.name).join(', '));
+        continue;
+      }
+      
+      console.log(`City found:`, cityObj.name);
+      
+      if (!cityObj.boundary) {
+        console.error(`No boundary available for ${fullCityName}`);
+        console.log('City object:', cityObj);
+        continue;
+      }
+      
+      console.log(`Boundary available (${typeof cityObj.boundary === 'string' ? 'WKT' : 'GeoJSON'})`);
+      
+      try {
+        console.log(`Starting connectivity metrics calculation...`);
+        
+        const connectivity = await calculateConnectivityMetrics(
+          cityObj.boundary,
+          months,
+          (progress) => {
+            if (onConnectivityProgress) {
+              onConnectivityProgress({
+                current: i + 1,
+                total: cityNames.length,
+                currentCity: fullCityName,
+                currentProgress: progress
+              });
+            }
+          }
+        );
+        
+        // Get coverage from the country-level cache
+        const coverage = coverageByCountry.get(country.toLowerCase().trim()) || 0;
+        
+        const cityElapsed = ((Date.now() - cityStartTime) / 1000).toFixed(2);
+        
+        console.log(`Connectivity calculation completed in ${cityElapsed}s`);
+        console.log(`  Speed: ${connectivity.speed.toFixed(2)} kbps`);
+        console.log(`  Latency: ${connectivity.latency.toFixed(2)} ms`);
+        console.log(`  Coverage: ${coverage.toFixed(2)}%`);
+        
+        connectivityResults.push({
+          city: cityName,
+          province: province,
+          country: country,
+          speed: connectivity.speed,
+          latency: connectivity.latency,
+          coverage: coverage,
+          dateRange: `${startMonth}_to_${endMonth}`
+        });
+        
+      } catch (error) {
+        const cityElapsed = ((Date.now() - cityStartTime) / 1000).toFixed(2);
+        console.error(`Error calculating connectivity for ${fullCityName} (after ${cityElapsed}s):`, error);
+        console.error('Error stack:', error.stack);
+      }
+    }
+    
+    const totalElapsed = ((Date.now() - startTime) / 1000).toFixed(2);
+    
+    console.log(`\n=== CONNECTIVITY CALCULATION SUMMARY ===`);
+    console.log(`Total time: ${totalElapsed}s`);
+    console.log(`Successful: ${connectivityResults.length}/${cityNames.length} cities`);
+    
+    if (connectivityResults.length > 0) {
+      try {
+        console.log(`\nSaving ${connectivityResults.length} connectivity results to S3...`);
+        console.log('Data source:', dataSource);
+        console.log('Results:', connectivityResults);
+        
+        await saveConnectivityResults(dataSource, connectivityResults);
+        
+        console.log(`Successfully saved connectivity results to S3`);
+      } catch (saveError) {
+        console.error('Failed to save connectivity results to S3:', saveError);
+        console.error('Save error stack:', saveError.stack);
+        throw saveError;
+      }
+    } else {
+      console.warn('No connectivity results to save');
+    }
+    
+    console.log(`=== CONNECTIVITY CALCULATION COMPLETE ===\n`);
+    window.dispatchEvent(new CustomEvent('connectivity-complete'));
+    
+    return connectivityResults;
   };
 
   return (
@@ -572,6 +800,7 @@ function App() {
           selectedCity={selectedCity}
           dataSource={dataSource}
           onCalculateIndicators={() => setShowCalculateIndicatorsModal(true)}
+          cities={cities}
         />
       </div>
 

@@ -9,27 +9,29 @@ cityexplorer/
 ├── public/
 │   ├── index.html
 │   ├── manifest.json
-│   └── worker.js                     # Web Worker for OSM data processing
+│   └── worker.js                            # Web Worker for OSM data processing
 ├── src/
 │   ├── components/
-│   │   ├── Header.js                 # City selector and status display
-│   │   ├── Sidebar.js                # Domain and layer controls
-│   │   ├── IndicatorsSidebar.js      # Mobile ping indicator controls
-│   │   ├── MapViewer.js              # Leaflet map with clustering
-│   │   ├── AddCityWizard.js          # Multi-step city creation wizard
-│   │   ├── LayerToggle.js            # Individual layer toggle component
-│   │   └── LayerModal.js             # Add / edit layer wizard
+│   │   ├── Header.js                        # City selector and status display
+│   │   ├── Sidebar.js                       # Domain and layer controls
+│   │   ├── IndicatorsSidebar.js             # Mobile ping indicator controls
+│   │   ├── CalculateIndicatorsModal.js      # Indicator parameter controls
+│   │   ├── MapViewer.js                     # Leaflet map with clustering
+│   │   ├── AddCityWizard.js                 # Multi-step city creation wizard
+│   │   ├── LayerToggle.js                   # Individual layer toggle component
+│   │   └── LayerModal.js                    # Add / edit layer wizard
 │   ├── utils/
-│   │   ├── s3.js                     # AWS S3 operations and data processing
-│   │   ├── indicators.js             # AWS mobile ping data operations
-│   │   ├── osm.js                    # OpenStreetMap and Wikipedia API calls
-│   │   ├── regions.js                # UN SDG region mapping
-│   │   └── exportUtils.js            # Export layers to local computer
+│   │   ├── s3.js                            # AWS S3 operations and data processing
+│   │   ├── indicators.js                    # AWS mobile ping data operations
+│   │   ├── osm.js                           # OpenStreetMap and Wikipedia API calls
+│   │   ├── regions.js                       # UN SDG region mapping
+│   │   └── exportUtils.js                   # Export layers to local computer
 │   ├── styles/
 │   │   ├── AddCityWizard.css
 │   │   ├── App.css
 │   │   ├── Header.css
 │   │   ├── IndicatorsSidebar.css
+│   │   ├── CalculateIndicatorsModal.css
 │   │   ├── leaflet.css
 │   │   ├── LayerModal.css
 │   │   ├── MapViewer.css
@@ -86,11 +88,7 @@ REACT_APP_AWS_SESSION_TOKEN=your_session_token
 # S3 Bucket Configuration
 REACT_APP_S3_BUCKET_NAME=qoli-mobile-ping-geometries-dev
 REACT_APP_S3_RESULT_BUCKET_NAME=qoli-mobile-ping-indicators-dev
-
-# API Configuration (optional, defaults provided)
-REACT_APP_OVERPASS_API_URL=https://overpass-api.de/api/interpreter
-REACT_APP_NOMINATIM_API_URL=https://nominatim.openstreetmap.org
-REACT_APP_WIKIPEDIA_API_URL=https://en.wikipedia.org/w/api.php
+REACT_APP_S3_CONNECTIVITY_BUCKET_NAME=qoli-mobile-ping-connectivity-dev
 ```
 4. Run the development server
 ```bash
