@@ -21,6 +21,7 @@ const CalculateIndicatorsModal = ({ cities, selectedCity, dataSource, onCancel, 
   const [sortOrder, setSortOrder] = useState('asc');
 
   const [calculateConnectivity, setCalculateConnectivity] = useState(true);
+  const [calculateMobilePing, setCalculateMobilePing] = useState(true);
 
   // Filter and sort cities
   const filteredAndSortedCities = useMemo(() => {
@@ -110,6 +111,11 @@ const CalculateIndicatorsModal = ({ cities, selectedCity, dataSource, onCancel, 
       return;
     }
   
+    if (!calculateMobilePing && !calculateConnectivity) {
+      alert('Please select at least one calculation type');
+      return;
+    }
+  
     const cityList = [];
     const provinceList = [];
     const countryList = [];
@@ -133,20 +139,24 @@ const CalculateIndicatorsModal = ({ cities, selectedCity, dataSource, onCancel, 
       countryList.push(country);
     }
   
-    const glueParameters = {
-      CITY: cityList.join(','),
-      PROVINCE: provinceList.join(','),
-      COUNTRY: countryList.join(','),
-      START_MONTH: startMonth,
-      END_MONTH: endMonth,
-      USE_OSM: dataSource === 'osm' ? 'true' : 'false',
-      JOB_NAME: 'calculate_indicators',
-      CALCULATE_CONNECTIVITY: calculateConnectivity ? 'true' : 'false'
+    const calculationParams = {
+      cities: {
+        CITY: cityList.join(','),
+        PROVINCE: provinceList.join(','),
+        COUNTRY: countryList.join(',')
+      },
+      dateRange: {
+        START_MONTH: startMonth,
+        END_MONTH: endMonth
+      },
+      dataSource: dataSource,
+      calculateConnectivity: calculateConnectivity,
+      calculateMobilePing: calculateMobilePing
     };
   
-    console.log('Starting calculation with parameters:', glueParameters);
+    console.log('Starting calculation with parameters:', calculationParams);
     
-    onCalculate(glueParameters);
+    onCalculate(calculationParams);
   };
 
   const allSelected = selectedCities.size === filteredAndSortedCities.length && filteredAndSortedCities.length > 0;
@@ -215,16 +225,25 @@ const CalculateIndicatorsModal = ({ cities, selectedCity, dataSource, onCancel, 
                 <label className="checkbox-option">
                   <input
                     type="checkbox"
+                    checked={calculateMobilePing}
+                    onChange={(e) => setCalculateMobilePing(e.target.checked)}
+                  />
+                  <span className="checkbox-label">
+                    Calculate mobile ping metrics (out at night, leisure dwell time, cultural visits)
+                  </span>
+                </label>
+              </div>
+              <div className="form-group">
+                <label className="checkbox-option">
+                  <input
+                    type="checkbox"
                     checked={calculateConnectivity}
                     onChange={(e) => setCalculateConnectivity(e.target.checked)}
                   />
                   <span className="checkbox-label">
-                    Calculate connectivity metrics (speed, latency)
+                    Calculate connectivity metrics (speed, latency, coverage)
                   </span>
                 </label>
-                <small className="form-hint">
-                  Connectivity calculation may take additional time
-                </small>
               </div>
             </motion.div>
           )}

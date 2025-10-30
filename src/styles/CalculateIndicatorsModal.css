@@ -299,14 +299,15 @@
   /* Checkbox options */
   .checkbox-option {
     display: flex;
-    align-items: flex-start;
+    flex-direction: row;
+    align-items: center;
     gap: 12px;
     cursor: pointer;
-    user-select: none;
   }
   
   .checkbox-option input[type="checkbox"] {
     margin-top: 2px;
+    margin-right: 12px;
     cursor: pointer;
     width: 18px;
     height: 18px;
@@ -315,13 +316,12 @@
   }
   
   .checkbox-label {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
     flex: 1;
+    cursor: pointer;
     font-size: 14px;
     font-weight: 500;
     color: #374151;
+    line-height: 1.4;
   }
   
   /* Cities list */

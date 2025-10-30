@@ -89,7 +89,9 @@ const LayerModal = ({
   cityName,
   domainColors,
   availableLayersByDomain,
-  mapView = 'street'
+  mapView = 'street',
+  getAllFeatures, 
+  selectedCity
 }) => {
   const [step, setStep] = useState(1);
   const [layerName, setLayerName] = useState('');
@@ -118,10 +120,30 @@ const LayerModal = ({
   const reviewCentroidGroupRef = useRef(null);
   const [osmTags, setOsmTags] = useState([{ key: '', value: '' }]);
   const [isFetchingOSM, setIsFetchingOSM] = useState(false);
+  const [allCityFeatures, setAllCityFeatures] = useState([]);
 
   useEffect(() => {
     console.log('LayerModal received mapView prop:', mapView);
   }, [mapView]);
+
+  useEffect(() => {
+    const loadAllFeatures = async () => {
+      if (getAllFeatures && selectedCity) {
+        try {
+          const features = await getAllFeatures();
+          setAllCityFeatures(features);
+          console.log(`Loaded ${features.length} total features across ALL domains for duplicate checking`);
+        } catch (error) {
+          console.error('Error loading all features:', error);
+          setAllCityFeatures([]);
+        }
+      } else {
+        setAllCityFeatures([]);
+      }
+    };
+    
+    loadAllFeatures();
+  }, [getAllFeatures, selectedCity]);
 
   const predefinedLayers = useMemo(() => {
     const allLayers = layerDefs[selectedDomain] || [];
@@ -240,19 +262,97 @@ const LayerModal = ({
     }
   }, []);
 
-  const removeDuplicateFeatures = (features) => {
+  const removeDuplicateFeatures = useCallback((newFeatures) => {
     const uniqueFeatures = [];
     const seenCoordinates = new Set();
-    features.forEach(feature => {
-      const coordString = JSON.stringify(feature.geometry.coordinates);
-      if (!seenCoordinates.has(coordString)) {
-        seenCoordinates.add(coordString);
-        uniqueFeatures.push(feature);
+    
+    console.log(`Checking ${newFeatures.length} new features against ${allCityFeatures.length} existing features in domain`);
+    
+    // Helper function to get coordinate key from a feature
+    const getCoordinateKey = (feature) => {
+      if (!feature.geometry || !feature.geometry.coordinates) {
+        return null;
+      }
+      
+      let lat, lon;
+      
+      if (feature.geometry.type === 'Point') {
+        [lon, lat] = feature.geometry.coordinates;
+      } else if (feature.geometry.type === 'LineString' && feature.geometry.coordinates.length > 0) {
+        [lon, lat] = feature.geometry.coordinates[0];
+      } else if (feature.geometry.type === 'Polygon' && feature.geometry.coordinates.length > 0 && feature.geometry.coordinates[0].length > 0) {
+        [lon, lat] = feature.geometry.coordinates[0][0];
+      } else if (feature.geometry.type === 'MultiLineString' && feature.geometry.coordinates.length > 0 && feature.geometry.coordinates[0].length > 0) {
+        [lon, lat] = feature.geometry.coordinates[0][0];
+      } else if (feature.geometry.type === 'MultiPolygon' && feature.geometry.coordinates.length > 0 && feature.geometry.coordinates[0].length > 0 && feature.geometry.coordinates[0][0].length > 0) {
+        [lon, lat] = feature.geometry.coordinates[0][0][0];
+      } else {
+        // Try to compute centroid for other geometry types
+        try {
+          const turfFeature = { type: 'Feature', geometry: feature.geometry, properties: {} };
+          const centroid = turf.centroid(turfFeature);
+          [lon, lat] = centroid.geometry.coordinates;
+        } catch (error) {
+          return null;
+        }
+      }
+      
+      if (lon === undefined || lat === undefined || isNaN(lon) || isNaN(lat)) {
+        return null;
+      }
+      
+      // Create key with rounded coordinates (6 decimal places = ~0.1 meter precision)
+      return `${lat.toFixed(6)},${lon.toFixed(6)}`;
+    };
+    
+    // Add all existing domain features' coordinates to the seen set
+    allCityFeatures.forEach(feature => {
+      if (!editingLayer || feature.properties?.layer_name !== editingLayer.name) {
+        const coordKey = getCoordinateKey(feature);
+        if (coordKey) {
+          seenCoordinates.add(coordKey);
+        }
       }
     });
-    console.log(`Removed ${features.length - uniqueFeatures.length} duplicate features`);
+    
+    console.log(`Added ${seenCoordinates.size} existing feature coordinates to duplicate check`);
+    
+    // Then process new features
+    let duplicatesFound = 0;
+    
+    newFeatures.forEach((newFeature, index) => {
+      const coordKey = getCoordinateKey(newFeature);
+      
+      if (!coordKey) {
+        console.warn(`Could not extract coordinates from feature at index ${index}`);
+        uniqueFeatures.push(newFeature);
+        return;
+      }
+      
+      // Check if this coordinate already exists
+      if (seenCoordinates.has(coordKey)) {
+        duplicatesFound++;
+        console.log(`Duplicate found at index ${index}: coordinate ${coordKey} already exists`);
+        return;
+      }
+      
+      // Add to unique features and mark coordinate as seen
+      seenCoordinates.add(coordKey);
+      uniqueFeatures.push(newFeature);
+    });
+    
+    if (duplicatesFound > 0) {
+      console.log(`Removed ${duplicatesFound} duplicate features based on lat/lon coordinates`);
+      
+      alert(
+        `${duplicatesFound} duplicate feature${duplicatesFound > 1 ? 's were' : ' was'} removed.\n` +
+        `These features have the same latitude/longitude as features already in the ${selectedDomain} domain.`
+      );
+    }
+    
+    console.log(`Final result: ${uniqueFeatures.length} unique features out of ${newFeatures.length} total`);
     return uniqueFeatures;
-  };
+  }, [allCityFeatures, editingLayer, selectedDomain]);
 
   const createPopupContent = useCallback((feature, index, finalLayerName, currentDomain, includeType = false) => {
     const featureName = feature.properties?.name || feature.properties?.feature_name || `Feature ${index + 1}`;
@@ -430,7 +530,7 @@ const LayerModal = ({
           );
           const validFeatures = (loadedFeatures || []).filter((f, i) => validateFeature(f, i));
           setFeatures(validFeatures);
-          setStep(3);
+          setStep(2);
           setDataSource('draw');
         } catch (error) {
           console.error('Error loading layer for editing:', error);
@@ -1507,14 +1607,182 @@ useEffect(() => {
     if (!files || files.length === 0) return;
     const finalLayerName = isCustomLayer ? customLayerName : layerName;
     setIsProcessing(true);
+    
+    // Load ALL features across ALL domains for duplicate checking
+    let allFeaturesForCheck = [];
+    if (getAllFeatures && selectedCity) {
+      try {
+        allFeaturesForCheck = await getAllFeatures();
+        console.log(`Loaded ${allFeaturesForCheck.length} features across ALL domains for duplicate checking during upload`);
+      } catch (error) {
+        console.error('Error loading all features:', error);
+      }
+    }
+    
+    // Helper function to get coordinate key
+    const getCoordinateKey = (feature) => {
+      if (!feature.geometry || !feature.geometry.coordinates) {
+        return null;
+      }
+      
+      let lat, lon;
+      
+      if (feature.geometry.type === 'Point') {
+        [lon, lat] = feature.geometry.coordinates;
+      } else if (feature.geometry.type === 'LineString' && feature.geometry.coordinates.length > 0) {
+        [lon, lat] = feature.geometry.coordinates[0];
+      } else if (feature.geometry.type === 'Polygon' && feature.geometry.coordinates.length > 0 && feature.geometry.coordinates[0].length > 0) {
+        [lon, lat] = feature.geometry.coordinates[0][0];
+      } else if (feature.geometry.type === 'MultiLineString' && feature.geometry.coordinates.length > 0 && feature.geometry.coordinates[0].length > 0) {
+        [lon, lat] = feature.geometry.coordinates[0][0];
+      } else if (feature.geometry.type === 'MultiPolygon' && feature.geometry.coordinates.length > 0 && feature.geometry.coordinates[0].length > 0 && feature.geometry.coordinates[0][0].length > 0) {
+        [lon, lat] = feature.geometry.coordinates[0][0][0];
+      } else {
+        try {
+          const turfFeature = { type: 'Feature', geometry: feature.geometry, properties: {} };
+          const centroid = turf.centroid(turfFeature);
+          [lon, lat] = centroid.geometry.coordinates;
+        } catch (error) {
+          return null;
+        }
+      }
+      
+      if (lon === undefined || lat === undefined || isNaN(lon) || isNaN(lat)) {
+        return null;
+      }
+      
+      return `${lat.toFixed(6)},${lon.toFixed(6)}`;
+    };
+    
+    const processFeaturesWithDuplicateCheck = (parsedFeatures, totalParsedCount) => {
+      console.log(`\n=== Processing ${parsedFeatures.length} parsed features ===`);
+      
+      // Step 1: Crop by boundary
+      console.log('Step 1: Cropping features by city boundary...');
+      const boundaryFiltered = parsedFeatures
+        .map(f => cropFeatureByBoundary(f, cityBoundary))
+        .filter(f => f !== null);
+      const croppedOutCount = parsedFeatures.length - boundaryFiltered.length;
+      console.log(`After boundary crop: ${boundaryFiltered.length} features (${croppedOutCount} removed)`);
+      
+      if (boundaryFiltered.length === 0) {
+        alert(
+          'All features in the uploaded file are outside the city boundary.\n\n' +
+          `${parsedFeatures.length} feature${parsedFeatures.length > 1 ? 's were' : ' was'} found but none are within the city limits.\n\n` +
+          'Please upload a file with features inside the city boundary or draw features manually.'
+        );
+        setIsProcessing(false);
+        if (fileInputRef.current) {
+          fileInputRef.current.value = '';
+        }
+        return;
+      }
+      
+      // Step 2: Combine with existing features if append mode
+      const combined = appendMode ? [...features, ...boundaryFiltered] : boundaryFiltered;
+      console.log(`Step 2: ${appendMode ? 'Append' : 'Replace'} mode - ${combined.length} total features to check`);
+      
+      // Step 3: Remove duplicates based on coordinates across ALL domains
+      console.log('Step 3: Removing duplicates based on lat/lon coordinates across ALL domains...');
+      
+      // Build set of existing coordinates from ALL domains (excluding current layer if editing)
+      const seenCoordinates = new Set();
+      allFeaturesForCheck.forEach(feature => {
+        if (!editingLayer || feature.properties?.layer_name !== finalLayerName) {
+          const coordKey = getCoordinateKey(feature);
+          if (coordKey) {
+            seenCoordinates.add(coordKey);
+          }
+        }
+      });
+      
+      console.log(`Found ${seenCoordinates.size} existing coordinates across ALL domains`);
+      
+      // Filter out duplicates
+      const uniqueFeatures = [];
+      let duplicatesFound = 0;
+      
+      combined.forEach((feature, index) => {
+        const coordKey = getCoordinateKey(feature);
+        
+        if (!coordKey) {
+          console.warn(`Could not extract coordinates from feature at index ${index}`);
+          uniqueFeatures.push(feature);
+          return;
+        }
+        
+        if (seenCoordinates.has(coordKey)) {
+          duplicatesFound++;
+          console.log(`Duplicate found at index ${index}: coordinate ${coordKey} already exists`);
+          return;
+        }
+        
+        seenCoordinates.add(coordKey);
+        uniqueFeatures.push(feature);
+      });
+      
+      console.log(`After duplicate removal: ${uniqueFeatures.length} unique features (${duplicatesFound} duplicates removed)`);
+      console.log(`=== Final Summary ===`);
+      console.log(`- Parsed: ${totalParsedCount}`);
+      console.log(`- Outside boundary: ${croppedOutCount}`);
+      console.log(`- Duplicates across ALL domains: ${duplicatesFound}`);
+      console.log(`- Final unique: ${uniqueFeatures.length}`);
+      
+      if (uniqueFeatures.length === 0) {
+        const reasons = [];
+        if (croppedOutCount > 0) {
+          reasons.push(`${croppedOutCount} outside city boundary`);
+        }
+        if (duplicatesFound > 0) {
+          reasons.push(`${duplicatesFound} duplicate${duplicatesFound > 1 ? 's' : ''}`);
+        }
+        
+        alert(
+          'No features remain after filtering.\n\n' +
+          `${totalParsedCount} feature${totalParsedCount > 1 ? 's were' : ' was'} found in the file:\n` +
+          `${reasons.join(' and ')}\n\n` +
+          'Please upload a different file or draw features manually.'
+        );
+        setIsProcessing(false);
+        if (fileInputRef.current) {
+          fileInputRef.current.value = '';
+        }
+        return;
+      }
+      
+      // Build alert message
+      const messages = [];
+      if (croppedOutCount > 0) {
+        messages.push(`${croppedOutCount} feature${croppedOutCount > 1 ? 's were' : ' was'} outside the city boundary`);
+      }
+      if (duplicatesFound > 0) {
+        messages.push(`${duplicatesFound} duplicate feature${duplicatesFound > 1 ? 's were' : ' was'} found across ALL domains`);
+      }
+      
+      if (messages.length > 0) {
+        alert(
+          `${messages.join(' and ')} and removed.\n\n` +
+          `${uniqueFeatures.length} unique feature${uniqueFeatures.length > 1 ? 's' : ''} will be loaded for review.`
+        );
+      }
+      
+      setFeatures(uniqueFeatures);
+      setStep(4);
+      setIsProcessing(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    };
+    
     try {
       let newFeatures = [];
       let totalParsed = 0;
-      let totalCropped = 0;
+      
       if (files.length === 1) {
         const file = files[0];
-        setUploadedFile(file); // Store the uploaded file for display
+        setUploadedFile(file);
         const fileExt = file.name.toLowerCase().split('.').pop();
+        
         if (fileExt === 'csv') {
           const text = await file.text();
           Papa.parse(text, {
@@ -1551,20 +1819,11 @@ useEffect(() => {
                 };
               }).filter(f => f !== null);
               totalParsed = parsedFeatures.length;
-              const boundaryFiltered = parsedFeatures
-                .map(f => cropFeatureByBoundary(f, cityBoundary))
-                .filter(f => f !== null);
-              totalCropped = totalParsed - boundaryFiltered.length;
-              console.log(`CSV: ${totalParsed} features, ${boundaryFiltered.length} within/cropped to boundary (${totalCropped} removed)`);
-              const combined = appendMode ? [...features, ...boundaryFiltered] : boundaryFiltered;
-              const unique = removeDuplicateFeatures(combined);
-              setFeatures(unique);
-              setStep(4);
-              if (totalCropped > 0) {
-                alert(`Loaded ${unique.length} features. ${totalCropped} features were outside the city boundary and were removed.`);
-              }
+              console.log(`CSV: Parsed ${totalParsed} features`);
+              processFeaturesWithDuplicateCheck(parsedFeatures, totalParsed);
             }
           });
+          return;
         } else if (fileExt === 'parquet') {
           const arrayBuffer = await file.arrayBuffer();
           const uint8Array = new Uint8Array(arrayBuffer);
@@ -1609,18 +1868,8 @@ useEffect(() => {
             };
           }).filter(f => f !== null);
           totalParsed = parsedFeatures.length;
-          const boundaryFiltered = parsedFeatures
-            .map(f => cropFeatureByBoundary(f, cityBoundary))
-            .filter(f => f !== null);
-          totalCropped = totalParsed - boundaryFiltered.length;
-          console.log(`Parquet: ${totalParsed} features, ${boundaryFiltered.length} within/cropped to boundary (${totalCropped} removed)`);
-          const combined = appendMode ? [...features, ...boundaryFiltered] : boundaryFiltered;
-          const unique = removeDuplicateFeatures(combined);
-          setFeatures(unique);
-          setStep(4);
-          if (totalCropped > 0) {
-            alert(`Loaded ${unique.length} features. ${totalCropped} features were outside the city boundary and were removed.`);
-          }
+          console.log(`Parquet: Parsed ${totalParsed} features`);
+          newFeatures = parsedFeatures;
         } else if (fileExt === 'geojson' || fileExt === 'json') {
           const text = await file.text();
           const geojson = JSON.parse(text);
@@ -1643,18 +1892,8 @@ useEffect(() => {
             })
             .filter(f => f !== null);
           totalParsed = validFeatures.length;
-          const boundaryFiltered = validFeatures
-            .map(f => cropFeatureByBoundary(f, cityBoundary))
-            .filter(f => f !== null);
-          totalCropped = totalParsed - boundaryFiltered.length;
-          console.log(`GeoJSON: ${totalParsed} features, ${boundaryFiltered.length} within/cropped to boundary (${totalCropped} removed)`);
-          const combined = appendMode ? [...features, ...boundaryFiltered] : boundaryFiltered;
-          const unique = removeDuplicateFeatures(combined);
-          setFeatures(unique);
-          setStep(4);
-          if (totalCropped > 0) {
-            alert(`Loaded ${unique.length} features. ${totalCropped} features were outside the city boundary and were removed.`);
-          }
+          console.log(`GeoJSON: Parsed ${totalParsed} features`);
+          newFeatures = validFeatures;
         } else if (fileExt === 'zip') {
           const arrayBuffer = await file.arrayBuffer();
           const geojson = await shp(arrayBuffer);
@@ -1687,18 +1926,8 @@ useEffect(() => {
             })
             .filter(f => f !== null);
           totalParsed = validFeatures.length;
-          const boundaryFiltered = validFeatures
-            .map(f => cropFeatureByBoundary(f, cityBoundary))
-            .filter(f => f !== null);
-          totalCropped = totalParsed - boundaryFiltered.length;
-          console.log(`Shapefile (zip): ${totalParsed} features, ${boundaryFiltered.length} within/cropped to boundary (${totalCropped} removed)`);
-          const combined = appendMode ? [...features, ...boundaryFiltered] : boundaryFiltered;
-          const unique = removeDuplicateFeatures(combined);
-          setFeatures(unique);
-          setStep(4);
-          if (totalCropped > 0) {
-            alert(`Loaded ${unique.length} features. ${totalCropped} features were outside the city boundary and were removed.`);
-          }
+          console.log(`Shapefile (zip): Parsed ${totalParsed} features`);
+          newFeatures = validFeatures;
         } else if (fileExt === 'shp') {
           try {
             const arrayBuffer = await file.arrayBuffer();
@@ -1732,26 +1961,27 @@ useEffect(() => {
               })
               .filter(f => f !== null);
             totalParsed = validFeatures.length;
-            const boundaryFiltered = validFeatures
-              .map(f => cropFeatureByBoundary(f, cityBoundary))
-              .filter(f => f !== null);
-            totalCropped = totalParsed - boundaryFiltered.length;
-            console.log(`Shapefile (shp): ${totalParsed} features, ${boundaryFiltered.length} within/cropped to boundary (${totalCropped} removed)`);
-            const combined = appendMode ? [...features, ...boundaryFiltered] : boundaryFiltered;
-            const unique = removeDuplicateFeatures(combined);
-            setFeatures(unique);
-            setStep(4);
-            if (totalCropped > 0) {
-              alert(`Loaded ${unique.length} features. ${totalCropped} features were outside the city boundary and were removed.`);
-            }
+            console.log(`Shapefile (shp): Parsed ${totalParsed} features`);
+            newFeatures = validFeatures;
           } catch (shpError) {
             console.warn('Single .shp file processing failed:', shpError);
             alert('Single .shp file could not be processed completely. Geometry loaded but attributes may be missing. For full data, please upload a .zip file or select all components (.shp, .dbf, .shx, .prj) together.');
           }
         } else {
           alert('For single file upload, please use GeoJSON (.geojson, .json), CSV (.csv), Parquet (.parquet), Zipped Shapefile (.zip), or Shapefile (.shp). For complete shapefiles, select all files (.shp, .dbf, .shx, .prj) together.');
+          setIsProcessing(false);
+          if (fileInputRef.current) {
+            fileInputRef.current.value = '';
+          }
+          return;
+        }
+        
+        // Process non-CSV files
+        if (fileExt !== 'csv') {
+          processFeaturesWithDuplicateCheck(newFeatures, totalParsed);
         }
       } else {
+        // Multiple files handling
         const fileGroups = {};
         const geojsonFiles = [];
         const zipFiles = [];
@@ -1774,6 +2004,7 @@ useEffect(() => {
             return;
           }
         }
+        
         const processFeatures = (parsedFeatures, currentCount) => {
           return parsedFeatures
             .map((f, idx) => {
@@ -1791,6 +2022,7 @@ useEffect(() => {
             })
             .filter(f => f !== null);
         };
+        
         const shapefileGroupNames = Object.keys(fileGroups);
         for (const baseName of shapefileGroupNames) {
           const fileMap = fileGroups[baseName];
@@ -1812,21 +2044,14 @@ useEffect(() => {
               }
               const validFeatures = processFeatures(parsedFeatures, newFeatures.length);
               totalParsed += validFeatures.length;
-              const boundaryFiltered = validFeatures
-                .map(f => cropFeatureByBoundary(f, cityBoundary))
-                .filter(f => f !== null);
-              const cropped = validFeatures.length - boundaryFiltered.length;
-              totalCropped += cropped;
-              console.log(`Shapefile set "${baseName}": ${validFeatures.length} features, ${boundaryFiltered.length} within/cropped to boundary (${cropped} removed)`);
-              newFeatures = newFeatures.concat(boundaryFiltered);
+              newFeatures = newFeatures.concat(validFeatures);
             } catch (shpError) {
               console.warn(`Error processing shapefile set "${baseName}":`, shpError);
               alert(`Error processing shapefile set "${baseName}". Please ensure all required files (.shp, .dbf, .shx, .prj) are uploaded together.`);
             }
-          } else {
-            console.warn(`Shapefile set "${baseName}" is missing .shp file`);
           }
         }
+        
         const processZipFile = async (file, currentFeatures) => {
           const arrayBuffer = await file.arrayBuffer();
           const geojson = await shp(arrayBuffer);
@@ -1845,18 +2070,14 @@ useEffect(() => {
           }
           const validFeatures = processFeatures(parsedFeatures, currentFeatures.length);
           totalParsed += validFeatures.length;
-          const boundaryFiltered = validFeatures
-            .map(f => cropFeatureByBoundary(f, cityBoundary))
-            .filter(f => f !== null);
-          const cropped = validFeatures.length - boundaryFiltered.length;
-          totalCropped += cropped;
-          console.log(`Zip file ${file.name}: ${validFeatures.length} features, ${boundaryFiltered.length} within/cropped to boundary (${cropped} removed)`);
-          return boundaryFiltered;
+          return validFeatures;
         };
+        
         for (const file of zipFiles) {
           const processedFeatures = await processZipFile(file, newFeatures);
           newFeatures = newFeatures.concat(processedFeatures);
         }
+        
         const processGeoJsonFile = async (file, currentFeatures) => {
           const text = await file.text();
           const geojson = JSON.parse(text);
@@ -1865,54 +2086,46 @@ useEffect(() => {
             : [geojson];
           const validFeatures = processFeatures(parsedFeatures, currentFeatures.length);
           totalParsed += validFeatures.length;
-          const boundaryFiltered = validFeatures
-            .map(f => cropFeatureByBoundary(f, cityBoundary))
-            .filter(f => f !== null);
-          const cropped = validFeatures.length - boundaryFiltered.length;
-          totalCropped += cropped;
-          console.log(`GeoJSON file ${file.name}: ${validFeatures.length} features, ${boundaryFiltered.length} within/cropped to boundary (${cropped} removed)`);
-          return boundaryFiltered;
+          return validFeatures;
         };
+        
         for (const file of geojsonFiles) {
           const processedFeatures = await processGeoJsonFile(file, newFeatures);
           newFeatures = newFeatures.concat(processedFeatures);
         }
-        if (newFeatures.length > 0) {
-          const combined = appendMode ? [...features, ...newFeatures] : newFeatures;
-          const unique = removeDuplicateFeatures(combined);
-          console.log(`Combined total: ${unique.length} unique features (${combined.length - unique.length} duplicates removed, ${totalCropped} cropped/removed by boundary, mode: ${appendMode ? 'append' : 'replace'})`);
-          setFeatures(unique);
-          setStep(4);
-          if (totalCropped > 0) {
-            alert(`Loaded ${unique.length} features. ${totalCropped} features were outside the city boundary and were removed or cropped.`);
-          }
-        } else {
+        
+        if (newFeatures.length === 0) {
           alert('No valid features found in the uploaded files. Please ensure the files contain valid geographic data.');
+          setIsProcessing(false);
+          if (fileInputRef.current) {
+            fileInputRef.current.value = '';
+          }
+          return;
         }
+        
+        console.log(`Multiple files: Parsed ${totalParsed} features total`);
+        processFeaturesWithDuplicateCheck(newFeatures, totalParsed);
       }
+      
     } catch (error) {
       console.error('Error processing files:', error);
       let errorMessage = 'Error processing files';
-      if (error.message.includes('no layers found')) {
+      if (error.message && error.message.includes('no layers found')) {
         errorMessage = 'No valid geographic data found in the files. Please ensure the files contain valid shapefile or GeoJSON data.';
-      } else if (error.message.includes('must be a string')) {
+      } else if (error.message && error.message.includes('must be a string')) {
         errorMessage = 'Invalid file format. For shapefiles, please upload a .zip file or select all components together.';
       } else {
-        errorMessage = 'Error processing files: ' + error.message;
+        errorMessage = 'Error processing files: ' + (error.message || error);
       }
       alert(errorMessage);
       if (fileInputRef.current) {
         fileInputRef.current.value = '';
       }
-    } finally {
       setIsProcessing(false);
-      if (fileInputRef.current) {
-        fileInputRef.current.value = '';
-      }
     }
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     const finalLayerName = isCustomLayer ? customLayerName : layerName;
     const finalLayerIcon = isCustomLayer ? customLayerIcon : layerIcon;
     const nameValidationError = validateLayerName(finalLayerName);
@@ -1924,13 +2137,125 @@ useEffect(() => {
       alert('Please add at least one feature before saving');
       return;
     }
+    
+    // Load all features across ALL domains for duplicate checking
+    console.log('Loading ALL features across ALL domains for final duplicate check...');
+    let allFeaturesForCheck = [];
+    
+    if (getAllFeatures && selectedCity) {
+      try {
+        allFeaturesForCheck = await getAllFeatures();
+        console.log(`Loaded ${allFeaturesForCheck.length} features across ALL domains for duplicate check`);
+      } catch (error) {
+        console.error('Error loading all features for duplicate check:', error);
+      }
+    }
+    
+    // Now check for duplicates
+    const getCoordinateKey = (feature) => {
+      if (!feature.geometry || !feature.geometry.coordinates) {
+        return null;
+      }
+      
+      let lat, lon;
+      
+      if (feature.geometry.type === 'Point') {
+        [lon, lat] = feature.geometry.coordinates;
+      } else if (feature.geometry.type === 'LineString' && feature.geometry.coordinates.length > 0) {
+        [lon, lat] = feature.geometry.coordinates[0];
+      } else if (feature.geometry.type === 'Polygon' && feature.geometry.coordinates.length > 0 && feature.geometry.coordinates[0].length > 0) {
+        [lon, lat] = feature.geometry.coordinates[0][0];
+      } else if (feature.geometry.type === 'MultiLineString' && feature.geometry.coordinates.length > 0 && feature.geometry.coordinates[0].length > 0) {
+        [lon, lat] = feature.geometry.coordinates[0][0];
+      } else if (feature.geometry.type === 'MultiPolygon' && feature.geometry.coordinates.length > 0 && feature.geometry.coordinates[0].length > 0 && feature.geometry.coordinates[0][0].length > 0) {
+        [lon, lat] = feature.geometry.coordinates[0][0][0];
+      } else {
+        try {
+          const turfFeature = { type: 'Feature', geometry: feature.geometry, properties: {} };
+          const centroid = turf.centroid(turfFeature);
+          [lon, lat] = centroid.geometry.coordinates;
+        } catch (error) {
+          return null;
+        }
+      }
+      
+      if (lon === undefined || lat === undefined || isNaN(lon) || isNaN(lat)) {
+        return null;
+      }
+      
+      return `${lat.toFixed(6)},${lon.toFixed(6)}`;
+    };
+    
+    // Build set of existing coordinates (excluding current layer if editing)
+    const seenCoordinates = new Set();
+  allFeaturesForCheck.forEach(feature => {
+    if (!editingLayer || feature.properties?.layer_name !== finalLayerName) {
+      const coordKey = getCoordinateKey(feature);
+      if (coordKey) {
+        seenCoordinates.add(coordKey);
+      }
+    }
+  });
+  
+  console.log(`Found ${seenCoordinates.size} existing coordinates across ALL domains`);
+    
+    // Filter out duplicates
+    const uniqueFeatures = [];
+    let duplicatesFound = 0;
+    
+    features.forEach((feature, index) => {
+      const coordKey = getCoordinateKey(feature);
+      
+      if (!coordKey) {
+        console.warn(`Could not extract coordinates from feature at index ${index}`);
+        uniqueFeatures.push(feature);
+        return;
+      }
+      
+      if (seenCoordinates.has(coordKey)) {
+        duplicatesFound++;
+        console.log(`Duplicate found at index ${index}: coordinate ${coordKey} already exists in domain`);
+        return;
+      }
+      
+      // Also check within the current batch
+      if (seenCoordinates.has(coordKey)) {
+        duplicatesFound++;
+        return;
+      }
+      
+      seenCoordinates.add(coordKey);
+      uniqueFeatures.push(feature);
+    });
+    
+    console.log(`Duplicate check complete: ${uniqueFeatures.length} unique out of ${features.length} total`);
+    
+    if (duplicatesFound > 0) {
+      const proceed = window.confirm(
+        `${duplicatesFound} duplicate feature${duplicatesFound > 1 ? 's were' : ' was'} found.\n` +
+        `These features have the same latitude/longitude as features already in OTHER layers across ALL domains.\n\n` +
+        `Do you want to save only the ${uniqueFeatures.length} unique features?`
+      );
+      
+      if (!proceed) {
+        return;
+      }
+    }
+    
+    if (uniqueFeatures.length === 0) {
+      alert('No unique features to save. All features are duplicates.');
+      return;
+    }
+    
+    // Save with unique features only
     onSave({
       name: finalLayerName,
       icon: finalLayerIcon,
       domain: selectedDomain,
-      features: features
+      features: uniqueFeatures
     });
-    console.log('Layer saved:', { name: finalLayerName, icon: finalLayerIcon, domain: selectedDomain, features });
+    
+    console.log('Layer saved:', { name: finalLayerName, icon: finalLayerIcon, domain: selectedDomain, features: uniqueFeatures });
   };
 
   const handleClose = () => {

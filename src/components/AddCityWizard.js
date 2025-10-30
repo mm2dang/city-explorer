@@ -116,6 +116,50 @@ const reprojectGeometry = (geometry, prjWkt, crsFromGeoJSON = null) => {
   return geometry;
 };
 
+/**
+ * Merges multiple Polygon and MultiPolygon geometries into a single MultiPolygon
+ */
+const mergeGeometries = (geometries) => {
+  if (!geometries || geometries.length === 0) {
+    throw new Error('No geometries to merge');
+  }
+
+  // If only one geometry, normalize it to MultiPolygon if needed
+  if (geometries.length === 1) {
+    const geom = geometries[0];
+    if (geom.type === 'MultiPolygon') {
+      return geom;
+    } else if (geom.type === 'Polygon') {
+      return {
+        type: 'MultiPolygon',
+        coordinates: [geom.coordinates]
+      };
+    }
+  }
+
+  // Collect all polygon coordinates
+  const allPolygons = [];
+  
+  for (const geometry of geometries) {
+    if (geometry.type === 'Polygon') {
+      allPolygons.push(geometry.coordinates);
+    } else if (geometry.type === 'MultiPolygon') {
+      allPolygons.push(...geometry.coordinates);
+    } else {
+      console.warn(`Skipping unsupported geometry type: ${geometry.type}`);
+    }
+  }
+
+  if (allPolygons.length === 0) {
+    throw new Error('No valid Polygon or MultiPolygon geometries found');
+  }
+
+  return {
+    type: 'MultiPolygon',
+    coordinates: allPolygons
+  };
+};
+
 const AddCityWizard = ({ editingCity, onComplete, onCancel }) => {
   const [step, setStep] = useState(1);
   const [cityName, setCityName] = useState('');
@@ -450,9 +494,9 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel }) => {
         reader.onload = (event) => {
           try {
             const geojson = JSON.parse(event.target.result);
-            let geometry;
+            let geometries = [];
             let crsInfo = null;
-  
+      
             if (geojson.crs && geojson.crs.properties && geojson.crs.properties.name) {
               const crsName = geojson.crs.properties.name;
               if (crsName.includes('EPSG')) {
@@ -463,52 +507,64 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel }) => {
                 }
               }
             }
-  
+      
+            // Extract all geometries
             if (geojson.type === 'FeatureCollection') {
               if (!geojson.features || geojson.features.length === 0) {
                 setUploadError('FeatureCollection is empty');
                 setIsProcessing(false);
                 return;
               }
-              geometry = geojson.features[0].geometry;
+              // Collect all polygon/multipolygon geometries
+              geometries = geojson.features
+                .map(f => f.geometry)
+                .filter(g => ['Polygon', 'MultiPolygon'].includes(g.type));
+              
+              if (geometries.length === 0) {
+                setUploadError('No Polygon or MultiPolygon geometries found in FeatureCollection');
+                setIsProcessing(false);
+                return;
+              }
             } 
             else if (geojson.type === 'Feature') {
-              geometry = geojson.geometry;
+              if (!['Polygon', 'MultiPolygon'].includes(geojson.geometry.type)) {
+                setUploadError('Feature must contain Polygon or MultiPolygon geometry');
+                setIsProcessing(false);
+                return;
+              }
+              geometries = [geojson.geometry];
             } 
             else if (['Polygon', 'MultiPolygon'].includes(geojson.type)) {
-              geometry = geojson;
+              geometries = [geojson];
             } else {
               setUploadError('Please upload a valid Polygon or MultiPolygon GeoJSON');
               setIsProcessing(false);
               return;
             }
-  
-            if (!['Polygon', 'MultiPolygon'].includes(geometry.type)) {
-              setUploadError('Please upload a valid Polygon or MultiPolygon GeoJSON');
-              setIsProcessing(false);
-              return;
+      
+            // Validate each geometry
+            for (let i = 0; i < geometries.length; i++) {
+              if (!geometries[i].coordinates || geometries[i].coordinates.length === 0) {
+                setUploadError(`Geometry ${i + 1} has invalid or empty coordinates`);
+                setIsProcessing(false);
+                return;
+              }
+      
+              const validation = validateBoundary(geometries[i]);
+              if (!validation.valid) {
+                setUploadError(`Geometry ${i + 1}: ${validation.error}`);
+                setIsProcessing(false);
+                return;
+              }
             }
-  
-            if (!geometry.coordinates || geometry.coordinates.length === 0) {
-              setUploadError('GeoJSON geometry has invalid or empty coordinates');
-              setIsProcessing(false);
-              return;
-            }
-  
-            // Validate boundary
-            const validation = validateBoundary(geometry);
-            if (!validation.valid) {
-              setUploadError(`Invalid boundary: ${validation.error}`);
-              setIsProcessing(false);
-              return;
-            }
-  
-            console.log('Successfully loaded GeoJSON boundary:', geometry);
-            
+      
+            // Reproject if needed
             if (crsInfo && crsInfo !== 'EPSG:4326') {
               try {
-                geometry = reprojectGeometry(geometry, null, crsInfo);
-                console.log('Reprojected GeoJSON boundary to WGS84:', geometry);
+                geometries = geometries.map(geom => 
+                  reprojectGeometry(geom, null, crsInfo)
+                );
+                console.log('Reprojected GeoJSON geometries to WGS84');
               } catch (reprojError) {
                 console.error('Reprojection error:', reprojError);
                 setUploadError(`Error reprojecting coordinates: ${reprojError.message}`);
@@ -516,11 +572,25 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel }) => {
                 return;
               }
             }
+      
+            // Merge all geometries into single MultiPolygon
+            let mergedGeometry;
+            try {
+              mergedGeometry = mergeGeometries(geometries);
+              console.log(`Merged ${geometries.length} geometries into MultiPolygon with ${mergedGeometry.coordinates.length} polygon(s)`);
+            } catch (mergeError) {
+              console.error('Merge error:', mergeError);
+              setUploadError(`Error merging geometries: ${mergeError.message}`);
+              setIsProcessing(false);
+              return;
+            }
+      
+            console.log('Successfully loaded and merged GeoJSON boundary:', mergedGeometry);
             
-            setBoundary(geometry);
+            setBoundary(mergedGeometry);
             
             // Update coordinates based on uploaded boundary
-            const center = calculateBoundaryCenter(geometry);
+            const center = calculateBoundaryCenter(mergedGeometry);
             if (center && selectedCity) {
               setSelectedCity(prev => ({
                 ...prev,
@@ -545,8 +615,7 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel }) => {
           setIsProcessing(false);
         };
         reader.readAsText(geojsonFile);
-      }
-      else if (shpFile) {
+      } else if (shpFile) {
         try {
           const shpBuffer = await shpFile.arrayBuffer();
           
@@ -555,7 +624,7 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel }) => {
           if (dbfFile) {
             dbfBuffer = await dbfFile.arrayBuffer();
           }
-  
+      
           let prjWkt = null;
           const prjFile = files.find(f => f.name.toLowerCase().endsWith('.prj'));
           if (prjFile) {
@@ -564,7 +633,7 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel }) => {
           } else {
             console.warn('No PRJ file found - will assume WGS 1984 UTM Zone 19S (EPSG:32719)');
           }
-  
+      
           const geojson = await shp.read(shpBuffer, dbfBuffer);
           
           if (!geojson || !geojson.features || geojson.features.length === 0) {
@@ -572,45 +641,65 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel }) => {
             setIsProcessing(false);
             return;
           }
-  
-          let geometry = geojson.features[0].geometry;
+      
+          // Extract all polygon/multipolygon geometries
+          let geometries = geojson.features
+            .map(f => f.geometry)
+            .filter(g => ['Polygon', 'MultiPolygon'].includes(g.type));
           
-          if (!['Polygon', 'MultiPolygon'].includes(geometry.type)) {
-            setUploadError('Shapefile must contain Polygon or MultiPolygon geometry');
+          if (geometries.length === 0) {
+            setUploadError('Shapefile must contain at least one Polygon or MultiPolygon geometry');
             setIsProcessing(false);
             return;
           }
-  
-          if (!geometry.coordinates || geometry.coordinates.length === 0) {
-            setUploadError('Shapefile geometry has invalid or empty coordinates');
-            setIsProcessing(false);
-            return;
+      
+          // Validate each geometry
+          for (let i = 0; i < geometries.length; i++) {
+            if (!geometries[i].coordinates || geometries[i].coordinates.length === 0) {
+              setUploadError(`Geometry ${i + 1} has invalid or empty coordinates`);
+              setIsProcessing(false);
+              return;
+            }
+      
+            const validation = validateBoundary(geometries[i]);
+            if (!validation.valid) {
+              setUploadError(`Geometry ${i + 1}: ${validation.error}`);
+              setIsProcessing(false);
+              return;
+            }
           }
-  
-          console.log('Original Shapefile boundary:', geometry);
+      
+          console.log(`Original Shapefile contains ${geometries.length} polygon(s)`);
           
+          // Reproject all geometries
           try {
-            geometry = reprojectGeometry(geometry, prjWkt, null);
-            console.log('Reprojected boundary to WGS84:', geometry);
+            geometries = geometries.map(geom => 
+              reprojectGeometry(geom, prjWkt, null)
+            );
+            console.log('Reprojected all geometries to WGS84');
           } catch (reprojError) {
             console.error('Reprojection error:', reprojError);
             setUploadError(`Error reprojecting coordinates: ${reprojError.message}`);
             setIsProcessing(false);
             return;
           }
-  
-          // Validate boundary
-          const validation = validateBoundary(geometry);
-          if (!validation.valid) {
-            setUploadError(`Invalid boundary: ${validation.error}`);
+      
+          // Merge all geometries into single MultiPolygon
+          let mergedGeometry;
+          try {
+            mergedGeometry = mergeGeometries(geometries);
+            console.log(`Merged ${geometries.length} geometries into MultiPolygon with ${mergedGeometry.coordinates.length} polygon(s)`);
+          } catch (mergeError) {
+            console.error('Merge error:', mergeError);
+            setUploadError(`Error merging geometries: ${mergeError.message}`);
             setIsProcessing(false);
             return;
           }
-  
-          setBoundary(geometry);
+      
+          setBoundary(mergedGeometry);
           
           // Update coordinates based on uploaded boundary
-          const center = calculateBoundaryCenter(geometry);
+          const center = calculateBoundaryCenter(mergedGeometry);
           if (center && selectedCity) {
             setSelectedCity(prev => ({
               ...prev,
@@ -629,8 +718,7 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel }) => {
           setUploadError(`Error parsing Shapefile: ${error.message}. Please ensure the file is valid.`);
           setIsProcessing(false);
         }
-      }
-      else {
+      } else {
         const fileExtensions = files.map(f => f.name.toLowerCase().split('.').pop());
         
         if (fileExtensions.some(ext => ['shx', 'dbf', 'prj', 'cpg', 'qmd'].includes(ext))) {

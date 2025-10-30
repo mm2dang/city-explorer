@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import LayerToggle from './LayerToggle';
 import LayerModal from './LayerModal';
@@ -441,6 +441,40 @@ const Sidebar = ({
     });
   };
 
+  const getAllFeatures = useCallback(async () => {
+    if (!selectedCity) return [];
+    
+    const allFeatures = [];
+    
+    console.log('Collecting ALL features from ALL domains for duplicate checking');
+    
+    for (const [domainName, domainLayers] of Object.entries(availableLayersByDomain)) {
+      if (domainLayers.length === 0) continue;
+      
+      console.log(`Checking domain: ${domainName} with ${domainLayers.length} layers`);
+      
+      for (const layer of domainLayers) {
+        try {
+          const features = await loadLayerForEditing(
+            selectedCity.name,
+            domainName,
+            layer.name
+          );
+          
+          if (features && features.length > 0) {
+            allFeatures.push(...features);
+            console.log(`Loaded ${features.length} features from ${domainName}/${layer.name}`);
+          }
+        } catch (error) {
+          console.warn(`Could not load features from ${domainName}/${layer.name}:`, error);
+        }
+      }
+    }
+    
+    console.log(`Total features across ALL domains: ${allFeatures.length}`);
+    return allFeatures;
+  }, [selectedCity, availableLayersByDomain]);
+
   if (!selectedCity) {
     return (
       <motion.div
@@ -859,6 +893,8 @@ const Sidebar = ({
         domainColors={domainColors}
         availableLayersByDomain={availableLayersByDomain} 
         mapView={mapView}
+        getAllFeatures={getAllFeatures}
+        selectedCity={selectedCity}
       />
     </motion.div>
   );

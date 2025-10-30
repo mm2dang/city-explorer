@@ -355,7 +355,6 @@ export async function calculateConnectivityMetrics(cityBoundary, months, onProgr
       await yieldToEventLoop();
       
       const validTiles = allTiles.filter(tile => 
-        isPointInBounds(tile.tile_x, tile.tile_y, bounds) &&
         tile.devices > 0 &&
         tile.avg_d_kbps > 0 &&
         tile.avg_lat_ms > 0
@@ -564,15 +563,14 @@ function getQuartersFromDateRange(startMonth, endMonth) {
 
 /**
  * Fetch mobile cellular subscriptions per 100 people from World Bank API
- * @param {string} countryCode - ISO 3166-1 alpha-3 country code
- * @returns {Promise<number>} - Most recent coverage value or 0 if not available
  */
 async function fetchWorldBankCoverage(countryCode) {
   try {
     // World Bank API endpoint for mobile cellular subscriptions
-    const url = `https://api.worldbank.org/v2/country/${countryCode}/indicator/IT.CEL.SETS.P2?format=json&per_page=10&mrnev=1`;
+    const url = `https://api.worldbank.org/v2/country/${countryCode}/indicator/IT.CEL.SETS.P2?format=json&per_page=20&mrnev=1`;
     
     console.log(`[Coverage] Fetching World Bank data for ${countryCode}...`);
+    console.log(`[Coverage] URL: ${url}`);
     
     const response = await fetch(url);
     if (!response.ok) {
@@ -582,6 +580,8 @@ async function fetchWorldBankCoverage(countryCode) {
     
     const data = await response.json();
     
+    console.log(`[Coverage] Raw API response for ${countryCode}:`, JSON.stringify(data, null, 2));
+    
     // World Bank API returns [metadata, data_array]
     if (!data || !Array.isArray(data) || data.length < 2 || !Array.isArray(data[1]) || data[1].length === 0) {
       console.warn(`[Coverage] No data available for ${countryCode}`);
@@ -590,7 +590,10 @@ async function fetchWorldBankCoverage(countryCode) {
     
     // Get the most recent non-null value
     const records = data[1];
+    console.log(`[Coverage] Found ${records.length} records for ${countryCode}`);
+    
     for (const record of records) {
+      console.log(`[Coverage] ${countryCode} - Year ${record.date}: ${record.value}`);
       if (record.value !== null && !isNaN(record.value)) {
         console.log(`[Coverage] ${countryCode}: ${record.value}% (year: ${record.date})`);
         return parseFloat(record.value);
@@ -608,7 +611,6 @@ async function fetchWorldBankCoverage(countryCode) {
 
 /**
  * Map country names to ISO 3166-1 alpha-3 codes
- * Add more mappings as needed
  */
 const COUNTRY_CODE_MAP = {
   'afghanistan': 'AFG',

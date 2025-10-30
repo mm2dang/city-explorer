@@ -39,6 +39,54 @@ self.onmessage = async (e) => {
 
     const results = [];
     
+    // Duplicate detection sets
+    const seenPoints = new Set();
+    const seenLineStrings = new Set();
+    const seenGeometries = new Set();
+
+    // Helper function to check for duplicate points
+    const isDuplicatePoint = (coord) => {
+      const key = `${coord[0].toFixed(6)},${coord[1].toFixed(6)}`;
+      if (seenPoints.has(key)) {
+        return true;
+      }
+      seenPoints.add(key);
+      return false;
+    };
+
+    // Helper function to check for duplicate LineStrings
+    const isDuplicateLineString = (coords) => {
+      const coordString = coords.map(c => `${c[0].toFixed(6)},${c[1].toFixed(6)}`).join('|');
+      if (seenLineStrings.has(coordString)) {
+        return true;
+      }
+      seenLineStrings.add(coordString);
+      return false;
+    };
+
+    // Helper function to check for duplicate MultiLineStrings
+    const isDuplicateMultiLineString = (coordsArray) => {
+      const coordString = coordsArray.map(line => 
+        line.map(c => `${c[0].toFixed(6)},${c[1].toFixed(6)}`).join('|')
+      ).join('||');
+      if (seenLineStrings.has(coordString)) {
+        return true;
+      }
+      seenLineStrings.add(coordString);
+      return false;
+    };
+
+    // Helper function to check for duplicate geometries
+    const isDuplicateGeometry = (geometry) => {
+      const coordString = JSON.stringify(geometry.coordinates);
+      const hash = coordString.length + '_' + coordString.substring(0, 100);
+      if (seenGeometries.has(hash)) {
+        return true;
+      }
+      seenGeometries.add(hash);
+      return false;
+    };
+    
     // Helper function to validate coordinate array
     const isValidCoordinate = (coord) => {
       return Array.isArray(coord) && coord.length === 2 && 
@@ -381,6 +429,7 @@ self.onmessage = async (e) => {
         // Process in smaller batches
         const BATCH_SIZE = 25;
         let processedCount = 0;
+        let duplicateCount = 0;
         
         for (let i = 0; i < data.elements.length; i += BATCH_SIZE) {
           const batch = data.elements.slice(i, i + BATCH_SIZE);
@@ -395,6 +444,12 @@ self.onmessage = async (e) => {
                 // Create proper GeoJSON Point geometry
                 const coord = [parseFloat(el.lon), parseFloat(el.lat)];
                 if (isValidCoordinate(coord)) {
+                  // Check for duplicate point
+                  if (isDuplicatePoint(coord)) {
+                    duplicateCount++;
+                    continue;
+                  }
+                  
                   geometry = { 
                     type: 'Point', 
                     coordinates: coord
@@ -409,6 +464,21 @@ self.onmessage = async (e) => {
               }
 
               if (!geometry || !validateGeometry(geometry)) {
+                continue;
+              }
+
+              // Check for duplicate geometries based on type
+              if (geometry.type === 'Point' && isDuplicatePoint(geometry.coordinates)) {
+                duplicateCount++;
+                continue;
+              } else if (geometry.type === 'LineString' && isDuplicateLineString(geometry.coordinates)) {
+                duplicateCount++;
+                continue;
+              } else if (geometry.type === 'MultiLineString' && isDuplicateMultiLineString(geometry.coordinates)) {
+                duplicateCount++;
+                continue;
+              } else if ((geometry.type === 'Polygon' || geometry.type === 'MultiPolygon') && isDuplicateGeometry(geometry)) {
+                duplicateCount++;
                 continue;
               }
 
@@ -464,7 +534,7 @@ self.onmessage = async (e) => {
           }
         }
 
-        console.log(`Completed ${filename}: ${processedCount} features found inside boundary`);
+        console.log(`Completed ${filename}: ${processedCount} features found inside boundary (${duplicateCount} duplicates removed)`);
         
       } catch (layerError) {
         console.warn(`Error processing layer ${filename}:`, layerError);
