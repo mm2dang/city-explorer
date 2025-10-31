@@ -192,7 +192,6 @@ const MapViewer = ({
         L.DomEvent.disableClickPropagation(container);
   
         container.onclick = () => {
-          // <-- CHANGED: Check if city is selected first
           const mapContainer = map.getContainer();
           const cityLat = parseFloat(mapContainer.dataset.cityLat);
           const cityLng = parseFloat(mapContainer.dataset.cityLng);
@@ -419,58 +418,58 @@ const MapViewer = ({
           popupAnchor: [0, -16]
         });
 
-  const marker = L.marker([markerLat, markerLng], {
-    icon: cityIcon,
-    zIndexOffset: 2000
-  });
+        const marker = L.marker([markerLat, markerLng], {
+          icon: cityIcon,
+          zIndexOffset: 2000
+        });
 
-  // Parse city name for display
-  const parsedName = city.name.split(',').map(p => p.trim());
-  const cityName = parsedName[0];
-  const province = parsedName[1] || '';
-  const country = parsedName[2] || parsedName[1] || '';
+        // Parse city name for display
+        const parsedName = city.name.split(',').map(p => p.trim());
+        const cityName = parsedName[0];
+        const province = parsedName[1] || '';
+        const country = parsedName[2] || parsedName[1] || '';
 
-  // Create tooltip content
-  let tooltipContent = `<strong>${cityName}</strong>`;
-  if (province && country) {
-    tooltipContent += `<br/>${province}, ${country}`;
-  } else if (country) {
-    tooltipContent += `<br/>${country}`;
-  }
-  if (city.population) {
-    tooltipContent += `<br/>Pop: ${city.population.toLocaleString()}`;
-  }
-  if (city.size) {
-    tooltipContent += `<br/>Area: ${city.size} km²`;
-  }
+        // Create tooltip content
+        let tooltipContent = `<strong>${cityName}</strong>`;
+        if (province && country) {
+          tooltipContent += `<br/>${province}, ${country}`;
+        } else if (country) {
+          tooltipContent += `<br/>${country}`;
+        }
+        if (city.population) {
+          tooltipContent += `<br/>Pop: ${city.population.toLocaleString()}`;
+        }
+        if (city.size) {
+          tooltipContent += `<br/>Area: ${city.size} km²`;
+        }
 
-  // Bind tooltip
-  marker.bindTooltip(tooltipContent, {
-    permanent: false,
-    direction: 'top',
-    offset: [0, -20],
-    opacity: 0.95,
-    className: 'city-marker-tooltip'
-  });
+        // Bind tooltip
+        marker.bindTooltip(tooltipContent, {
+          permanent: false,
+          direction: 'top',
+          offset: [0, -20],
+          opacity: 0.95,
+          className: 'city-marker-tooltip'
+        });
 
-  // Add hover effect
-  if (!isProcessing) {
-    marker.on('mouseover', function(e) {
-      const innerDiv = this._icon?.querySelector('.city-icon-wrapper');
-      if (innerDiv) {
-        innerDiv.style.transform = 'scale(1.15)';
-        innerDiv.style.backgroundColor = '#0e7490';
-      }
-    });
-  
-    marker.on('mouseout', function(e) {
-      const innerDiv = this._icon?.querySelector('.city-icon-wrapper');
-      if (innerDiv) {
-        innerDiv.style.transform = 'scale(1)';
-        innerDiv.style.backgroundColor = '#0891b2';
-      }
-    });
-  }
+        // Add hover effect
+        if (!isProcessing) {
+          marker.on('mouseover', function(e) {
+            const innerDiv = this._icon?.querySelector('.city-icon-wrapper');
+            if (innerDiv) {
+              innerDiv.style.transform = 'scale(1.15)';
+              innerDiv.style.backgroundColor = '#0e7490';
+            }
+          });
+        
+          marker.on('mouseout', function(e) {
+            const innerDiv = this._icon?.querySelector('.city-icon-wrapper');
+            if (innerDiv) {
+              innerDiv.style.transform = 'scale(1)';
+              innerDiv.style.backgroundColor = '#0891b2';
+            }
+          });
+        }
 
         // Click handler to select city
         marker.on('click', function(e) {
@@ -556,67 +555,67 @@ const MapViewer = ({
   }, []);
 
   // Update map when city is selected
-useEffect(() => {
-  if (!mapInstanceRef.current) return;
+  useEffect(() => {
+    if (!mapInstanceRef.current) return;
 
-  clearAllLayers();
+    clearAllLayers();
 
-  if (!selectedCity) {
-    // Show world view when no city selected
-    mapInstanceRef.current.setView([20, 0], 2);
-    
-    // Clear stored city data
-    const mapContainer = mapInstanceRef.current.getContainer();
-    delete mapContainer.dataset.cityLat;
-    delete mapContainer.dataset.cityLng;
-    
-    // Display city markers after clearing layers
-    setTimeout(() => {
-      displayCityMarkers();
-    }, 100);
-    
-    return;
-  }
-
-  try {
-    console.log('MapViewer: Updating map for city:', selectedCity.name);
-
-    // Store city coordinates in map container for recenter button
-    const mapContainer = mapInstanceRef.current.getContainer();
-    if (selectedCity.latitude && selectedCity.longitude) {
-      mapContainer.dataset.cityLat = selectedCity.latitude;
-      mapContainer.dataset.cityLng = selectedCity.longitude;
+    if (!selectedCity) {
+      // Show world view when no city selected
+      mapInstanceRef.current.setView([20, 0], 2);
+      
+      // Clear stored city data
+      const mapContainer = mapInstanceRef.current.getContainer();
+      delete mapContainer.dataset.cityLat;
+      delete mapContainer.dataset.cityLng;
+      
+      // Display city markers after clearing layers
+      setTimeout(() => {
+        displayCityMarkers();
+      }, 100);
+      
+      return;
     }
 
-    if (selectedCity.boundary) {
-      const boundary = JSON.parse(selectedCity.boundary);
+    try {
+      console.log('MapViewer: Updating map for city:', selectedCity.name);
 
-      const boundaryLayer = L.geoJSON(boundary, {
-        style: {
-          color: '#0891b2',
-          weight: 3,
-          opacity: 0.8,
-          fillOpacity: 0.1
-        }
-      });
-
-      boundaryLayer.addTo(mapInstanceRef.current);
-      boundaryLayerRef.current = boundaryLayer;
-
-      const bounds = boundaryLayer.getBounds();
-      if (bounds.isValid()) {
-        mapInstanceRef.current.fitBounds(bounds, { padding: [50, 50] });
+      // Store city coordinates in map container for recenter button
+      const mapContainer = mapInstanceRef.current.getContainer();
+      if (selectedCity.latitude && selectedCity.longitude) {
+        mapContainer.dataset.cityLat = selectedCity.latitude;
+        mapContainer.dataset.cityLng = selectedCity.longitude;
       }
-    } else if (selectedCity.latitude && selectedCity.longitude) {
-      mapInstanceRef.current.setView([selectedCity.latitude, selectedCity.longitude], 12);
+
+      if (selectedCity.boundary) {
+        const boundary = JSON.parse(selectedCity.boundary);
+
+        const boundaryLayer = L.geoJSON(boundary, {
+          style: {
+            color: '#0891b2',
+            weight: 3,
+            opacity: 0.8,
+            fillOpacity: 0.1
+          }
+        });
+
+        boundaryLayer.addTo(mapInstanceRef.current);
+        boundaryLayerRef.current = boundaryLayer;
+
+        const bounds = boundaryLayer.getBounds();
+        if (bounds.isValid()) {
+          mapInstanceRef.current.fitBounds(bounds, { padding: [50, 50] });
+        }
+      } else if (selectedCity.latitude && selectedCity.longitude) {
+        mapInstanceRef.current.setView([selectedCity.latitude, selectedCity.longitude], 12);
+      }
+    } catch (error) {
+      console.error('Error updating map for selected city:', error);
+      if (selectedCity.latitude && selectedCity.longitude) {
+        mapInstanceRef.current.setView([selectedCity.latitude, selectedCity.longitude], 12);
+      }
     }
-  } catch (error) {
-    console.error('Error updating map for selected city:', error);
-    if (selectedCity.latitude && selectedCity.longitude) {
-      mapInstanceRef.current.setView([selectedCity.latitude, selectedCity.longitude], 12);
-    }
-  }
-}, [selectedCity, clearAllLayers, displayCityMarkers]);
+  }, [selectedCity, clearAllLayers, displayCityMarkers]);
 
   // Load and display features
   const loadAndDisplayFeatures = useCallback(async () => {
@@ -714,7 +713,83 @@ useEffect(() => {
       let totalFeatures = 0;
       const safeAvailableLayers = availableLayers || {};
   
-      // Create clustered markers for each active layer
+      // Create a single cluster group for all layers
+      const globalClusterGroup = L.markerClusterGroup({
+        maxClusterRadius: 80,
+        spiderfyOnMaxZoom: true,
+        showCoverageOnHover: false,
+        zoomToBoundsOnClick: true,
+        spiderfyDistanceMultiplier: 1.5,
+        iconCreateFunction: function(cluster) {
+          const count = cluster.getChildCount();
+          const markers = cluster.getAllChildMarkers();
+          
+          // Count domains in this cluster
+          const domainCounts = {};
+          markers.forEach(marker => {
+            const domain = marker.options.domainName;
+            if (domain) {
+              domainCounts[domain] = (domainCounts[domain] || 0) + 1;
+            }
+          });
+          
+          const domains = Object.keys(domainCounts);
+          
+          // If single domain, use solid color
+          if (domains.length === 1) {
+            const domainColor = domainColors[domains[0]] || '#666666';
+            return L.divIcon({
+              html: `<div style="background-color: ${domainColor}; width: 40px; height: 40px; border-radius: 50%; border: 3px solid white; box-shadow: 0 2px 6px rgba(0,0,0,0.3); display: flex; align-items: center; justify-content: center; color: white; font-weight: bold; font-size: 14px; box-sizing: border-box;">${count}</div>`,
+              className: 'custom-cluster-icon',
+              iconSize: L.point(40, 40),
+              iconAnchor: L.point(20, 20)
+            });
+          }
+          
+          // Multiple domains - create pie chart
+          const total = count;
+          let currentAngle = 0;
+          const slices = [];
+          
+          domains.forEach(domain => {
+            const domainCount = domainCounts[domain];
+            const percentage = domainCount / total;
+            const angle = percentage * 360;
+            const color = domainColors[domain] || '#666666';
+            
+            slices.push({
+              color,
+              startAngle: currentAngle,
+              endAngle: currentAngle + angle,
+              percentage
+            });
+            
+            currentAngle += angle;
+          });
+          
+          // Generate conic-gradient for pie chart
+          const gradientStops = [];
+          slices.forEach((slice, index) => {
+            gradientStops.push(`${slice.color} ${slice.startAngle}deg ${slice.endAngle}deg`);
+          });
+          
+          const gradient = `conic-gradient(${gradientStops.join(', ')})`;
+          
+          return L.divIcon({
+            html: `<div style="background: ${gradient}; width: 40px; height: 40px; border-radius: 50%; border: 3px solid white; box-shadow: 0 2px 6px rgba(0,0,0,0.3); display: flex; align-items: center; justify-content: center; box-sizing: border-box;">
+              <div style="background: white; width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #374151; font-weight: bold; font-size: 12px;">${count}</div>
+            </div>`,
+            className: 'custom-cluster-icon',
+            iconSize: L.point(40, 40),
+            iconAnchor: L.point(20, 20)
+          });
+        },
+        chunkedLoading: true,
+        chunkInterval: 200,
+        chunkDelay: 50
+      });
+      
+      // Process all layers and add to single cluster group
       for (const [layerName, layerFeatures] of Object.entries(groupedFeatures)) {
         // Check abort signal periodically during processing
         if (currentAbortController.signal.aborted) {
@@ -723,54 +798,7 @@ useEffect(() => {
         }
   
         if (!safeActiveLayers[layerName]) continue;
-  
-        const clusterGroup = L.markerClusterGroup({
-          maxClusterRadius: 80,
-          spiderfyOnMaxZoom: true,
-          showCoverageOnHover: false,
-          zoomToBoundsOnClick: true,
-          spiderfyDistanceMultiplier: 1.5,
-          iconCreateFunction: function(cluster) {
-            const count = cluster.getChildCount();
-            const firstMarker = cluster.getAllChildMarkers()[0];
-            const domainColor = firstMarker?.options?.icon?.options?.domainColor || '#666666';
-            
-            return L.divIcon({
-              html: `<div style="background-color: ${domainColor}; width: 40px; height: 40px; border-radius: 50%; border: 3px solid white; box-shadow: 0 2px 6px rgba(0,0,0,0.3); display: flex; align-items: center; justify-content: center; color: white; font-weight: bold; font-size: 14px; box-sizing: border-box;">${count}</div>`,
-              className: 'custom-cluster-icon',
-              iconSize: L.point(40, 40),
-              iconAnchor: L.point(20, 20)
-            });
-          },
-          chunkedLoading: true,
-          chunkInterval: 200,
-          chunkDelay: 50
-        });
-  
-        // Event handlers for spiderfied state
-        clusterGroup.on('spiderfied', function(e) {
-          const cluster = e.cluster;
-          const markers = e.markers;
-          
-          markers.forEach((marker, index) => {
-            if (marker._icon) {
-              marker._icon.style.zIndex = 10000 + index;
-            }
-          });
-          
-          if (cluster._icon) {
-            cluster._icon.style.opacity = '0.3';
-            cluster._icon.style.transition = 'opacity 0.3s';
-          }
-        });
-  
-        clusterGroup.on('unspiderfied', function(e) {
-          const cluster = e.cluster;
-          if (cluster._icon) {
-            cluster._icon.style.opacity = '1';
-          }
-        });
-  
+
         let markerCount = 0;
   
         for (const feature of layerFeatures) {
@@ -831,7 +859,8 @@ useEffect(() => {
   
               const marker = L.marker([lat, lon], {
                 icon: customIcon,
-                zIndexOffset: 1000
+                zIndexOffset: 1000,
+                domainName: domain_name
               });
   
               marker.bindTooltip(`
@@ -852,7 +881,7 @@ useEffect(() => {
                 className: 'feature-marker-tooltip'
               });
   
-              clusterGroup.addLayer(marker);
+              globalClusterGroup.addLayer(marker);
               markerCount++;
             } else {
               // Handle non-point geometries
@@ -884,7 +913,8 @@ useEffect(() => {
                     popupAnchor: [0, -14],
                     domainColor: domainColor
                   }),
-                  zIndexOffset: 1000
+                  zIndexOffset: 1000,
+                  domainName: domain_name
                 });
   
                 centroidMarker.featureGeometry = feature.geometry;
@@ -934,7 +964,7 @@ useEffect(() => {
                   className: 'feature-marker-tooltip'
                 });
   
-                clusterGroup.addLayer(centroidMarker);
+                globalClusterGroup.addLayer(centroidMarker);
                 markerCount++;
               } catch (error) {
                 console.warn(`MapViewer: Error adding centroid for feature in layer ${layerName}:`, error);
@@ -947,18 +977,89 @@ useEffect(() => {
   
         console.log(`MapViewer: Processed ${markerCount} features for layer ${layerName}`);
         totalFeatures += markerCount;
-  
-        // Final abort check before adding to map
-        if (currentAbortController.signal.aborted) {
-          console.log('MapViewer: Loading was aborted before adding cluster groups to map');
-          return;
+      }
+      
+      // Add event handlers for spiderfied state to global cluster
+      globalClusterGroup.on('spiderfied', function(e) {
+        const cluster = e.cluster;
+        const markers = e.markers;
+        
+        markers.forEach((marker, index) => {
+          if (marker._icon) {
+            marker._icon.style.zIndex = 10000 + index;
+          }
+        });
+        
+        if (cluster._icon) {
+          cluster._icon.style.opacity = '0.3';
+          cluster._icon.style.transition = 'opacity 0.3s';
         }
-  
-        if (clusterGroup.getLayers().length > 0) {
-          clusterGroup.addTo(mapInstanceRef.current);
-          clusterGroupsRef.current[layerName] = clusterGroup;
-          console.log(`MapViewer: Added cluster group for ${layerName} with ${clusterGroup.getLayers().length} markers`);
+      });
+
+      globalClusterGroup.on('unspiderfied', function(e) {
+        const cluster = e.cluster;
+        if (cluster._icon) {
+          cluster._icon.style.opacity = '1';
         }
+      });
+
+      // Add cluster hover tooltips showing domain breakdown
+      globalClusterGroup.on('clustermouseover', function(e) {
+        const cluster = e.layer;
+        const markers = cluster.getAllChildMarkers();
+        
+        // Count domains
+        const domainCounts = {};
+        markers.forEach(marker => {
+          const domain = marker.options.domainName;
+          if (domain) {
+            domainCounts[domain] = (domainCounts[domain] || 0) + 1;
+          }
+        });
+        
+        // Build tooltip content
+        let tooltipContent = `<strong>${markers.length} features</strong>`;
+        
+        if (Object.keys(domainCounts).length > 1) {
+          tooltipContent += '<div class="domain-breakdown">';
+          Object.entries(domainCounts)
+            .sort((a, b) => b[1] - a[1]) // Sort by count descending
+            .forEach(([domain, count]) => {
+              const color = domainColors[domain] || '#666666';
+              const domainName = domain.charAt(0).toUpperCase() + domain.slice(1);
+              tooltipContent += `
+                <div class="domain-item">
+                  <div class="domain-color" style="background-color: ${color}"></div>
+                  <span>${domainName}: ${count}</span>
+                </div>
+              `;
+            });
+          tooltipContent += '</div>';
+        }
+        
+        cluster.bindTooltip(tooltipContent, {
+          permanent: false,
+          direction: 'top',
+          offset: [0, -20],
+          opacity: 0.95,
+          className: 'cluster-tooltip'
+        }).openTooltip();
+      });
+
+      globalClusterGroup.on('clustermouseout', function(e) {
+        e.layer.closeTooltip();
+      });
+  
+      // Final abort check before adding to map
+      if (currentAbortController.signal.aborted) {
+        console.log('MapViewer: Loading was aborted before adding cluster groups to map');
+        return;
+      }
+  
+      if (globalClusterGroup.getLayers().length > 0) {
+        globalClusterGroup.addTo(mapInstanceRef.current);
+        clusterGroupsRef.current['__global__'] = globalClusterGroup;
+        console.log(`MapViewer: Added global cluster group with ${globalClusterGroup.getLayers().length} markers from all layers`);
       }
   
       setFeatureCount(totalFeatures);

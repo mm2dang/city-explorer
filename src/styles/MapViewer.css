@@ -255,7 +255,7 @@
   z-index: 1000 !important;
 }
 
-/* Ensure cluster icons don't interfere with positioning */
+/* Pie chart cluster styling */
 .custom-cluster-icon {
   background: transparent !important;
   border: none !important;
@@ -267,9 +267,110 @@
   margin-top: -20px !important;
 }
 
+/* Ensure pie chart clusters render correctly */
+.custom-cluster-icon > div {
+  position: relative;
+  box-sizing: border-box;
+}
+
+/* Inner count circle for pie charts */
+.custom-cluster-icon > div > div {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  box-sizing: border-box;
+}
+
+/* Cluster hover effect for pie charts */
+.marker-cluster {
+  transition: all 0.2s ease;
+  z-index: 2000 !important;
+}
+
+.marker-cluster:hover {
+  transform: scale(1.1);
+  filter: brightness(1.1);
+}
+
+/* Ensure pie chart segments are crisp */
+.custom-cluster-icon img {
+  image-rendering: -webkit-optimize-contrast;
+  image-rendering: crisp-edges;
+}
+
+/* Tooltip styling for clusters */
+.leaflet-tooltip.cluster-tooltip {
+  background: white !important;
+  border: 1px solid #e2e8f0 !important;
+  border-radius: 12px !important;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.15) !important;
+  padding: 12px 16px !important;
+  font-family: Inter, sans-serif !important;
+  font-size: 13px !important;
+  line-height: 1.5 !important;
+  color: #374151 !important;
+  max-width: 200px;
+}
+
+.cluster-tooltip strong {
+  color: #1a202c;
+  font-weight: 600;
+  font-size: 14px;
+  display: block;
+  margin-bottom: 4px;
+}
+
+.cluster-tooltip .domain-breakdown {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+.cluster-tooltip .domain-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.cluster-tooltip .domain-color {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+/* Cluster animation on creation */
+@keyframes clusterPop {
+  0% {
+    transform: scale(0.5);
+    opacity: 0;
+  }
+  50% {
+    transform: scale(1.1);
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.marker-cluster-small,
+.marker-cluster-medium,
+.marker-cluster-large {
+  animation: clusterPop 0.3s ease-out;
+}
+
 /* Spiderfied markers (expanded from cluster) should be on top */
 .leaflet-marker-icon.leaflet-zoom-animated.leaflet-interactive {
   z-index: 10000 !important;
+}
+
+/* But spiderfied individual markers should be on top */
+.marker-cluster-spiderfied .leaflet-marker-icon {
+  z-index: 10001 !important;
 }
 
 /* Spiderfy lines should be below markers but above clusters */
@@ -277,11 +378,6 @@
   z-index: 9000 !important;
   stroke-width: 2px;
   stroke: rgba(0, 0, 0, 0.3);
-}
-
-/* Ensure individual markers in spiderfied state have highest z-index */
-.marker-cluster-spiderfied .leaflet-marker-icon {
-  z-index: 10001 !important;
 }
 
 /* Leaflet panes hierarchy - ensure proper stacking */
@@ -376,6 +472,53 @@
   margin-left: 10px !important;
 }
 
+/* City marker tooltips */
+.city-marker-tooltip {
+  background: white !important;
+  border: 1px solid #e2e8f0 !important;
+  border-radius: 12px !important;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.15) !important;
+  padding: 12px 16px !important;
+  font-family: Inter, sans-serif !important;
+  font-size: 13px !important;
+  line-height: 1.5 !important;
+  color: #374151 !important;
+  white-space: nowrap;
+}
+
+.city-marker-tooltip strong {
+  color: #1a202c;
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.city-marker-tooltip::before {
+  border-top-color: white !important;
+}
+
+/* Feature marker tooltips */
+.feature-marker-tooltip {
+  background: white !important;
+  border: 1px solid #e2e8f0 !important;
+  border-radius: 12px !important;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.15) !important;
+  padding: 12px 16px !important;
+  font-family: Inter, sans-serif !important;
+  font-size: 13px !important;
+  line-height: 1.5 !important;
+  color: #374151 !important;
+  max-width: 250px;
+  white-space: normal;
+}
+
+.feature-marker-tooltip::before {
+  border-top-color: white !important;
+}
+
+.leaflet-tooltip-top::before {
+  border-top-color: white !important;
+}
+
 /* Responsive adjustments for custom control */
 @media (max-width: 768px) {
   .leaflet-top .leaflet-left .leaflet-control-custom {
@@ -443,52 +586,5 @@
   
   .overlay-content p {
     font-size: 14px;
-  }
-
-  /* City marker tooltips */
-  .city-marker-tooltip {
-    background: white !important;
-    border: 1px solid #e2e8f0 !important;
-    border-radius: 12px !important;
-    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.15) !important;
-    padding: 12px 16px !important;
-    font-family: Inter, sans-serif !important;
-    font-size: 13px !important;
-    line-height: 1.5 !important;
-    color: #374151 !important;
-    white-space: nowrap;
-  }
-
-  .city-marker-tooltip strong {
-    color: #1a202c;
-    font-weight: 600;
-    font-size: 14px;
-  }
-
-  .city-marker-tooltip::before {
-    border-top-color: white !important;
-  }
-
-  /* Feature marker tooltips */
-  .feature-marker-tooltip {
-    background: white !important;
-    border: 1px solid #e2e8f0 !important;
-    border-radius: 12px !important;
-    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.15) !important;
-    padding: 12px 16px !important;
-    font-family: Inter, sans-serif !important;
-    font-size: 13px !important;
-    line-height: 1.5 !important;
-    color: #374151 !important;
-    max-width: 250px;
-    white-space: normal;
-  }
-
-  .feature-marker-tooltip::before {
-    border-top-color: white !important;
-  }
-
-  .leaflet-tooltip-top::before {
-    border-top-color: white !important;
   }
 }
