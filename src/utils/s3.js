@@ -1202,6 +1202,363 @@ const validateBoundaryPolygon = (geometry) => {
   }
 };
 
+const clipLineStringSegmentBySegment = (lineCoords, boundaryFeature) => {
+  console.log('Clipping LineString with', lineCoords.length, 'points');
+  
+  // Check if completely within
+  const lineFeature = {
+    type: 'Feature',
+    geometry: { type: 'LineString', coordinates: lineCoords },
+    properties: {}
+  };
+  
+  try {
+    const isFullyWithin = turf.booleanWithin(lineFeature, boundaryFeature);
+    
+    // CRITICAL: Even if booleanWithin returns true, check if line intersects boundary edge
+    let lineIntersectsBoundary = false;
+    try {
+      const intersections = turf.lineIntersect(lineFeature, boundaryFeature);
+      lineIntersectsBoundary = intersections.features.length > 0;
+      console.log('Line intersects boundary edge?', lineIntersectsBoundary);
+    } catch (intersectError) {
+      console.warn('Error checking line intersection with boundary:', intersectError);
+    }
+    
+    if (isFullyWithin && !lineIntersectsBoundary) {
+      console.log('LineString is fully within boundary (verified - no edge crossings)');
+      return [lineCoords]; // Return as array of segments
+    }
+  } catch (error) {
+    console.warn('Error checking if line is fully within:', error);
+  }
+  
+  console.log('LineString crosses boundary - clipping needed');
+  
+  // Line crosses boundary - clip it segment by segment
+  const clippedSegments = [];
+  let currentSegment = [];
+  
+  for (let i = 0; i < lineCoords.length - 1; i++) {
+    const point1 = lineCoords[i];
+    const point2 = lineCoords[i + 1];
+    
+    let p1Inside, p2Inside;
+    try {
+      p1Inside = turf.booleanPointInPolygon(turf.point(point1), boundaryFeature);
+      p2Inside = turf.booleanPointInPolygon(turf.point(point2), boundaryFeature);
+    } catch (error) {
+      console.warn('Error checking point in polygon:', error);
+      continue;
+    }
+    
+    if (p1Inside && p2Inside) {
+      // Both points inside - BUT check if this specific segment crosses boundary
+      const segment = turf.lineString([point1, point2]);
+      let segmentCrossesBoundary = false;
+      try {
+        const segmentIntersections = turf.lineIntersect(segment, boundaryFeature);
+        segmentCrossesBoundary = segmentIntersections.features.length > 0;
+      } catch (err) {
+        console.warn('Error checking segment intersection:', err);
+      }
+      
+      if (!segmentCrossesBoundary) {
+        // Truly inside - add to current segment
+        if (currentSegment.length === 0) {
+          currentSegment.push(point1);
+        }
+        currentSegment.push(point2);
+      } else {
+        // Segment goes outside and comes back in - need to split
+        console.log('Segment appears inside but crosses boundary - splitting');
+        
+        if (currentSegment.length === 0) {
+          currentSegment.push(point1);
+        }
+        
+        // Find intersection points
+        const intersections = turf.lineIntersect(segment, boundaryFeature);
+        if (intersections.features.length >= 2) {
+          // Exit and re-entry
+          const exitPoint = intersections.features[0].geometry.coordinates;
+          const entryPoint = intersections.features[1].geometry.coordinates;
+          
+          // Complete current segment at exit point
+          currentSegment.push(exitPoint);
+          if (currentSegment.length >= 2) {
+            clippedSegments.push([...currentSegment]);
+          }
+          
+          // Start new segment at entry point
+          currentSegment = [entryPoint, point2];
+        }
+      }
+      
+    } else if (p1Inside && !p2Inside) {
+      // Crossing from inside to outside - find intersection and end segment
+      if (currentSegment.length === 0) {
+        currentSegment.push(point1);
+      }
+      
+      // Find where this segment crosses the boundary
+      const segment = turf.lineString([point1, point2]);
+      try {
+        const intersections = turf.lineIntersect(segment, boundaryFeature);
+        if (intersections.features.length > 0) {
+          // Add the intersection point (exit point)
+          const exitPoint = intersections.features[0].geometry.coordinates;
+          currentSegment.push(exitPoint);
+          console.log('Found exit point:', exitPoint);
+        }
+      } catch (err) {
+        console.warn('Error finding exit intersection:', err);
+      }
+      
+      // Save this segment
+      if (currentSegment.length >= 2) {
+        clippedSegments.push([...currentSegment]);
+        console.log('Saved segment with', currentSegment.length, 'points (exiting boundary)');
+      }
+      currentSegment = [];
+      
+    } else if (!p1Inside && p2Inside) {
+      // Crossing from outside to inside - find intersection and start new segment
+      const segment = turf.lineString([point1, point2]);
+      try {
+        const intersections = turf.lineIntersect(segment, boundaryFeature);
+        if (intersections.features.length > 0) {
+          // Start new segment with entry point
+          const entryPoint = intersections.features[0].geometry.coordinates;
+          currentSegment = [entryPoint, point2];
+          console.log('Found entry point:', entryPoint);
+        } else {
+          // No intersection found, start with p2
+          currentSegment = [point2];
+        }
+      } catch (err) {
+        console.warn('Error finding entry intersection:', err);
+        currentSegment = [point2];
+      }
+      
+    } else {
+      // Both points outside
+      // Check if segment crosses through the boundary (enters and exits)
+      const segment = turf.lineString([point1, point2]);
+      try {
+        const intersections = turf.lineIntersect(segment, boundaryFeature);
+        if (intersections.features.length >= 2) {
+          // Segment passes through boundary - keep the middle part
+          const entry = intersections.features[0].geometry.coordinates;
+          const exit = intersections.features[1].geometry.coordinates;
+          clippedSegments.push([entry, exit]);
+          console.log('Segment crosses through boundary - keeping middle part');
+        }
+      } catch (err) {
+        console.warn('Error checking segment crossing:', err);
+      }
+      // If segment doesn't cross boundary, ignore it
+    }
+  }
+  
+  // Don't forget the last segment if we were building one
+  if (currentSegment.length >= 2) {
+    clippedSegments.push(currentSegment);
+    console.log('Saved final segment with', currentSegment.length, 'points');
+  }
+  
+  console.log('LineString clipping resulted in', clippedSegments.length, 'segments');
+  return clippedSegments;
+};
+
+const clipMultiLineStringSegmentBySegment = (multiLineCoords, boundaryFeature) => {
+  console.log('Clipping MultiLineString with', multiLineCoords.length, 'lines');
+  const allClippedSegments = [];
+  
+  for (const lineCoords of multiLineCoords) {
+    const lineFeature = {
+      type: 'Feature',
+      geometry: { type: 'LineString', coordinates: lineCoords },
+      properties: {}
+    };
+    
+    // Check if this line intersects boundary
+    let intersects;
+    try {
+      intersects = turf.booleanIntersects(lineFeature, boundaryFeature);
+    } catch (error) {
+      console.warn('Error checking intersection:', error);
+      continue;
+    }
+    
+    if (!intersects) {
+      continue;
+    }
+    
+    // Check if completely within
+    try {
+      const isFullyWithin = turf.booleanWithin(lineFeature, boundaryFeature);
+      
+      // CRITICAL: Even if booleanWithin returns true, check if line intersects boundary edge
+      let lineIntersectsBoundary = false;
+      try {
+        const intersections = turf.lineIntersect(lineFeature, boundaryFeature);
+        lineIntersectsBoundary = intersections.features.length > 0;
+        console.log('MultiLineString component intersects boundary edge?', lineIntersectsBoundary);
+      } catch (intersectError) {
+        console.warn('Error checking line intersection with boundary:', intersectError);
+      }
+      
+      if (isFullyWithin && !lineIntersectsBoundary) {
+        allClippedSegments.push(lineCoords);
+        continue;
+      }
+    } catch (error) {
+      console.warn('Error checking if line is fully within:', error);
+    }
+    
+    // Line crosses boundary - clip it segment by segment
+    let currentSegment = [];
+    
+    for (let i = 0; i < lineCoords.length - 1; i++) {
+      const point1 = lineCoords[i];
+      const point2 = lineCoords[i + 1];
+      
+      let p1Inside, p2Inside;
+      try {
+        p1Inside = turf.booleanPointInPolygon(turf.point(point1), boundaryFeature);
+        p2Inside = turf.booleanPointInPolygon(turf.point(point2), boundaryFeature);
+      } catch (error) {
+        console.warn('Error checking point in polygon:', error);
+        continue;
+      }
+      
+      if (p1Inside && p2Inside) {
+        // Both points inside - BUT check if this specific segment crosses boundary
+        const segment = turf.lineString([point1, point2]);
+        let segmentCrossesBoundary = false;
+        try {
+          const segmentIntersections = turf.lineIntersect(segment, boundaryFeature);
+          segmentCrossesBoundary = segmentIntersections.features.length > 0;
+        } catch (err) {
+          console.warn('Error checking segment intersection:', err);
+        }
+        
+        if (!segmentCrossesBoundary) {
+          // Truly inside - add to current segment
+          if (currentSegment.length === 0) {
+            currentSegment.push(point1);
+          }
+          currentSegment.push(point2);
+        } else {
+          // Segment goes outside and comes back in - need to split
+          console.log('MultiLineString segment appears inside but crosses boundary - splitting');
+          
+          if (currentSegment.length === 0) {
+            currentSegment.push(point1);
+          }
+          
+          // Find intersection points
+          const intersections = turf.lineIntersect(segment, boundaryFeature);
+          if (intersections.features.length >= 2) {
+            // Exit and re-entry
+            const exitPoint = intersections.features[0].geometry.coordinates;
+            const entryPoint = intersections.features[1].geometry.coordinates;
+            
+            // Complete current segment at exit point
+            currentSegment.push(exitPoint);
+            if (currentSegment.length >= 2) {
+              allClippedSegments.push([...currentSegment]);
+            }
+            
+            // Start new segment at entry point
+            currentSegment = [entryPoint, point2];
+          }
+        }
+        
+      } else if (p1Inside && !p2Inside) {
+        // Exit boundary
+        if (currentSegment.length === 0) {
+          currentSegment.push(point1);
+        }
+        
+        const segment = turf.lineString([point1, point2]);
+        try {
+          const intersections = turf.lineIntersect(segment, boundaryFeature);
+          if (intersections.features.length > 0) {
+            currentSegment.push(intersections.features[0].geometry.coordinates);
+          }
+        } catch (err) {
+          console.warn('Error finding exit intersection:', err);
+        }
+        
+        if (currentSegment.length >= 2) {
+          allClippedSegments.push([...currentSegment]);
+        }
+        currentSegment = [];
+        
+      } else if (!p1Inside && p2Inside) {
+        // Enter boundary
+        const segment = turf.lineString([point1, point2]);
+        try {
+          const intersections = turf.lineIntersect(segment, boundaryFeature);
+          if (intersections.features.length > 0) {
+            currentSegment = [intersections.features[0].geometry.coordinates, point2];
+          } else {
+            currentSegment = [point2];
+          }
+        } catch (err) {
+          console.warn('Error finding entry intersection:', err);
+          currentSegment = [point2];
+        }
+        
+      } else {
+        // Both outside - check for pass-through
+        const segment = turf.lineString([point1, point2]);
+        try {
+          const intersections = turf.lineIntersect(segment, boundaryFeature);
+          if (intersections.features.length >= 2) {
+            allClippedSegments.push([
+              intersections.features[0].geometry.coordinates,
+              intersections.features[1].geometry.coordinates
+            ]);
+          }
+        } catch (err) {
+          console.warn('Error checking segment crossing:', err);
+        }
+      }
+    }
+    
+    if (currentSegment.length >= 2) {
+      allClippedSegments.push(currentSegment);
+    }
+  }
+  
+  console.log('MultiLineString clipping resulted in', allClippedSegments.length, 'segments');
+  return allClippedSegments;
+};
+
+// Helper function to create a geometry hash for duplicate detection
+const getGeometryHash = (geometry) => {
+  if (!geometry || !geometry.coordinates) return null;
+  
+  try {
+    // Round coordinates to 6 decimal places for comparison (about 0.1 meter precision)
+    const roundCoord = (coord) => {
+      if (Array.isArray(coord[0])) {
+        return coord.map(roundCoord);
+      }
+      return [Number(coord[0].toFixed(6)), Number(coord[1].toFixed(6))];
+    };
+    
+    const roundedCoords = roundCoord(geometry.coordinates);
+    return `${geometry.type}:${JSON.stringify(roundedCoords)}`;
+  } catch (error) {
+    console.warn('Error creating geometry hash:', error);
+    return null;
+  }
+};
+
 const cropFeaturesByBoundary = (features, boundary) => {
   try {
     if (!boundary || features.length === 0) {
@@ -1232,10 +1589,12 @@ const cropFeaturesByBoundary = (features, boundary) => {
     }
     
     const croppedFeatures = [];
+    const seenGeometries = new Set();
     let fullyCroppedCount = 0;
     let partiallyCroppedCount = 0;
     let pointsInsideCount = 0;
     let pointsOutsideCount = 0;
+    let geometryDuplicatesCount = 0;
     
     for (const feature of features) {
       try {
@@ -1284,68 +1643,62 @@ const cropFeaturesByBoundary = (features, boundary) => {
               }
               
             } else if (geometry.type === 'LineString') {
-              // Crop LineString to boundary
               try {
-                const clipped = turf.bboxClip(turfFeature, turf.bbox(boundaryFeature));
+                console.log('Processing LineString with', geometry.coordinates.length, 'points');
                 
-                // Further refine by intersecting with actual boundary polygon
-                if (clipped && clipped.geometry) {
-                  // Check if line is completely within boundary
-                  const isFullyWithin = turf.booleanWithin(turfFeature, boundaryFeature);
-                  
-                  if (isFullyWithin) {
-                    croppedGeometry = geometry;
-                    fullyCroppedCount++;
-                  } else {
-                    // Line crosses boundary - use clipped version
-                    croppedGeometry = clipped.geometry;
-                    partiallyCroppedCount++;
-                  }
+                const clippedSegments = clipLineStringSegmentBySegment(
+                  geometry.coordinates, 
+                  boundaryFeature
+                );
+                
+                if (clippedSegments.length === 0) {
+                  console.log('No segments inside boundary');
+                  continue;
+                } else if (clippedSegments.length === 1) {
+                  console.log('Single segment inside boundary with', clippedSegments[0].length, 'points');
+                  croppedGeometry = {
+                    type: 'LineString',
+                    coordinates: clippedSegments[0]
+                  };
                 } else {
-                  croppedGeometry = geometry;
+                  console.log('Multiple segments inside boundary:', clippedSegments.map(s => s.length));
+                  croppedGeometry = {
+                    type: 'MultiLineString',
+                    coordinates: clippedSegments
+                  };
                 }
               } catch (clipError) {
-                console.warn('Error clipping LineString:', clipError.message);
+                console.error('Error clipping LineString:', clipError);
                 croppedGeometry = geometry;
               }
               
             } else if (geometry.type === 'MultiLineString') {
-              // Process each line in the MultiLineString
               try {
-                const croppedLines = [];
+                console.log('Processing MultiLineString with', geometry.coordinates.length, 'lines');
                 
-                for (const lineCoords of geometry.coordinates) {
-                  const lineFeature = {
-                    type: 'Feature',
-                    geometry: { type: 'LineString', coordinates: lineCoords },
-                    properties: {}
+                const clippedSegments = clipMultiLineStringSegmentBySegment(
+                  geometry.coordinates,
+                  boundaryFeature
+                );
+                
+                if (clippedSegments.length === 0) {
+                  console.log('No segments inside boundary');
+                  continue;
+                } else if (clippedSegments.length === 1) {
+                  console.log('Single segment inside boundary with', clippedSegments[0].length, 'points');
+                  croppedGeometry = {
+                    type: 'LineString',
+                    coordinates: clippedSegments[0]
                   };
-                  
-                  if (turf.booleanIntersects(lineFeature, boundaryFeature)) {
-                    try {
-                      const clipped = turf.bboxClip(lineFeature, turf.bbox(boundaryFeature));
-                      if (clipped && clipped.geometry && clipped.geometry.coordinates.length >= 2) {
-                        croppedLines.push(clipped.geometry.coordinates);
-                      }
-                    } catch (clipError) {
-                      // If clipping fails, include original if it intersects
-                      if (lineCoords.length >= 2) {
-                        croppedLines.push(lineCoords);
-                      }
-                    }
-                  }
-                }
-                
-                if (croppedLines.length > 0) {
-                  if (croppedLines.length === 1) {
-                    croppedGeometry = { type: 'LineString', coordinates: croppedLines[0] };
-                  } else {
-                    croppedGeometry = { type: 'MultiLineString', coordinates: croppedLines };
-                  }
-                  partiallyCroppedCount++;
+                } else {
+                  console.log('Multiple segments inside boundary:', clippedSegments.map(s => s.length));
+                  croppedGeometry = {
+                    type: 'MultiLineString',
+                    coordinates: clippedSegments
+                  };
                 }
               } catch (multiLineError) {
-                console.warn('Error processing MultiLineString:', multiLineError.message);
+                console.error('Error processing MultiLineString:', multiLineError);
                 croppedGeometry = geometry;
               }
               
@@ -1430,6 +1783,18 @@ const cropFeaturesByBoundary = (features, boundary) => {
             if (croppedGeometry && croppedGeometry.type && croppedGeometry.coordinates) {
               // Validate the cropped geometry before adding
               if (validateCroppedGeometry(croppedGeometry)) {
+                // Check for duplicate geometry
+                const geomHash = getGeometryHash(croppedGeometry);
+                if (geomHash && seenGeometries.has(geomHash)) {
+                  geometryDuplicatesCount++;
+                  console.log('Duplicate geometry detected after cropping, skipping');
+                  continue;
+                }
+                
+                if (geomHash) {
+                  seenGeometries.add(geomHash);
+                }
+                
                 croppedFeatures.push({
                   ...feature,
                   geometry: croppedGeometry
@@ -1446,6 +1811,15 @@ const cropFeaturesByBoundary = (features, boundary) => {
             try {
               const isFullyWithin = turf.booleanWithin(turfFeature, boundaryFeature);
               if (isFullyWithin) {
+                // Check for duplicate even for fully within features
+                const geomHash = getGeometryHash(geometry);
+                if (geomHash && seenGeometries.has(geomHash)) {
+                  geometryDuplicatesCount++;
+                  continue;
+                }
+                if (geomHash) {
+                  seenGeometries.add(geomHash);
+                }
                 croppedFeatures.push(feature);
               }
             } catch (withinError) {
@@ -1466,6 +1840,7 @@ const cropFeaturesByBoundary = (features, boundary) => {
     console.log(`  Partially cropped: ${partiallyCroppedCount}`);
     console.log(`  Points inside: ${pointsInsideCount}`);
     console.log(`  Points outside: ${pointsOutsideCount}`);
+    console.log(`  Geometry duplicates removed: ${geometryDuplicatesCount}`);
     console.log(`  Total removed: ${features.length - croppedFeatures.length}`);
     
     return croppedFeatures;

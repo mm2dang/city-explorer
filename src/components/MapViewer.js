@@ -131,6 +131,7 @@ const MapViewer = ({
   const cityMarkersLayerRef = useRef(null);
   const abortControllerRef = useRef(null);
   const isLoadingRef = useRef(false);
+  const displayedGeometriesRef = useRef(new Map());
 
   // Initialize map
   useEffect(() => {
@@ -483,33 +484,6 @@ const MapViewer = ({
           onCitySelect(city);
         });
   
-        // Bind popup with city info
-        const location = parsedName.slice(1).join(', ');
-  
-        marker.bindPopup(`
-          <div style="font-family: Inter, sans-serif;">
-            <h4 style="margin: 0 0 8px 0; color: #1a202c; font-size: 16px; font-weight: 600;">
-              ${cityName}
-            </h4>
-            ${location ? `<p style="margin: 0 0 6px 0; color: #64748b; font-size: 13px;">${location}</p>` : ''}
-            ${city.population ? `
-              <p style="margin: 0 0 4px 0; color: #64748b; font-size: 12px;">
-                <i class="fas fa-users" style="margin-right: 4px;"></i>
-                Population: ${city.population.toLocaleString()}
-              </p>
-            ` : ''}
-            ${city.size ? `
-              <p style="margin: 0 0 4px 0; color: #64748b; font-size: 12px;">
-                <i class="fas fa-expand-arrows-alt" style="margin-right: 4px;"></i>
-                Area: ${city.size} km²
-              </p>
-            ` : ''}
-            <p style="margin: 8px 0 0 0; color: #0891b2; font-size: 11px; font-style: italic;">
-              Click to explore this city
-            </p>
-          </div>
-        `);
-  
         cityMarkersGroup.addLayer(marker);
       } catch (error) {
         console.warn(`MapViewer: Error creating marker for city ${city.name}:`, error);
@@ -530,29 +504,40 @@ const MapViewer = ({
   // Clear all markers and layers
   const clearAllLayers = useCallback(() => {
     if (!mapInstanceRef.current) return;
-
+  
+    // Clear displayed geometries first
+    displayedGeometriesRef.current.forEach((geomInfo) => {
+      if (geomInfo.layer && mapInstanceRef.current.hasLayer(geomInfo.layer)) {
+        mapInstanceRef.current.removeLayer(geomInfo.layer);
+      }
+      if (geomInfo.marker) {
+        geomInfo.marker.geometryLayer = null;
+      }
+    });
+    displayedGeometriesRef.current.clear();
+  
     Object.entries(clusterGroupsRef.current).forEach(([layerName, clusterGroup]) => {
       if (clusterGroup && mapInstanceRef.current.hasLayer(clusterGroup)) {
         mapInstanceRef.current.removeLayer(clusterGroup);
       }
     });
     clusterGroupsRef.current = {};
-
+  
     if (boundaryLayerRef.current && mapInstanceRef.current.hasLayer(boundaryLayerRef.current)) {
       mapInstanceRef.current.removeLayer(boundaryLayerRef.current);
       boundaryLayerRef.current = null;
     }
-
+  
     if (nonPointLayerRef.current && mapInstanceRef.current.hasLayer(nonPointLayerRef.current)) {
       mapInstanceRef.current.removeLayer(nonPointLayerRef.current);
       nonPointLayerRef.current = null;
     }
-
+  
     if (cityMarkersLayerRef.current && mapInstanceRef.current.hasLayer(cityMarkersLayerRef.current)) {
       mapInstanceRef.current.removeLayer(cityMarkersLayerRef.current);
       cityMarkersLayerRef.current = null;
     }
-
+  
     setFeatureCount(0);
   }, []);
 
@@ -924,10 +909,15 @@ const MapViewer = ({
                 centroidMarker.geometryLayer = null;
   
                 centroidMarker.on('click', function(e) {
+                  const markerId = L.stamp(this); // Get unique ID for this marker
+                  
                   if (this.geometryLayer && mapInstanceRef.current.hasLayer(this.geometryLayer)) {
+                    // Hide geometry
                     mapInstanceRef.current.removeLayer(this.geometryLayer);
                     this.geometryLayer = null;
+                    displayedGeometriesRef.current.delete(markerId);
                   } else {
+                    // Show geometry
                     this.geometryLayer = L.geoJSON(this.featureGeometry, {
                       style: {
                         color: this.featureColor,
@@ -937,12 +927,19 @@ const MapViewer = ({
                         fillOpacity: 0.3
                       }
                     }).addTo(mapInstanceRef.current);
-  
+                
                     this.geometryLayer.bringToFront();
                     
                     if (tileLayerRef.current) {
                       tileLayerRef.current.bringToBack();
                     }
+                    
+                    // Track this geometry
+                    displayedGeometriesRef.current.set(markerId, {
+                      layer: this.geometryLayer,
+                      marker: this,
+                      layerName: layerName
+                    });
                   }
                 });
   

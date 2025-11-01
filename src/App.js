@@ -432,9 +432,6 @@ function App() {
               return newProgress;
             });
           }
-          
-          // The actual rename/move happens in AddCityWizard's handleSubmit
-          // This is handled by the onComplete callback below
         }
       }
   
@@ -638,6 +635,7 @@ function App() {
       
       await deleteLayer(selectedCity.name, domain, layerName);
   
+      // Update active layers - this will trigger feature reload which clears geometries
       if (activeLayers[layerName]) {
         const newActiveLayers = { ...activeLayers };
         delete newActiveLayers[layerName];

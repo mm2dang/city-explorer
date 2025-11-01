@@ -215,46 +215,431 @@ const LayerModal = ({
     return true;
   };
 
+  const getGeometryHash = (geometry) => {
+    if (!geometry || !geometry.coordinates) return null;
+    
+    try {
+      // Round coordinates to 6 decimal places for comparison (about 0.1 meter precision)
+      const roundCoord = (coord) => {
+        if (Array.isArray(coord[0])) {
+          return coord.map(roundCoord);
+        }
+        return [Number(coord[0].toFixed(6)), Number(coord[1].toFixed(6))];
+      };
+      
+      const roundedCoords = roundCoord(geometry.coordinates);
+      return `${geometry.type}:${JSON.stringify(roundedCoords)}`;
+    } catch (error) {
+      console.warn('Error creating geometry hash:', error);
+      return null;
+    }
+  };
+
   const cropFeatureByBoundary = useCallback((feature, boundaryGeojson) => {
     if (!boundaryGeojson) return feature;
+    
     try {
       const boundary = typeof boundaryGeojson === 'string'
         ? JSON.parse(boundaryGeojson)
         : boundaryGeojson;
+      
       const boundaryFeature = {
         type: 'Feature',
         geometry: boundary.geometry || boundary,
         properties: {}
       };
+      
       const turfFeature = {
         type: 'Feature',
         geometry: feature.geometry,
         properties: feature.properties || {}
       };
+      
+      // Check if feature intersects boundary at all
       const intersects = turf.booleanIntersects(turfFeature, boundaryFeature);
       if (!intersects) {
+        console.log('Feature does not intersect boundary');
         return null;
       }
+      
       if (feature.geometry.type === 'Point') {
         const isWithin = turf.booleanPointInPolygon(turfFeature, boundaryFeature);
         return isWithin ? feature : null;
-      } else if (feature.geometry.type === 'LineString' || feature.geometry.type === 'MultiLineString') {
-        return feature;
+        
+      } else if (feature.geometry.type === 'LineString') {
+        try {
+          console.log('Processing LineString with', feature.geometry.coordinates.length, 'points');
+          
+          // Check if completely within
+          const isFullyWithin = turf.booleanWithin(turfFeature, boundaryFeature);
+          
+          // CRITICAL: Even if booleanWithin returns true, check if line intersects boundary edge
+          let lineIntersectsBoundary = false;
+          try {
+            const intersections = turf.lineIntersect(turfFeature, boundaryFeature);
+            lineIntersectsBoundary = intersections.features.length > 0;
+            console.log('Line intersects boundary edge?', lineIntersectsBoundary);
+          } catch (intersectError) {
+            console.warn('Error checking line intersection with boundary:', intersectError);
+          }
+          
+          if (isFullyWithin && !lineIntersectsBoundary) {
+            console.log('LineString is fully within boundary (verified - no edge crossings)');
+            return feature;
+          }
+          
+          console.log('LineString crosses boundary - clipping needed');
+          
+          // Line crosses boundary - need to clip it segment by segment
+          const coords = feature.geometry.coordinates;
+          const clippedSegments = [];
+          let currentSegment = [];
+          
+          for (let i = 0; i < coords.length - 1; i++) {
+            const point1 = coords[i];
+            const point2 = coords[i + 1];
+            
+            const p1Inside = turf.booleanPointInPolygon(turf.point(point1), boundaryFeature);
+            const p2Inside = turf.booleanPointInPolygon(turf.point(point2), boundaryFeature);
+            
+            if (p1Inside && p2Inside) {
+              // Both points inside - BUT check if this specific segment crosses boundary
+              const segment = turf.lineString([point1, point2]);
+              let segmentCrossesBoundary = false;
+              try {
+                const segmentIntersections = turf.lineIntersect(segment, boundaryFeature);
+                segmentCrossesBoundary = segmentIntersections.features.length > 0;
+              } catch (err) {
+                console.warn('Error checking segment intersection:', err);
+              }
+              
+              if (!segmentCrossesBoundary) {
+                // Truly inside - add to current segment
+                if (currentSegment.length === 0) {
+                  currentSegment.push(point1);
+                }
+                currentSegment.push(point2);
+              } else {
+                // Segment goes outside and comes back in - need to split
+                console.log('Segment appears inside but crosses boundary - splitting');
+                
+                if (currentSegment.length === 0) {
+                  currentSegment.push(point1);
+                }
+                
+                // Find intersection points
+                const intersections = turf.lineIntersect(segment, boundaryFeature);
+                if (intersections.features.length >= 2) {
+                  // Exit and re-entry
+                  const exitPoint = intersections.features[0].geometry.coordinates;
+                  const entryPoint = intersections.features[1].geometry.coordinates;
+                  
+                  // Complete current segment at exit point
+                  currentSegment.push(exitPoint);
+                  if (currentSegment.length >= 2) {
+                    clippedSegments.push([...currentSegment]);
+                  }
+                  
+                  // Start new segment at entry point
+                  currentSegment = [entryPoint, point2];
+                }
+              }
+              
+            } else if (p1Inside && !p2Inside) {
+              // Crossing from inside to outside - find intersection and end segment
+              if (currentSegment.length === 0) {
+                currentSegment.push(point1);
+              }
+              
+              // Find where this segment crosses the boundary
+              const segment = turf.lineString([point1, point2]);
+              try {
+                const intersections = turf.lineIntersect(segment, boundaryFeature);
+                if (intersections.features.length > 0) {
+                  // Add the intersection point (exit point)
+                  const exitPoint = intersections.features[0].geometry.coordinates;
+                  currentSegment.push(exitPoint);
+                  console.log('Found exit point:', exitPoint);
+                }
+              } catch (err) {
+                console.warn('Error finding exit intersection:', err);
+              }
+              
+              // Save this segment
+              if (currentSegment.length >= 2) {
+                clippedSegments.push([...currentSegment]);
+                console.log('Saved segment with', currentSegment.length, 'points (exiting boundary)');
+              }
+              currentSegment = [];
+              
+            } else if (!p1Inside && p2Inside) {
+              // Crossing from outside to inside - find intersection and start new segment
+              const segment = turf.lineString([point1, point2]);
+              try {
+                const intersections = turf.lineIntersect(segment, boundaryFeature);
+                if (intersections.features.length > 0) {
+                  // Start new segment with entry point
+                  const entryPoint = intersections.features[0].geometry.coordinates;
+                  currentSegment = [entryPoint, point2];
+                  console.log('Found entry point:', entryPoint);
+                } else {
+                  // No intersection found, start with p2
+                  currentSegment = [point2];
+                }
+              } catch (err) {
+                console.warn('Error finding entry intersection:', err);
+                currentSegment = [point2];
+              }
+              
+            } else {
+              // Both points outside
+              // Check if segment crosses through the boundary (enters and exits)
+              const segment = turf.lineString([point1, point2]);
+              try {
+                const intersections = turf.lineIntersect(segment, boundaryFeature);
+                if (intersections.features.length >= 2) {
+                  // Segment passes through boundary - keep the middle part
+                  const entry = intersections.features[0].geometry.coordinates;
+                  const exit = intersections.features[1].geometry.coordinates;
+                  clippedSegments.push([entry, exit]);
+                  console.log('Segment crosses through boundary - keeping middle part');
+                }
+              } catch (err) {
+                console.warn('Error checking segment crossing:', err);
+              }
+              // If segment doesn't cross boundary, ignore it
+            }
+          }
+          
+          // Don't forget the last segment if we were building one
+          if (currentSegment.length >= 2) {
+            clippedSegments.push(currentSegment);
+            console.log('Saved final segment with', currentSegment.length, 'points');
+          }
+          
+          console.log('LineString clipping resulted in', clippedSegments.length, 'segments');
+          
+          if (clippedSegments.length === 0) {
+            console.log('No segments inside boundary');
+            return null;
+          } else if (clippedSegments.length === 1) {
+            console.log('Single segment inside boundary with', clippedSegments[0].length, 'points');
+            return {
+              ...feature,
+              geometry: {
+                type: 'LineString',
+                coordinates: clippedSegments[0]
+              }
+            };
+          } else {
+            console.log('Multiple segments inside boundary:', clippedSegments.map(s => s.length));
+            return {
+              ...feature,
+              geometry: {
+                type: 'MultiLineString',
+                coordinates: clippedSegments
+              }
+            };
+          }
+        } catch (clipError) {
+          console.error('Error clipping LineString:', clipError);
+          return feature;
+        }
+        
+      } else if (feature.geometry.type === 'MultiLineString') {
+        try {
+          console.log('Processing MultiLineString with', feature.geometry.coordinates.length, 'lines');
+          const allClippedSegments = [];
+          
+          for (const lineCoords of feature.geometry.coordinates) {
+            const lineFeature = {
+              type: 'Feature',
+              geometry: { type: 'LineString', coordinates: lineCoords },
+              properties: {}
+            };
+            
+            // Check if this line intersects boundary
+            if (!turf.booleanIntersects(lineFeature, boundaryFeature)) {
+              continue;
+            }
+            
+            // Check if completely within
+            const isFullyWithin = turf.booleanWithin(lineFeature, boundaryFeature);
+            
+            // CRITICAL: Even if booleanWithin returns true, check if line intersects boundary edge
+            let lineIntersectsBoundary = false;
+            try {
+              const intersections = turf.lineIntersect(lineFeature, boundaryFeature);
+              lineIntersectsBoundary = intersections.features.length > 0;
+              console.log('MultiLineString component intersects boundary edge?', lineIntersectsBoundary);
+            } catch (intersectError) {
+              console.warn('Error checking line intersection with boundary:', intersectError);
+            }
+            
+            if (isFullyWithin && !lineIntersectsBoundary) {
+              allClippedSegments.push(lineCoords);
+              continue;
+            }
+            
+            // Line crosses boundary - clip it segment by segment
+            let currentSegment = [];
+            
+            for (let i = 0; i < lineCoords.length - 1; i++) {
+              const point1 = lineCoords[i];
+              const point2 = lineCoords[i + 1];
+              
+              const p1Inside = turf.booleanPointInPolygon(turf.point(point1), boundaryFeature);
+              const p2Inside = turf.booleanPointInPolygon(turf.point(point2), boundaryFeature);
+              
+              if (p1Inside && p2Inside) {
+                // Both points inside - BUT check if this specific segment crosses boundary
+                const segment = turf.lineString([point1, point2]);
+                let segmentCrossesBoundary = false;
+                try {
+                  const segmentIntersections = turf.lineIntersect(segment, boundaryFeature);
+                  segmentCrossesBoundary = segmentIntersections.features.length > 0;
+                } catch (err) {
+                  console.warn('Error checking segment intersection:', err);
+                }
+                
+                if (!segmentCrossesBoundary) {
+                  // Truly inside - add to current segment
+                  if (currentSegment.length === 0) {
+                    currentSegment.push(point1);
+                  }
+                  currentSegment.push(point2);
+                } else {
+                  // Segment goes outside and comes back in - need to split
+                  console.log('MultiLineString segment appears inside but crosses boundary - splitting');
+                  
+                  if (currentSegment.length === 0) {
+                    currentSegment.push(point1);
+                  }
+                  
+                  // Find intersection points
+                  const intersections = turf.lineIntersect(segment, boundaryFeature);
+                  if (intersections.features.length >= 2) {
+                    // Exit and re-entry
+                    const exitPoint = intersections.features[0].geometry.coordinates;
+                    const entryPoint = intersections.features[1].geometry.coordinates;
+                    
+                    // Complete current segment at exit point
+                    currentSegment.push(exitPoint);
+                    if (currentSegment.length >= 2) {
+                      allClippedSegments.push([...currentSegment]);
+                    }
+                    
+                    // Start new segment at entry point
+                    currentSegment = [entryPoint, point2];
+                  }
+                }
+                
+              } else if (p1Inside && !p2Inside) {
+                // Exit boundary
+                if (currentSegment.length === 0) {
+                  currentSegment.push(point1);
+                }
+                
+                const segment = turf.lineString([point1, point2]);
+                try {
+                  const intersections = turf.lineIntersect(segment, boundaryFeature);
+                  if (intersections.features.length > 0) {
+                    currentSegment.push(intersections.features[0].geometry.coordinates);
+                  }
+                } catch (err) {
+                  console.warn('Error finding exit intersection:', err);
+                }
+                
+                if (currentSegment.length >= 2) {
+                  allClippedSegments.push([...currentSegment]);
+                }
+                currentSegment = [];
+                
+              } else if (!p1Inside && p2Inside) {
+                // Enter boundary
+                const segment = turf.lineString([point1, point2]);
+                try {
+                  const intersections = turf.lineIntersect(segment, boundaryFeature);
+                  if (intersections.features.length > 0) {
+                    currentSegment = [intersections.features[0].geometry.coordinates, point2];
+                  } else {
+                    currentSegment = [point2];
+                  }
+                } catch (err) {
+                  console.warn('Error finding entry intersection:', err);
+                  currentSegment = [point2];
+                }
+                
+              } else {
+                // Both outside - check for pass-through
+                const segment = turf.lineString([point1, point2]);
+                try {
+                  const intersections = turf.lineIntersect(segment, boundaryFeature);
+                  if (intersections.features.length >= 2) {
+                    allClippedSegments.push([
+                      intersections.features[0].geometry.coordinates,
+                      intersections.features[1].geometry.coordinates
+                    ]);
+                  }
+                } catch (err) {
+                  console.warn('Error checking segment crossing:', err);
+                }
+              }
+            }
+            
+            if (currentSegment.length >= 2) {
+              allClippedSegments.push(currentSegment);
+            }
+          }
+          
+          console.log('MultiLineString clipping resulted in', allClippedSegments.length, 'segments');
+          
+          if (allClippedSegments.length === 0) {
+            return null;
+          } else if (allClippedSegments.length === 1) {
+            return {
+              ...feature,
+              geometry: {
+                type: 'LineString',
+                coordinates: allClippedSegments[0]
+              }
+            };
+          } else {
+            return {
+              ...feature,
+              geometry: {
+                type: 'MultiLineString',
+                coordinates: allClippedSegments
+              }
+            };
+          }
+        } catch (multiLineError) {
+          console.error('Error processing MultiLineString:', multiLineError);
+          return feature;
+        }
+        
       } else if (feature.geometry.type === 'Polygon' || feature.geometry.type === 'MultiPolygon') {
         try {
           const intersection = turf.intersect(turfFeature, boundaryFeature);
+          
           if (intersection && intersection.geometry) {
             return {
               ...feature,
               geometry: intersection.geometry
             };
+          } else {
+            const isFullyWithin = turf.booleanWithin(turfFeature, boundaryFeature);
+            if (isFullyWithin) {
+              return feature;
+            }
+            return null;
           }
-          return null;
         } catch (intersectError) {
-          console.warn('Error computing intersection, keeping original feature:', intersectError);
+          console.warn('Error intersecting polygon:', intersectError);
           return feature;
         }
       }
+      
       return feature;
     } catch (error) {
       console.error('Error cropping feature by boundary:', error);
@@ -265,6 +650,7 @@ const LayerModal = ({
   const removeDuplicateFeatures = useCallback((newFeatures) => {
     const uniqueFeatures = [];
     const seenCoordinates = new Set();
+    const seenGeometries = new Set();
     
     console.log(`Checking ${newFeatures.length} new features against ${allCityFeatures.length} existing features in domain`);
     
@@ -287,7 +673,6 @@ const LayerModal = ({
       } else if (feature.geometry.type === 'MultiPolygon' && feature.geometry.coordinates.length > 0 && feature.geometry.coordinates[0].length > 0 && feature.geometry.coordinates[0][0].length > 0) {
         [lon, lat] = feature.geometry.coordinates[0][0][0];
       } else {
-        // Try to compute centroid for other geometry types
         try {
           const turfFeature = { type: 'Feature', geometry: feature.geometry, properties: {} };
           const centroid = turf.centroid(turfFeature);
@@ -301,52 +686,69 @@ const LayerModal = ({
         return null;
       }
       
-      // Create key with rounded coordinates (6 decimal places = ~0.1 meter precision)
       return `${lat.toFixed(6)},${lon.toFixed(6)}`;
     };
     
-    // Add all existing domain features' coordinates to the seen set
+    // Add all existing domain features' coordinates and geometries to the seen sets
     allCityFeatures.forEach(feature => {
       if (!editingLayer || feature.properties?.layer_name !== editingLayer.name) {
         const coordKey = getCoordinateKey(feature);
         if (coordKey) {
           seenCoordinates.add(coordKey);
         }
+        
+        const geomHash = getGeometryHash(feature.geometry);
+        if (geomHash) {
+          seenGeometries.add(geomHash);
+        }
       }
     });
     
-    console.log(`Added ${seenCoordinates.size} existing feature coordinates to duplicate check`);
+    console.log(`Added ${seenCoordinates.size} existing feature coordinates and ${seenGeometries.size} geometries to duplicate check`);
     
     // Then process new features
     let duplicatesFound = 0;
+    let geometryDuplicatesFound = 0;
     
     newFeatures.forEach((newFeature, index) => {
       const coordKey = getCoordinateKey(newFeature);
+      const geomHash = getGeometryHash(newFeature.geometry);
       
-      if (!coordKey) {
-        console.warn(`Could not extract coordinates from feature at index ${index}`);
+      if (!coordKey && !geomHash) {
+        console.warn(`Could not extract coordinates or geometry from feature at index ${index}`);
         uniqueFeatures.push(newFeature);
         return;
       }
       
       // Check if this coordinate already exists
-      if (seenCoordinates.has(coordKey)) {
+      if (coordKey && seenCoordinates.has(coordKey)) {
         duplicatesFound++;
-        console.log(`Duplicate found at index ${index}: coordinate ${coordKey} already exists`);
+        console.log(`Duplicate coordinate found at index ${index}: ${coordKey} already exists`);
         return;
       }
       
-      // Add to unique features and mark coordinate as seen
-      seenCoordinates.add(coordKey);
+      // Check if this exact geometry already exists
+      if (geomHash && seenGeometries.has(geomHash)) {
+        geometryDuplicatesFound++;
+        console.log(`Duplicate geometry found at index ${index}`);
+        return;
+      }
+      
+      // Add to unique features and mark coordinate and geometry as seen
+      if (coordKey) seenCoordinates.add(coordKey);
+      if (geomHash) seenGeometries.add(geomHash);
       uniqueFeatures.push(newFeature);
     });
     
-    if (duplicatesFound > 0) {
-      console.log(`Removed ${duplicatesFound} duplicate features based on lat/lon coordinates`);
+    const totalDuplicates = duplicatesFound + geometryDuplicatesFound;
+    
+    if (totalDuplicates > 0) {
+      console.log(`Removed ${duplicatesFound} coordinate duplicates and ${geometryDuplicatesFound} geometry duplicates`);
       
       alert(
-        `${duplicatesFound} duplicate feature${duplicatesFound > 1 ? 's were' : ' was'} removed.\n` +
-        `These features have the same latitude/longitude as features already in the ${selectedDomain} domain.`
+        `${totalDuplicates} duplicate feature${totalDuplicates > 1 ? 's were' : ' was'} removed.\n` +
+        `(${duplicatesFound} coordinate duplicates, ${geometryDuplicatesFound} geometry duplicates)\n` +
+        `These features already exist in the ${selectedDomain} domain.`
       );
     }
     
@@ -798,25 +1200,150 @@ const LayerModal = ({
             domain_name: selectedDomain
           }
         };
+        
         const croppedFeature = cropFeatureByBoundary(newFeature, cityBoundary);
+        
         if (croppedFeature && validateFeature(croppedFeature, featureIndex)) {
-          drawnItems.addLayer(layer);
+          map.removeLayer(layer);
+          
+          let croppedLayer;
+          
+          if (croppedFeature.geometry.type === 'Point') {
+            const [lon, lat] = croppedFeature.geometry.coordinates;
+            croppedLayer = L.marker([lat, lon], {
+              icon: L.divIcon({
+                className: 'custom-marker-icon',
+                html: `<div style="
+                  background-color: ${currentDomainColor};
+                  width: 30px;
+                  height: 30px;
+                  border-radius: 50%;
+                  border: 2px solid white;
+                  box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+                  display: flex;
+                  align-items: center;
+                  justify-content: center;
+                  color: white;
+                  font-size: 12px;
+                  z-index: 1000;
+                ">
+                  <i class="${finalLayerIcon}"></i>
+                </div>`,
+                iconSize: [28, 28],
+                iconAnchor: [14, 14]
+              })
+            });
+          } else {
+            // For lines and polygons, create GeoJSON layer with cropped geometry
+            croppedLayer = L.geoJSON(croppedFeature.geometry, {
+              style: {
+                color: currentDomainColor,
+                weight: 3,
+                opacity: 0.9,
+                fillColor: currentDomainColor,
+                fillOpacity: 0.3
+              }
+            });
+          }
+          
+          // Add the cropped layer to drawnItems
+          if (croppedLayer instanceof L.LayerGroup) {
+            croppedLayer.eachLayer(l => drawnItems.addLayer(l));
+          } else {
+            drawnItems.addLayer(croppedLayer);
+          }
+          
+          // Update features state
           setFeatures(prev => [...prev, croppedFeature]);
           console.log('Feature created in drawing map and cropped:', croppedFeature);
           
-          const popupContent = createPopupContent(croppedFeature, featureIndex, finalLayerName, selectedDomain, croppedFeature.geometry.type !== 'Point');
-          layer.bindPopup(popupContent, {
-            closeButton: true,
-            className: 'feature-marker-popup'
-          });
+          // Add popup to the cropped layer
+          const popupContent = createPopupContent(
+            croppedFeature, 
+            featureIndex, 
+            finalLayerName, 
+            selectedDomain, 
+            croppedFeature.geometry.type !== 'Point'
+          );
           
+          if (croppedLayer instanceof L.LayerGroup) {
+            croppedLayer.eachLayer(l => {
+              l.bindPopup(popupContent, {
+                closeButton: true,
+                className: 'feature-marker-popup'
+              });
+            });
+          } else {
+            croppedLayer.bindPopup(popupContent, {
+              closeButton: true,
+              className: 'feature-marker-popup'
+            });
+          }
+          
+          // Add centroid marker for non-point geometries
+          if (croppedFeature.geometry.type !== 'Point') {
+            try {
+              const tempLayer = L.geoJSON(croppedFeature.geometry);
+              const bounds = tempLayer.getBounds();
+              if (bounds.isValid()) {
+                const centroid = bounds.getCenter();
+                const centroidMarker = L.marker([centroid.lat, centroid.lng], {
+                  icon: L.divIcon({
+                    className: 'custom-marker-icon',
+                    html: `<div style="
+                      background-color: ${currentDomainColor};
+                      width: 30px;
+                      height: 30px;
+                      border-radius: 50%;
+                      border: 2px solid white;
+                      box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+                      display: flex;
+                      align-items: center;
+                      justify-content: center;
+                      color: white;
+                      font-size: 12px;
+                      z-index: 1000;
+                    ">
+                      <i class="${finalLayerIcon}"></i>
+                    </div>`,
+                    iconSize: [28, 28],
+                    iconAnchor: [14, 14]
+                  })
+                });
+                
+                const centroidPopupContent = createPopupContent(
+                  croppedFeature, 
+                  featureIndex, 
+                  finalLayerName, 
+                  selectedDomain, 
+                  true
+                );
+                centroidMarker.bindPopup(centroidPopupContent, {
+                  closeButton: true,
+                  className: 'feature-marker-popup'
+                });
+                centroidGroup.addLayer(centroidMarker);
+                console.log(`Drawing map: Added centroid for cropped feature at index ${featureIndex}`);
+              }
+            } catch (error) {
+              console.error(`Drawing map: Error adding centroid at index ${featureIndex}:`, error);
+            }
+          }
+          
+          // Auto-open name editor
           setTimeout(() => {
             setEditingFeatureName(featureIndex);
             setFeatureNameInput(`Feature ${featureIndex + 1}`);
           }, 100);
         } else {
           console.warn('Feature is outside city boundary in drawing map:', newFeature);
-          alert('Feature is outside the city boundary and was not added.');
+          
+          // If cropping resulted in null (completely outside), show alert
+          if (!croppedFeature) {
+            alert('Feature is completely outside the city boundary and was not added.');
+          } else {
+            alert('The feature you drew extends outside the city boundary. Only the portion inside the boundary has been kept.');
+          }
         }
       });
       map.on(L.Draw.Event.EDITED, () => {
@@ -1078,20 +1605,136 @@ const LayerModal = ({
             domain_name: selectedDomain
           }
         };
+        
         const croppedFeature = cropFeatureByBoundary(newFeature, cityBoundary);
+        
         if (croppedFeature && validateFeature(croppedFeature, featureIndex)) {
-          drawnItems.addLayer(layer);
+          // Add the CROPPED geometry to the map
+          let croppedLayer;
+          
+          if (croppedFeature.geometry.type === 'Point') {
+            const [lon, lat] = croppedFeature.geometry.coordinates;
+            croppedLayer = L.marker([lat, lon], {
+              icon: L.divIcon({
+                className: 'custom-marker-icon',
+                html: `<div style="
+                  background-color: ${currentDomainColor};
+                  width: 30px;
+                  height: 30px;
+                  border-radius: 50%;
+                  border: 2px solid white;
+                  box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+                  display: flex;
+                  align-items: center;
+                  justify-content: center;
+                  color: white;
+                  font-size: 12px;
+                  z-index: 1000;
+                ">
+                  <i class="${finalLayerIcon}"></i>
+                </div>`,
+                iconSize: [28, 28],
+                iconAnchor: [14, 14]
+              })
+            });
+          } else {
+            croppedLayer = L.geoJSON(croppedFeature.geometry, {
+              style: {
+                color: currentDomainColor,
+                weight: 3,
+                opacity: 0.9,
+                fillColor: currentDomainColor,
+                fillOpacity: 0.3
+              }
+            });
+          }
+          
+          // Add to drawnItems
+          if (croppedLayer instanceof L.LayerGroup) {
+            croppedLayer.eachLayer(l => reviewDrawnItemsRef.current.addLayer(l));
+          } else {
+            reviewDrawnItemsRef.current.addLayer(croppedLayer);
+          }
+          
           setFeatures(prev => [...prev, croppedFeature]);
           console.log('Feature created in review map and cropped:', croppedFeature);
           
-          const popupContent = createPopupContent(croppedFeature, featureIndex, finalLayerName, selectedDomain, croppedFeature.geometry.type !== 'Point');
-          layer.bindPopup(popupContent, {
-            closeButton: true,
-            className: 'feature-marker-popup'
-          });
+          const popupContent = createPopupContent(
+            croppedFeature, 
+            featureIndex, 
+            finalLayerName, 
+            selectedDomain, 
+            croppedFeature.geometry.type !== 'Point'
+          );
+          
+          if (croppedLayer instanceof L.LayerGroup) {
+            croppedLayer.eachLayer(l => {
+              l.bindPopup(popupContent, {
+                closeButton: true,
+                className: 'feature-marker-popup'
+              });
+            });
+          } else {
+            croppedLayer.bindPopup(popupContent, {
+              closeButton: true,
+              className: 'feature-marker-popup'
+            });
+          }
+          
+          // Add centroid for non-point geometries
+          if (croppedFeature.geometry.type !== 'Point') {
+            try {
+              const tempLayer = L.geoJSON(croppedFeature.geometry);
+              const bounds = tempLayer.getBounds();
+              if (bounds.isValid()) {
+                const centroid = bounds.getCenter();
+                const centroidMarker = L.marker([centroid.lat, centroid.lng], {
+                  icon: L.divIcon({
+                    className: 'custom-marker-icon',
+                    html: `<div style="
+                      background-color: ${currentDomainColor};
+                      width: 30px;
+                      height: 30px;
+                      border-radius: 50%;
+                      border: 2px solid white;
+                      box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+                      display: flex;
+                      align-items: center;
+                      justify-content: center;
+                      color: white;
+                      font-size: 12px;
+                      z-index: 1000;
+                    ">
+                      <i class="${finalLayerIcon}"></i>
+                    </div>`,
+                    iconSize: [28, 28],
+                    iconAnchor: [14, 14]
+                  })
+                });
+                
+                const centroidPopupContent = createPopupContent(
+                  croppedFeature, 
+                  featureIndex, 
+                  finalLayerName, 
+                  selectedDomain, 
+                  true
+                );
+                centroidMarker.bindPopup(centroidPopupContent, {
+                  closeButton: true,
+                  className: 'feature-marker-popup'
+                });
+                reviewCentroidGroupRef.current.addLayer(centroidMarker);
+              }
+            } catch (error) {
+              console.error(`Review map: Error adding centroid at index ${featureIndex}:`, error);
+            }
+          }
         } else {
-          console.warn('Feature is outside city boundary in review map:', newFeature);
-          alert('Feature is outside the city boundary and was not added.');
+          if (!croppedFeature) {
+            alert('Feature is completely outside the city boundary and was not added.');
+          } else {
+            console.warn('Feature validation failed in review map');
+          }
         }
       });
       map.on(L.Draw.Event.EDITED, () => {
