@@ -120,6 +120,14 @@ function App() {
     }
   };
 
+  const handleCityStatusChange = (cityName, hasData) => {
+    console.log(`Updating city status for ${cityName}: hasData=${hasData}`);
+    setCityDataStatus(prev => ({
+      ...prev,
+      [cityName]: hasData
+    }));
+  };
+
   const handleDataSourceChange = async (newSource) => {
     console.log(`Switching data source from ${dataSource} to ${newSource}`);
     setDataSourceState(newSource);
@@ -128,12 +136,17 @@ function App() {
     setActiveLayers({});
     setFeatures([]);
     setAvailableLayers({});
-
+  
+    // Filter processing progress to show ALL items regardless of data source
+    // This allows concurrent processing across data sources to be visible
+    console.log('Current processing progress:', processingProgress);
+    console.log(`Showing processing for data source: ${newSource}`);
+  
     setIsLoading(true);
     try {
       const citiesWithStatus = await getAllCitiesWithDataStatus();
       setCities(citiesWithStatus);
-
+  
       const newStatus = {};
       citiesWithStatus.forEach(city => {
         newStatus[city.name] = city.hasDataLayers;
@@ -193,9 +206,16 @@ function App() {
     }));
   };
 
+  // Helper function to create processing key
+  const getProcessingKey = (cityName, dataSource) => `${cityName}@${dataSource}`;
+
   const handleAddCity = async (cityData, startProcessing) => {
+    const targetDataSource = dataSource;
+    const processingKey = getProcessingKey(cityData.name, targetDataSource);
+    
     try {
-      console.log('Adding new city:', cityData);
+      console.log('Adding new city:', cityData, 'to data source:', targetDataSource);
+      console.log('Processing key:', processingKey);
       const parts = cityData.name.split(',').map(p => p.trim());
       let city, province, country;
       
@@ -205,43 +225,77 @@ function App() {
       } else {
         [city, province, country] = parts;
       }
-
+  
+      // Explicitly set data source before saving
+      setDataSource(targetDataSource);
+      
+      // Save city metadata to the CURRENT data source
       await saveCityData(cityData, country, province, city);
       await loadCities();
-
+  
       if (startProcessing) {
-        console.log('Starting background processing for:', cityData.name);
+        console.log('Starting background processing for:', cityData.name, 'in data source:', targetDataSource);
+        console.log('Using processing key:', processingKey);
+        
+        const layerDefinitions = {
+          mobility: 8,
+          governance: 3,
+          health: 6,
+          economy: 4,
+          environment: 5,
+          culture: 6,
+          education: 4,
+          housing: 2,
+          social: 3
+        };
+        const totalLayers = Object.values(layerDefinitions).reduce((sum, count) => sum + count, 0);
+        
         setProcessingProgress(prev => ({
           ...prev,
-          [cityData.name]: {
+          [processingKey]: {
+            cityName: cityData.name,
             processed: 0,
             saved: 0,
-            total: 0,
-            status: 'processing'
+            total: totalLayers, 
+            status: 'processing',
+            dataSource: targetDataSource
           }
         }));
-
+  
         setCityDataStatus(prev => ({
           ...prev,
           [cityData.name]: false
         }));
-
+  
+        // Pass targetDataSource to the processing callback
         startProcessing((cityName, progress) => {
-          console.log(`Processing progress for ${cityName}:`, progress);
+          const key = getProcessingKey(cityName, targetDataSource);
+          console.log(`Processing progress for ${cityName} in ${targetDataSource} (key: ${key}):`, progress);
+          
           setProcessingProgress(prev => ({
             ...prev,
-            [cityName]: progress
+            [key]: {
+              cityName: cityName,
+              processed: progress.processed !== undefined ? progress.processed : (prev[key]?.processed || 0),
+              saved: progress.saved !== undefined ? progress.saved : (prev[key]?.saved || 0),
+              total: progress.total || prev[key]?.total || totalLayers,
+              status: progress.status || 'processing',
+              dataSource: targetDataSource
+            }
           }));
-
-          if (progress.status === 'complete' && progress.saved > 0) {
-            setCityDataStatus(prev => ({
-              ...prev,
-              [cityName]: true
-            }));
+        
+          if (progress.status === 'complete') {
+            setProcessingProgress(prev => {
+              const newProgress = { ...prev };
+              delete newProgress[key];
+              return newProgress;
+            });
+            
+            loadCities();
           }
-        });
+        }, targetDataSource);
       }
-
+  
       setShowAddCityWizard(false);
       setEditingCity(null);
       confetti();
@@ -258,9 +312,29 @@ function App() {
   };
 
   const handleUpdateCity = async (updatedCityData, startProcessing, shouldRefresh) => {
+    const targetDataSource = dataSource;
+    const processingKey = getProcessingKey(updatedCityData.name, targetDataSource);
+    
     try {
       console.log('Updating city:', updatedCityData, 'shouldRefresh:', shouldRefresh);
       console.log('Editing city (old name):', editingCity?.name);
+      console.log('Target data source:', targetDataSource);
+      console.log('Processing key:', processingKey);
+      
+      // Check if this city is currently selected and will be processed
+      const isCurrentlySelected = selectedCity && 
+        (selectedCity.name === updatedCityData.name || 
+         (editingCity && selectedCity.name === editingCity.name));
+      const willBeProcessed = startProcessing !== null;
+      
+      // If the selected city will be processed, deselect it first
+      if (isCurrentlySelected && willBeProcessed) {
+        console.log('Deselecting city before processing:', selectedCity.name);
+        setSelectedCity(null);
+        setActiveLayers({});
+        setFeatures([]);
+        setAvailableLayers({});
+      }
       
       // Always reload cities after any update to get fresh data from S3
       console.log('Reloading all cities from S3 to get fresh metadata...');
@@ -278,19 +352,15 @@ function App() {
         });
         setCityDataStatus(newStatus);
   
-        // If metadata was updated and this is the selected city, update it with fresh data
-        if (shouldRefresh) {
+        // Only update selected city if it wasn't deselected for processing
+        if (shouldRefresh && !willBeProcessed) {
           console.log('Looking for updated city in fresh data:', updatedCityData.name);
           
-          // Find the city by its NEW name (after rename)
           const freshCity = citiesWithStatus.find(c => c.name === updatedCityData.name);
           if (freshCity) {
             console.log('Found fresh city data:', freshCity);
-            console.log('Fresh boundary length:', freshCity.boundary?.length);
-            console.log('Fresh population:', freshCity.population);
-            console.log('Fresh coordinates:', { lat: freshCity.latitude, lon: freshCity.longitude });
             
-            // Update selected city if it's currently selected (check both old and new names)
+            // Update selected city if it's currently selected
             if (selectedCity && (selectedCity.name === updatedCityData.name || 
                                  (editingCity && selectedCity.name === editingCity.name))) {
               console.log('Updating selected city with fresh metadata');
@@ -305,14 +375,6 @@ function App() {
                 console.warn('Error reloading layers:', error);
               }
             }
-          } else {
-            console.warn('Could not find updated city in fresh data:', updatedCityData.name);
-            console.log('Available cities:', citiesWithStatus.map(c => c.name));
-            
-            // If the city was renamed, try to find it by checking if the old name is gone
-            if (editingCity && editingCity.name !== updatedCityData.name) {
-              console.log('City was renamed, old name no longer exists as expected');
-            }
           }
         }
       } catch (error) {
@@ -322,32 +384,118 @@ function App() {
         setIsLoading(false);
       }
   
+      if (editingCity) {
+        const isRename = editingCity.name !== updatedCityData.name;
+        
+        // Check if the old city is currently processing IN THIS DATA SOURCE
+        const oldProcessingKey = getProcessingKey(editingCity.name, targetDataSource);
+        const oldCityProgress = processingProgress?.[oldProcessingKey];
+        const isOldCityProcessing = oldCityProgress && oldCityProgress.status === 'processing';
+        
+        if (isRename) {
+          console.log('City renamed, moving data and saving new metadata...');
+          
+          // If the old city is processing in THIS data source and being renamed, cancel and delete processed layers
+          if (isOldCityProcessing) {
+            console.log(`Old city is processing in ${targetDataSource} - cancelling and deleting processed layers...`);
+            
+            // Cancel the processing for this data source
+            const wasCancelled = await cancelCityProcessing(editingCity.name);
+            if (wasCancelled) {
+              console.log('Cancelled active processing for old city name');
+            }
+            
+            // Delete all processed layers for the old city
+            console.log('Deleting all processed layers for old city name...');
+            try {
+              // Get list of available layers for the old city
+              const oldLayers = await getAvailableLayersForCity(editingCity.name);
+              
+              // Delete each layer
+              for (const layerName of Object.keys(oldLayers)) {
+                const layerInfo = oldLayers[layerName];
+                if (layerInfo.domain) {
+                  console.log(`Deleting layer: ${layerName} (${layerInfo.domain})`);
+                  await handleDeleteLayer(layerInfo.domain, layerName, { silent: true });
+                }
+              }
+              console.log('Successfully deleted all processed layers for old city name');
+            } catch (layerError) {
+              console.error('Error deleting processed layers:', layerError);
+              // Continue with rename even if layer deletion fails
+            }
+            
+            // Clear the processing progress for the old city name IN THIS DATA SOURCE
+            setProcessingProgress(prev => {
+              const newProgress = { ...prev };
+              delete newProgress[oldProcessingKey];
+              return newProgress;
+            });
+          }
+          
+          // The actual rename/move happens in AddCityWizard's handleSubmit
+          // This is handled by the onComplete callback below
+        }
+      }
+  
       if (startProcessing) {
-        console.log('Starting background processing for updated city:', updatedCityData.name);
+        console.log('Starting background processing for updated city:', updatedCityData.name, 'in data source:', targetDataSource);
+        console.log('Using processing key:', processingKey);
+        
+        // Calculate total layers upfront for editing too
+        const layerDefinitions = {
+          mobility: 8,
+          governance: 3,
+          health: 6,
+          economy: 4,
+          environment: 5,
+          culture: 6,
+          education: 4,
+          housing: 2,
+          social: 3
+        };
+        const totalLayers = Object.values(layerDefinitions).reduce((sum, count) => sum + count, 0);
+        
         setProcessingProgress(prev => ({
           ...prev,
-          [updatedCityData.name]: {
+          [processingKey]: {
+            cityName: updatedCityData.name,
             processed: 0,
             saved: 0,
-            total: 0,
-            status: 'processing'
+            total: totalLayers,
+            status: 'processing',
+            dataSource: targetDataSource
           }
         }));
   
         startProcessing((cityName, progress) => {
-          console.log(`Processing progress for ${cityName}:`, progress);
+          const key = getProcessingKey(cityName, targetDataSource);
+          console.log(`Processing progress for ${cityName} in ${targetDataSource} (key: ${key}):`, progress);
+          
           setProcessingProgress(prev => ({
             ...prev,
-            [cityName]: progress
+            [key]: {
+              cityName: cityName,
+              processed: progress.processed !== undefined ? progress.processed : (prev[key]?.processed || 0),
+              saved: progress.saved !== undefined ? progress.saved : (prev[key]?.saved || 0),
+              total: progress.total || prev[key]?.total || totalLayers,
+              status: progress.status || 'processing',
+              dataSource: targetDataSource
+            }
           }));
-  
-          if (progress.status === 'complete' && progress.saved > 0) {
-            setCityDataStatus(prev => ({
-              ...prev,
-              [cityName]: true
-            }));
+        
+          // Only update status when explicitly marked as complete
+          if (progress.status === 'complete') {
+            setProcessingProgress(prev => {
+              const newProgress = { ...prev };
+              delete newProgress[key];
+              return newProgress;
+            });
+            
+            // Reload cities to get accurate status
+            loadCities();
           }
-        });
+        }, targetDataSource);
       }
   
       setShowAddCityWizard(false);
@@ -498,6 +646,12 @@ function App() {
   
       const layers = await getAvailableLayersForCity(selectedCity.name);
       setAvailableLayers(layers);
+      
+      // Check if this was the last layer
+      if (Object.keys(layers).length === 0) {
+        console.log('Last layer deleted - updating city status to pending');
+        handleCityStatusChange(selectedCity.name, false);
+      }
       
       console.log('Layer deleted successfully');
     } catch (error) {
@@ -802,48 +956,135 @@ function App() {
         onMapViewChange={handleMapViewChange}
       />
       <div className="main-content">
-        <Sidebar
-          selectedCity={selectedCity}
-          cityBoundary={selectedCity?.boundary}
-          activeLayers={activeLayers}
-          onLayerToggle={handleLayerToggle}
-          onEditLayer={handleEditLayer}
-          availableLayers={availableLayers}
-          domainColors={domainColors}
-          onLayerSave={handleSaveLayer}
-          onLayerDelete={handleDeleteLayer}
-          mapView={mapView}
-        />
-        <MapViewer
-          selectedCity={selectedCity}
-          activeLayers={activeLayers}
-          domainColors={domainColors}
-          loadCityFeatures={loadCityFeatures}
-          availableLayers={availableLayers}
-          mapView={mapView}
-          cities={cities}
-          onCitySelect={handleCitySelect}
-          processingProgress={processingProgress}
-        />
-        <IndicatorsSidebar
-          selectedCity={selectedCity}
+      <Sidebar
+        selectedCity={selectedCity}
+        cityBoundary={selectedCity?.boundary}
+        activeLayers={activeLayers}
+        onLayerToggle={handleLayerToggle}
+        onEditLayer={handleEditLayer}
+        availableLayers={availableLayers}
+        domainColors={domainColors}
+        onLayerSave={handleSaveLayer}
+        onLayerDelete={handleDeleteLayer}
+        mapView={mapView}
+        onImportComplete={(cityName, progress) => {
+          const effectiveDataSource = progress.dataSource || dataSource;
+          const processingKey = getProcessingKey(cityName, effectiveDataSource);
+          
+          console.log('Import complete callback:', { 
+            cityName, 
+            progressDataSource: progress.dataSource, 
+            currentDataSource: dataSource, 
+            effectiveDataSource, 
+            processingKey 
+          });
+          
+          if (progress.status === 'processing') {
+            console.log('Starting OSM import processing for:', cityName, 'in', effectiveDataSource);
+            console.log('Using processing key:', processingKey);
+            
+            // Only reset map if this is the currently selected city AND same data source
+            if (selectedCity?.name === cityName && progress.dataSource === dataSource) {
+              console.log('Deselecting currently selected city for import');
+              setSelectedCity(null);
+              setActiveLayers({});
+              setFeatures([]);
+              setAvailableLayers({});
+            }
+            
+            // Set initial processing progress with data-source-specific key
+            setProcessingProgress(prev => ({
+              ...prev,
+              [processingKey]: {
+                cityName: cityName,
+                processed: progress.processed !== undefined ? progress.processed : (prev[processingKey]?.processed || 0),
+                saved: progress.saved !== undefined ? progress.saved : (prev[processingKey]?.saved || 0),
+                total: progress.total || prev[processingKey]?.total || 41,
+                status: 'processing',
+                dataSource: progress.dataSource || dataSource
+              }
+            }));
+            
+            // Set city status to not ready
+            setCityDataStatus(prev => ({
+              ...prev,
+              [cityName]: false
+            }));
+          } else if (progress.status === 'complete') {
+            // Processing complete - remove from processing progress
+            console.log('OSM import complete for:', cityName, 'in', progress.dataSource, `Saved ${progress.saved || 0} layers`);
+            console.log('Removing processing key:', processingKey);
+            
+            // Remove from processing progress
+            setProcessingProgress(prev => {
+              const newProgress = { ...prev };
+              delete newProgress[processingKey];
+              return newProgress;
+            });
+            
+            // Reload cities to get fresh status
+            loadCities();
+          } else if (progress.status === 'failed') {
+            // Processing failed - remove from processing progress
+            console.log('OSM import failed for:', cityName, 'in', progress.dataSource);
+            console.log('Removing processing key:', processingKey);
+            
+            setProcessingProgress(prev => {
+              const newProgress = { ...prev };
+              delete newProgress[processingKey];
+              return newProgress;
+            });
+          } else {
+            // Progress update - keep processing status
+            console.log('OSM import progress for:', cityName, 'in', progress.dataSource, progress);
+            setProcessingProgress(prev => ({
+              ...prev,
+              [processingKey]: {
+                cityName: cityName,
+                processed: progress.processed !== undefined ? progress.processed : (prev[processingKey]?.processed || 0),
+                saved: progress.saved !== undefined ? progress.saved : (prev[processingKey]?.saved || 0),
+                total: prev[processingKey]?.total || progress.total || 41,
+                status: 'processing',
+                dataSource: prev[processingKey]?.dataSource || progress.dataSource || dataSource
+              }
+            }));
+          }
+        }}
+        onCityStatusChange={handleCityStatusChange}
+        dataSource={dataSource}
+      />
+      <MapViewer
+        selectedCity={selectedCity}
+        activeLayers={activeLayers}
+        domainColors={domainColors}
+        loadCityFeatures={loadCityFeatures}
+        availableLayers={availableLayers}
+        mapView={mapView}
+        cities={cities}
+        onCitySelect={handleCitySelect}
+        processingProgress={processingProgress}
+        dataSource={dataSource}
+      />
+      <IndicatorsSidebar
+        selectedCity={selectedCity}
+        dataSource={dataSource}
+        onCalculateIndicators={() => setShowCalculateIndicatorsModal(true)}
+        cities={cities}
+      />
+    </div>
+
+    {showAddCityWizard && (
+      <div className="wizard-overlay">
+        <AddCityWizard
+          onCancel={() => {
+            setShowAddCityWizard(false);
+            setEditingCity(null);
+          }}
+          onComplete={editingCity ? handleUpdateCity : handleAddCity}
+          editingCity={editingCity}
           dataSource={dataSource}
-          onCalculateIndicators={() => setShowCalculateIndicatorsModal(true)}
-          cities={cities}
         />
       </div>
-
-      {showAddCityWizard && (
-        <div className="wizard-overlay">
-          <AddCityWizard
-            onCancel={() => {
-              setShowAddCityWizard(false);
-              setEditingCity(null);
-            }}
-            onComplete={editingCity ? handleUpdateCity : handleAddCity}
-            editingCity={editingCity}
-          />
-        </div>
       )}
 
       {showLayerModal && selectedCity && (

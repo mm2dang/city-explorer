@@ -116,7 +116,8 @@ const MapViewer = ({
   mapView = 'street',
   cities = [],
   onCitySelect = () => {},
-  processingProgress = {}
+  processingProgress = {},
+  dataSource = 'osm'
 }) => {
   const mapRef = useRef(null);
   const mapInstanceRef = useRef(null);
@@ -368,9 +369,10 @@ const MapViewer = ({
     const cityMarkersGroup = L.layerGroup();
   
     cities.forEach(city => {
-      // Check if city is currently processing
-      const progress = processingProgress?.[city.name];
-      const isProcessing = progress && progress.status === 'processing';
+      // Check if city is currently processing using the correct processing key
+      const processingKey = `${city.name}@${dataSource}`;
+      const progress = processingProgress?.[processingKey];
+      const isProcessing = progress && progress.status === 'processing' && progress.dataSource === dataSource;
       
       try {
         let markerLat, markerLng;
@@ -417,18 +419,18 @@ const MapViewer = ({
           iconAnchor: [16, 16],
           popupAnchor: [0, -16]
         });
-
+  
         const marker = L.marker([markerLat, markerLng], {
           icon: cityIcon,
           zIndexOffset: 2000
         });
-
+  
         // Parse city name for display
         const parsedName = city.name.split(',').map(p => p.trim());
         const cityName = parsedName[0];
         const province = parsedName[1] || '';
         const country = parsedName[2] || parsedName[1] || '';
-
+  
         // Create tooltip content
         let tooltipContent = `<strong>${cityName}</strong>`;
         if (province && country) {
@@ -442,7 +444,7 @@ const MapViewer = ({
         if (city.size) {
           tooltipContent += `<br/>Area: ${city.size} km²`;
         }
-
+  
         // Bind tooltip
         marker.bindTooltip(tooltipContent, {
           permanent: false,
@@ -451,7 +453,7 @@ const MapViewer = ({
           opacity: 0.95,
           className: 'city-marker-tooltip'
         });
-
+  
         // Add hover effect
         if (!isProcessing) {
           marker.on('mouseover', function(e) {
@@ -470,7 +472,7 @@ const MapViewer = ({
             }
           });
         }
-
+  
         // Click handler to select city
         marker.on('click', function(e) {
           if (isProcessing) {
@@ -519,7 +521,7 @@ const MapViewer = ({
       cityMarkersLayerRef.current = cityMarkersGroup;
       console.log(`MapViewer: Added ${cityMarkersGroup.getLayers().length} city markers`);
     }
-  }, [cities, selectedCity, onCitySelect, processingProgress]);
+  }, [cities, selectedCity, onCitySelect, processingProgress, dataSource]);
 
   useEffect(() => {
     displayCityMarkers();
@@ -1138,6 +1140,16 @@ const MapViewer = ({
   useEffect(() => {
     if (!mapInstanceRef.current || !selectedCity) return;
   
+    // Check if the city is currently processing using the correct processing key
+    const processingKey = `${selectedCity.name}@${dataSource}`;
+    const progress = processingProgress?.[processingKey];
+    const isProcessing = progress && progress.status === 'processing' && progress.dataSource === dataSource;
+    
+    if (isProcessing) {
+      console.log('MapViewer: Skipping map update - city is currently processing:', selectedCity.name, 'in', dataSource);
+      return;
+    }
+  
     console.log('MapViewer: Selected city changed, updating display');
     console.log('MapViewer: City data:', {
       name: selectedCity.name,
@@ -1196,7 +1208,7 @@ const MapViewer = ({
       console.log('MapViewer: No boundary, centering on coordinates');
       mapInstanceRef.current.setView([selectedCity.latitude, selectedCity.longitude], 12);
     }
-  }, [selectedCity]);
+  }, [selectedCity, processingProgress, dataSource]);
   
   return (
     <div className="map-viewer">

@@ -296,12 +296,28 @@ export const processCityFeaturesLive = async (boundary, activeLayerNames) => {
 
 const getBoundingBox = (boundary) => {
   try {
-    const coords = boundary.type === 'Polygon' 
-      ? boundary.coordinates[0]
-      : boundary.coordinates[0][0];
+    let allCoords = [];
     
-    const lons = coords.map(([lon]) => lon);
-    const lats = coords.map(([, lat]) => lat);
+    if (boundary.type === 'Polygon') {
+      // Single polygon - use outer ring
+      allCoords = boundary.coordinates[0];
+    } else if (boundary.type === 'MultiPolygon') {
+      // Multiple polygons - collect all outer rings
+      for (const polygon of boundary.coordinates) {
+        allCoords.push(...polygon[0]);
+      }
+    } else {
+      console.error('Unsupported boundary type:', boundary.type);
+      return null;
+    }
+    
+    if (allCoords.length === 0) {
+      console.error('No coordinates found in boundary');
+      return null;
+    }
+    
+    const lons = allCoords.map(([lon]) => lon);
+    const lats = allCoords.map(([, lat]) => lat);
     
     return {
       south: Math.min(...lats),
@@ -362,6 +378,13 @@ const fetchLayerFeatures = async (bbox, tags, layerName, domain, boundary) => {
     const data = await response.json();
     const features = [];
 
+    // Create Turf boundary feature for intersection tests
+    const boundaryFeature = {
+      type: 'Feature',
+      geometry: boundary,
+      properties: {}
+    };
+
     for (const element of data.elements) {
       try {
         // Create point geometry (centroid for polygons/ways)
@@ -394,9 +417,23 @@ const fetchLayerFeatures = async (bbox, tags, layerName, domain, boundary) => {
 
         if (!coordinates) continue;
 
-        // Check if point is within boundary
+        // Check if point is within boundary (works for both Polygon and MultiPolygon)
         const point = turf.point(coordinates);
-        if (!turf.booleanWithin(point, boundary) && !turf.booleanIntersects(point, boundary)) {
+        
+        let isInside = false;
+        try {
+          // booleanPointInPolygon and booleanWithin work with MultiPolygon
+          if (boundary.type === 'MultiPolygon') {
+            isInside = turf.booleanPointInPolygon(point, boundaryFeature);
+          } else {
+            isInside = turf.booleanWithin(point, boundary) || turf.booleanIntersects(point, boundary);
+          }
+        } catch (error) {
+          console.warn('Error checking point intersection:', error);
+          continue;
+        }
+        
+        if (!isInside) {
           continue;
         }
 

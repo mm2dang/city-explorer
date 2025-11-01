@@ -14,28 +14,60 @@ self.onmessage = async (e) => {
       throw new Error('Invalid boundary: No coordinates provided');
     }
 
-    const coords = boundary.type === 'Polygon' 
-      ? boundary.coordinates[0]
-      : boundary.coordinates[0][0];
+    // Calculate bbox that encompasses all polygons in the boundary
+    let allCoords = [];
+    if (boundary.type === 'Polygon') {
+      allCoords = boundary.coordinates[0];
+    } else if (boundary.type === 'MultiPolygon') {
+      // Collect all outer rings from all polygons
+      for (const polygon of boundary.coordinates) {
+        allCoords.push(...polygon[0]);
+      }
+    } else {
+      throw new Error(`Unsupported boundary type: ${boundary.type}`);
+    }
     
-    const lons = coords.map(([lon]) => lon);
-    const lats = coords.map(([, lat]) => lat);
+    if (allCoords.length === 0) {
+      throw new Error('No coordinates found in boundary');
+    }
+    
+    const lons = allCoords.map(([lon]) => lon);
+    const lats = allCoords.map(([, lat]) => lat);
     const south = Math.min(...lats);
     const west = Math.min(...lons);
     const north = Math.max(...lats);
     const east = Math.max(...lons);
     bbox = `${south},${west},${north},${east}`;
+    
+    console.log(`Calculated bbox for ${boundary.type}:`, bbox);
+    if (boundary.type === 'MultiPolygon') {
+      console.log(`MultiPolygon contains ${boundary.coordinates.length} separate polygons`);
+    }
 
     // Simplify boundary to reduce complexity
     let simplifiedBoundary = boundary;
     try {
       if (boundary.type === 'Polygon' || boundary.type === 'MultiPolygon') {
-        simplifiedBoundary = turf.simplify(boundary, { tolerance: 0.001, highQuality: true });
+        const boundaryFeature = {
+          type: 'Feature',
+          geometry: boundary,
+          properties: {}
+        };
+        const simplified = turf.simplify(boundaryFeature, { tolerance: 0.001, highQuality: true });
+        simplifiedBoundary = simplified.geometry;
+        console.log(`Simplified ${boundary.type} boundary for faster processing`);
       }
     } catch (error) {
       console.warn('Error simplifying boundary:', error);
       simplifiedBoundary = boundary;
     }
+    
+    // Create boundary feature for intersection tests
+    const boundaryFeature = {
+      type: 'Feature',
+      geometry: simplifiedBoundary,
+      properties: {}
+    };
 
     const results = [];
     
@@ -333,6 +365,10 @@ self.onmessage = async (e) => {
     };
 
     // Process each layer
+    const totalLayers = tagsList.length;
+    let processedLayers = 0;
+    let savedLayers = 0;
+
     for (const { tags, filename, domain } of tagsList) {
       try {
         console.log(`Worker processing layer: ${filename} in domain: ${domain}`);
@@ -488,9 +524,11 @@ self.onmessage = async (e) => {
                 const feature = { type: 'Feature', geometry, properties: {} };
                 
                 if (geometry.type === 'Point') {
-                  isInside = turf.booleanPointInPolygon(feature, simplifiedBoundary);
+                  // Use boundaryFeature which works with both Polygon and MultiPolygon
+                  isInside = turf.booleanPointInPolygon(feature, boundaryFeature);
                 } else {
-                  isInside = turf.booleanIntersects(feature, simplifiedBoundary);
+                  // booleanIntersects works with MultiPolygon boundaries
+                  isInside = turf.booleanIntersects(feature, boundaryFeature);
                 }
               } catch (error) {
                 console.warn('Intersection test failed, skipping feature:', error);
@@ -502,13 +540,91 @@ self.onmessage = async (e) => {
                 const featureName = el.tags ? 
                   (el.tags.name || el.tags.brand || el.tags.operator || el.tags.ref || null) : null;
 
-                // Create feature with proper structure for saving
+                // Crop geometry to boundary if it's a line or polygon
+                let finalGeometry = geometry;
+                
+                if (geometry.type === 'LineString' || geometry.type === 'MultiLineString' || 
+                    geometry.type === 'Polygon' || geometry.type === 'MultiPolygon') {
+                  try {
+                    const feature = { type: 'Feature', geometry, properties: {} };
+                    const boundaryFeature = { 
+                      type: 'Feature', 
+                      geometry: simplifiedBoundary, 
+                      properties: {} 
+                    };
+                    
+                    // Check if feature is completely within boundary
+                    const isFullyWithin = turf.booleanWithin(feature, boundaryFeature);
+                    
+                    if (!isFullyWithin) {
+                      // Feature crosses boundary - crop it
+                      if (geometry.type === 'LineString') {
+                        try {
+                          const clipped = turf.bboxClip(feature, turf.bbox(boundaryFeature));
+                          if (clipped && clipped.geometry) {
+                            finalGeometry = clipped.geometry;
+                          }
+                        } catch (clipError) {
+                          console.warn('Error clipping LineString:', clipError);
+                          finalGeometry = geometry;
+                        }
+                      } else if (geometry.type === 'Polygon' || geometry.type === 'MultiPolygon') {
+                        try {
+                          const intersection = turf.intersect(feature, boundaryFeature);
+                          if (intersection && intersection.geometry) {
+                            finalGeometry = intersection.geometry;
+                          }
+                        } catch (intersectError) {
+                          console.warn('Error intersecting polygon:', intersectError);
+                          finalGeometry = geometry;
+                        }
+                      } else if (geometry.type === 'MultiLineString') {
+                        // Process each line separately
+                        try {
+                          const croppedLines = [];
+                          for (const lineCoords of geometry.coordinates) {
+                            const lineFeature = {
+                              type: 'Feature',
+                              geometry: { type: 'LineString', coordinates: lineCoords },
+                              properties: {}
+                            };
+                            try {
+                              const clipped = turf.bboxClip(lineFeature, turf.bbox(boundaryFeature));
+                              if (clipped && clipped.geometry && clipped.geometry.coordinates.length >= 2) {
+                                croppedLines.push(clipped.geometry.coordinates);
+                              }
+                            } catch (clipError) {
+                              if (lineCoords.length >= 2) {
+                                croppedLines.push(lineCoords);
+                              }
+                            }
+                          }
+                          if (croppedLines.length > 0) {
+                            if (croppedLines.length === 1) {
+                              finalGeometry = { type: 'LineString', coordinates: croppedLines[0] };
+                            } else {
+                              finalGeometry = { type: 'MultiLineString', coordinates: croppedLines };
+                            }
+                          }
+                        } catch (multiLineError) {
+                          console.warn('Error processing MultiLineString:', multiLineError);
+                          finalGeometry = geometry;
+                        }
+                      }
+                    }
+                  } catch (cropError) {
+                    console.warn('Error cropping geometry:', cropError);
+                    finalGeometry = geometry;
+                  }
+                }
+
+                // Create feature with cropped geometry
                 const feature = {
                   type: 'Feature',
-                  geometry: geometry, // Complete GeoJSON geometry (including Multi* types)
+                  geometry: finalGeometry, // Use cropped geometry
                   properties: {
                     name: featureName,
-                    geometry_type: geometry.type, // Store the actual geometry type
+                    geometry_type: finalGeometry.type, // Use cropped geometry type
                     // Include original OSM tags for reference
                     ...(el.tags || {})
                   },
@@ -535,9 +651,38 @@ self.onmessage = async (e) => {
         }
 
         console.log(`Completed ${filename}: ${processedCount} features found inside boundary (${duplicateCount} duplicates removed)`);
+
+        // Track if this layer had data
+        processedLayers++;
+        if (processedCount > 0) {
+          savedLayers++;
+        }
+
+        // Send progress update
+        const progressUpdate = { 
+          progress: {
+            processed: processedLayers,
+            saved: savedLayers,
+            total: totalLayers,
+            status: 'processing'
+          }
+        };
+        console.log('Worker sending progress update:', progressUpdate);
+        self.postMessage(progressUpdate);
         
       } catch (layerError) {
         console.warn(`Error processing layer ${filename}:`, layerError);
+        processedLayers++; // Still count failed layers as processed
+        
+        // Send progress update even on error
+        self.postMessage({ 
+          progress: {
+            processed: processedLayers,
+            saved: savedLayers,
+            total: totalLayers,
+            status: 'processing'
+          }
+        });
         continue;
       }
       
@@ -546,7 +691,15 @@ self.onmessage = async (e) => {
     }
 
     console.log(`Worker completed processing with ${results.length} total features`);
-    self.postMessage({ results });
+    self.postMessage({ 
+      results,
+      progress: {
+        processed: processedLayers,
+        saved: savedLayers,
+        total: totalLayers,
+        status: 'complete'
+      }
+    });
     
   } catch (error) {
     console.error('Worker error:', error);

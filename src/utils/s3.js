@@ -1219,29 +1219,23 @@ const cropFeaturesByBoundary = (features, boundary) => {
       throw validationError;
     }
     
-    // Convert boundary to appropriate Turf geometry
-    let boundaryPolygon;
-    try {
-      if (boundaryGeometry.type === 'Polygon') {
-        // For Polygon, pass coordinates directly
-        boundaryPolygon = turf.polygon(boundaryGeometry.coordinates);
-      } else if (boundaryGeometry.type === 'MultiPolygon') {
-        // For MultiPolygon, create a feature collection and use booleanIntersects with the feature
-        // We'll check intersection differently for MultiPolygon
-        boundaryPolygon = {
-          type: 'Feature',
-          geometry: boundaryGeometry,
-          properties: {}
-        };
-      } else {
-        throw new Error(`Unsupported geometry type: ${boundaryGeometry.type}`);
-      }
-    } catch (turfError) {
-      console.error('Error creating boundary geometry:', turfError);
-      throw new Error(`Failed to create geometry from boundary: ${turfError.message}`);
+    // Create Turf feature from boundary (works for both Polygon and MultiPolygon)
+    const boundaryFeature = {
+      type: 'Feature',
+      geometry: boundaryGeometry,
+      properties: {}
+    };
+    
+    console.log(`Cropping features against ${boundaryGeometry.type} boundary`);
+    if (boundaryGeometry.type === 'MultiPolygon') {
+      console.log(`MultiPolygon has ${boundaryGeometry.coordinates.length} separate polygons`);
     }
     
     const croppedFeatures = [];
+    let fullyCroppedCount = 0;
+    let partiallyCroppedCount = 0;
+    let pointsInsideCount = 0;
+    let pointsOutsideCount = 0;
     
     for (const feature of features) {
       try {
@@ -1258,15 +1252,10 @@ const cropFeaturesByBoundary = (features, boundary) => {
           properties: feature.properties || {}
         };
         
-        // Check if feature intersects with boundary
+        // Check if feature intersects with boundary (works for MultiPolygon)
         let intersects = false;
         try {
-          // booleanIntersects works with both Polygon and MultiPolygon features
-          if (boundaryGeometry.type === 'MultiPolygon') {
-            intersects = turf.booleanIntersects(turfFeature, boundaryPolygon);
-          } else {
-            intersects = turf.booleanIntersects(turfFeature, boundaryPolygon);
-          }
+          intersects = turf.booleanIntersects(turfFeature, boundaryFeature);
         } catch (intersectError) {
           console.warn('Error checking intersection for feature:', intersectError.message);
           continue;
@@ -1274,14 +1263,13 @@ const cropFeaturesByBoundary = (features, boundary) => {
         
         if (intersects) {
           try {
-            // Crop the feature to the boundary
-            let croppedGeometry;
+            let croppedGeometry = null;
             
             if (geometry.type === 'Point') {
               // For points, check if they're within the boundary
               let isWithin = false;
               try {
-                isWithin = turf.booleanPointInPolygon(turfFeature, boundaryPolygon);
+                isWithin = turf.booleanPointInPolygon(turfFeature, boundaryFeature);
               } catch (pointError) {
                 console.warn('Error checking point in polygon:', pointError.message);
                 continue;
@@ -1289,28 +1277,150 @@ const cropFeaturesByBoundary = (features, boundary) => {
               
               if (isWithin) {
                 croppedGeometry = geometry;
+                pointsInsideCount++;
               } else {
-                continue; // Skip points outside boundary
+                pointsOutsideCount++;
+                continue;
               }
-            } else if (geometry.type === 'LineString' || geometry.type === 'MultiLineString') {
-              // For lines, keep if they intersect (exact cropping is complex)
-              croppedGeometry = geometry;
-            } else if (geometry.type === 'Polygon' || geometry.type === 'MultiPolygon') {
-              // For polygons, try to intersect with boundary
-              let intersection;
+              
+            } else if (geometry.type === 'LineString') {
+              // Crop LineString to boundary
               try {
-                intersection = turf.intersect(turfFeature, boundaryPolygon);
-              } catch (intersectGeomError) {
-                console.warn('Error intersecting geometry with boundary:', intersectGeomError.message);
-                // If intersection fails but feature intersects, include original
+                const clipped = turf.bboxClip(turfFeature, turf.bbox(boundaryFeature));
+                
+                // Further refine by intersecting with actual boundary polygon
+                if (clipped && clipped.geometry) {
+                  // Check if line is completely within boundary
+                  const isFullyWithin = turf.booleanWithin(turfFeature, boundaryFeature);
+                  
+                  if (isFullyWithin) {
+                    croppedGeometry = geometry;
+                    fullyCroppedCount++;
+                  } else {
+                    // Line crosses boundary - use clipped version
+                    croppedGeometry = clipped.geometry;
+                    partiallyCroppedCount++;
+                  }
+                } else {
+                  croppedGeometry = geometry;
+                }
+              } catch (clipError) {
+                console.warn('Error clipping LineString:', clipError.message);
                 croppedGeometry = geometry;
               }
               
-              if (intersection && intersection.geometry) {
-                croppedGeometry = intersection.geometry;
-              } else if (!croppedGeometry) {
-                continue;
+            } else if (geometry.type === 'MultiLineString') {
+              // Process each line in the MultiLineString
+              try {
+                const croppedLines = [];
+                
+                for (const lineCoords of geometry.coordinates) {
+                  const lineFeature = {
+                    type: 'Feature',
+                    geometry: { type: 'LineString', coordinates: lineCoords },
+                    properties: {}
+                  };
+                  
+                  if (turf.booleanIntersects(lineFeature, boundaryFeature)) {
+                    try {
+                      const clipped = turf.bboxClip(lineFeature, turf.bbox(boundaryFeature));
+                      if (clipped && clipped.geometry && clipped.geometry.coordinates.length >= 2) {
+                        croppedLines.push(clipped.geometry.coordinates);
+                      }
+                    } catch (clipError) {
+                      // If clipping fails, include original if it intersects
+                      if (lineCoords.length >= 2) {
+                        croppedLines.push(lineCoords);
+                      }
+                    }
+                  }
+                }
+                
+                if (croppedLines.length > 0) {
+                  if (croppedLines.length === 1) {
+                    croppedGeometry = { type: 'LineString', coordinates: croppedLines[0] };
+                  } else {
+                    croppedGeometry = { type: 'MultiLineString', coordinates: croppedLines };
+                  }
+                  partiallyCroppedCount++;
+                }
+              } catch (multiLineError) {
+                console.warn('Error processing MultiLineString:', multiLineError.message);
+                croppedGeometry = geometry;
               }
+              
+            } else if (geometry.type === 'Polygon') {
+              // Intersect polygon with boundary
+              try {
+                const intersection = turf.intersect(turfFeature, boundaryFeature);
+                
+                if (intersection && intersection.geometry) {
+                  croppedGeometry = intersection.geometry;
+                  
+                  // Check if it was actually cropped or was fully inside
+                  const isFullyWithin = turf.booleanWithin(turfFeature, boundaryFeature);
+                  if (isFullyWithin) {
+                    fullyCroppedCount++;
+                  } else {
+                    partiallyCroppedCount++;
+                  }
+                } else {
+                  // Intersection failed, check if completely within
+                  const isFullyWithin = turf.booleanWithin(turfFeature, boundaryFeature);
+                  if (isFullyWithin) {
+                    croppedGeometry = geometry;
+                    fullyCroppedCount++;
+                  }
+                }
+              } catch (intersectError) {
+                console.warn('Error intersecting Polygon:', intersectError.message);
+                // If intersection fails but intersects, keep original
+                croppedGeometry = geometry;
+              }
+              
+            } else if (geometry.type === 'MultiPolygon') {
+              // Process each polygon in the MultiPolygon
+              try {
+                const croppedPolygons = [];
+                
+                for (const polygonCoords of geometry.coordinates) {
+                  const polyFeature = {
+                    type: 'Feature',
+                    geometry: { type: 'Polygon', coordinates: polygonCoords },
+                    properties: {}
+                  };
+                  
+                  if (turf.booleanIntersects(polyFeature, boundaryFeature)) {
+                    try {
+                      const intersection = turf.intersect(polyFeature, boundaryFeature);
+                      
+                      if (intersection && intersection.geometry) {
+                        if (intersection.geometry.type === 'Polygon') {
+                          croppedPolygons.push(intersection.geometry.coordinates);
+                        } else if (intersection.geometry.type === 'MultiPolygon') {
+                          croppedPolygons.push(...intersection.geometry.coordinates);
+                        }
+                      }
+                    } catch (intersectError) {
+                      // If intersection fails, include original if it intersects
+                      croppedPolygons.push(polygonCoords);
+                    }
+                  }
+                }
+                
+                if (croppedPolygons.length > 0) {
+                  if (croppedPolygons.length === 1) {
+                    croppedGeometry = { type: 'Polygon', coordinates: croppedPolygons[0] };
+                  } else {
+                    croppedGeometry = { type: 'MultiPolygon', coordinates: croppedPolygons };
+                  }
+                  partiallyCroppedCount++;
+                }
+              } catch (multiPolyError) {
+                console.warn('Error processing MultiPolygon:', multiPolyError.message);
+                croppedGeometry = geometry;
+              }
+              
             } else {
               // For other geometry types, keep if they intersect
               croppedGeometry = geometry;
@@ -1318,17 +1428,28 @@ const cropFeaturesByBoundary = (features, boundary) => {
             
             // Add cropped feature only if we have valid geometry
             if (croppedGeometry && croppedGeometry.type && croppedGeometry.coordinates) {
-              croppedFeatures.push({
-                ...feature,
-                geometry: croppedGeometry
-              });
+              // Validate the cropped geometry before adding
+              if (validateCroppedGeometry(croppedGeometry)) {
+                croppedFeatures.push({
+                  ...feature,
+                  geometry: croppedGeometry
+                });
+              } else {
+                console.warn('Cropped geometry failed validation, skipping');
+              }
             }
             
           } catch (cropError) {
             console.warn('Error cropping individual feature:', cropError.message);
-            // If cropping fails but feature intersects, include original
-            if (intersects) {
-              croppedFeatures.push(feature);
+            // If cropping fails but feature intersects, try to include original
+            // only if it's mostly within the boundary
+            try {
+              const isFullyWithin = turf.booleanWithin(turfFeature, boundaryFeature);
+              if (isFullyWithin) {
+                croppedFeatures.push(feature);
+              }
+            } catch (withinError) {
+              // Skip this feature
             }
           }
         }
@@ -1338,16 +1459,130 @@ const cropFeaturesByBoundary = (features, boundary) => {
       }
     }
     
-    console.log(`Cropped ${features.length} features to ${croppedFeatures.length} features within boundary`);
+    console.log(`Cropping summary:`);
+    console.log(`  Input features: ${features.length}`);
+    console.log(`  Output features: ${croppedFeatures.length}`);
+    console.log(`  Fully inside: ${fullyCroppedCount}`);
+    console.log(`  Partially cropped: ${partiallyCroppedCount}`);
+    console.log(`  Points inside: ${pointsInsideCount}`);
+    console.log(`  Points outside: ${pointsOutsideCount}`);
+    console.log(`  Total removed: ${features.length - croppedFeatures.length}`);
+    
     return croppedFeatures;
     
   } catch (error) {
     console.error('Error in cropFeaturesByBoundary:', error);
     console.warn('Boundary geometry type:', boundary?.type);
-    console.warn('Boundary structure:', boundary);
     console.warn('Features count:', features.length);
     // Return original features if cropping fails to avoid losing data
     return features;
+  }
+};
+
+const validateCroppedGeometry = (geometry) => {
+  try {
+    if (!geometry || !geometry.type || !geometry.coordinates) {
+      return false;
+    }
+    
+    switch (geometry.type) {
+      case 'Point':
+        return Array.isArray(geometry.coordinates) && 
+               geometry.coordinates.length === 2 &&
+               !isNaN(geometry.coordinates[0]) && 
+               !isNaN(geometry.coordinates[1]);
+               
+      case 'LineString':
+        return Array.isArray(geometry.coordinates) && 
+               geometry.coordinates.length >= 2 &&
+               geometry.coordinates.every(coord => 
+                 Array.isArray(coord) && 
+                 coord.length === 2 &&
+                 !isNaN(coord[0]) && 
+                 !isNaN(coord[1])
+               );
+               
+      case 'Polygon':
+        if (!Array.isArray(geometry.coordinates) || geometry.coordinates.length === 0) {
+          return false;
+        }
+        // Check each ring
+        for (const ring of geometry.coordinates) {
+          if (!Array.isArray(ring) || ring.length < 4) {
+            return false;
+          }
+          // Check if ring is closed
+          const first = ring[0];
+          const last = ring[ring.length - 1];
+          if (first[0] !== last[0] || first[1] !== last[1]) {
+            return false;
+          }
+          // Check all coordinates are valid
+          if (!ring.every(coord => 
+            Array.isArray(coord) && 
+            coord.length === 2 &&
+            !isNaN(coord[0]) && 
+            !isNaN(coord[1])
+          )) {
+            return false;
+          }
+        }
+        return true;
+        
+      case 'MultiLineString':
+        if (!Array.isArray(geometry.coordinates) || geometry.coordinates.length === 0) {
+          return false;
+        }
+        return geometry.coordinates.every(line =>
+          Array.isArray(line) && 
+          line.length >= 2 &&
+          line.every(coord => 
+            Array.isArray(coord) && 
+            coord.length === 2 &&
+            !isNaN(coord[0]) && 
+            !isNaN(coord[1])
+          )
+        );
+        
+      case 'MultiPolygon':
+        if (!Array.isArray(geometry.coordinates) || geometry.coordinates.length === 0) {
+          return false;
+        }
+        // Check each polygon
+        for (const polygon of geometry.coordinates) {
+          if (!Array.isArray(polygon) || polygon.length === 0) {
+            return false;
+          }
+          // Check each ring in the polygon
+          for (const ring of polygon) {
+            if (!Array.isArray(ring) || ring.length < 4) {
+              return false;
+            }
+            // Check if ring is closed
+            const first = ring[0];
+            const last = ring[ring.length - 1];
+            if (first[0] !== last[0] || first[1] !== last[1]) {
+              return false;
+            }
+            // Check all coordinates are valid
+            if (!ring.every(coord => 
+              Array.isArray(coord) && 
+              coord.length === 2 &&
+              !isNaN(coord[0]) && 
+              !isNaN(coord[1])
+            )) {
+              return false;
+            }
+          }
+        }
+        return true;
+        
+      default:
+        return false;
+    }
+  } catch (error) {
+    console.warn('Error validating geometry:', error);
+    return false;
   }
 };
 
@@ -1681,152 +1916,62 @@ export const isCityProcessing = (cityName) => {
 };
 
 // Background processing function
-export const processCityFeatures = async (cityData, country, province, city, onProgressUpdate) => {
+// Background processing function
+export const processCityFeatures = async (cityData, country, province, city, onProgressUpdate, targetDataSource) => {
   try {
-    console.log(`Starting background processing for ${cityData.name}`);
+    console.log(`Starting background processing for ${cityData.name} in data source: ${targetDataSource}`);
     
-    // Initialize tracking for this city
-    activeProcessing.set(cityData.name, { shouldCancel: false, worker: null });
+    // Store the original data source prefix
+    const originalDataSource = DATA_SOURCE_PREFIX;
     
-    // Check if city still exists before starting
-    const cityExists = await checkCityExists(country, province, city);
-    if (!cityExists) {
-      console.log(`City ${cityData.name} no longer exists, aborting processing`);
-      activeProcessing.delete(cityData.name);
-      if (onProgressUpdate) {
-        onProgressUpdate(cityData.name, {
-          processed: 0,
-          saved: 0,
-          total: 0,
-          status: 'cancelled'
-        });
-      }
-      return { processedLayers: 0, savedLayers: 0, totalLayers: 0, cancelled: true };
-    }
+    // Set the data source for this processing operation
+    DATA_SOURCE_PREFIX = targetDataSource;
     
-    const boundary = JSON.parse(cityData.boundary);
-    const allLayers = [];
-    
-    Object.entries(layerDefinitions).forEach(([domain, layers]) => {
-      layers.forEach(layer => {
-        allLayers.push({
-          tags: layer.tags,
-          filename: layer.filename,
-          domain: domain,
-        });
-      });
-    });
-
-    let processedCount = 0;
-    let savedCount = 0;
-    const totalLayers = allLayers.length;
-
-    // Process in smaller batches to avoid worker timeouts
-    const BATCH_SIZE = 3;
-    
-    for (let i = 0; i < allLayers.length; i += BATCH_SIZE) {
-      // Check if processing should be cancelled
-      const processingInfo = activeProcessing.get(cityData.name);
-      if (!processingInfo || processingInfo.shouldCancel) {
-        console.log(`Processing cancelled for ${cityData.name}`);
-        activeProcessing.delete(cityData.name);
-        
-        if (onProgressUpdate) {
-          onProgressUpdate(cityData.name, {
-            processed: processedCount,
-            saved: savedCount,
-            total: totalLayers,
-            status: 'cancelled'
-          });
-        }
-        
-        return { processedLayers: processedCount, savedLayers: savedCount, totalLayers, cancelled: true };
-      }
+    try {
+      // Initialize tracking for this city
+      activeProcessing.set(cityData.name, { shouldCancel: false, worker: null });
       
-      // Check if city still exists
+      // Check if city still exists before starting
       const cityExists = await checkCityExists(country, province, city);
       if (!cityExists) {
-        console.log(`City ${cityData.name} was deleted during processing, aborting`);
+        console.log(`City ${cityData.name} no longer exists, aborting processing`);
         activeProcessing.delete(cityData.name);
-        
-        // Delete any partially processed data
-        try {
-          await deleteCityData(cityData.name);
-        } catch (error) {
-          console.error(`Error cleaning up after city deletion:`, error);
-        }
-        
         if (onProgressUpdate) {
           onProgressUpdate(cityData.name, {
-            processed: processedCount,
-            saved: savedCount,
-            total: totalLayers,
+            processed: 0,
+            saved: 0,
+            total: 0,
             status: 'cancelled'
           });
         }
-        
-        return { processedLayers: processedCount, savedLayers: savedCount, totalLayers, cancelled: true };
+        return { processedLayers: 0, savedLayers: 0, totalLayers: 0, cancelled: true };
       }
       
-      const batch = allLayers.slice(i, i + BATCH_SIZE);
+      const boundary = JSON.parse(cityData.boundary);
+      const allLayers = [];
       
-      try {
-        console.log(`Processing batch ${Math.floor(i/BATCH_SIZE) + 1}/${Math.ceil(totalLayers/BATCH_SIZE)}`);
-
-        const worker = new Worker('/worker.js');
-        
-        // Store worker reference for potential cancellation
-        if (activeProcessing.has(cityData.name)) {
-          activeProcessing.get(cityData.name).worker = worker;
-        }
-        
-        const workerPromise = new Promise((resolve, reject) => {
-          const timeout = setTimeout(() => {
-            worker.terminate();
-            reject(new Error('Worker timeout'));
-          }, 180000); // 3 minutes timeout
-          
-          worker.onmessage = (e) => {
-            clearTimeout(timeout);
-            worker.terminate();
-            
-            // Clear worker reference
-            if (activeProcessing.has(cityData.name)) {
-              activeProcessing.get(cityData.name).worker = null;
-            }
-            
-            if (e.data.error) {
-              reject(new Error(e.data.error));
-            } else {
-              resolve(e.data.results);
-            }
-          };
-          
-          worker.onerror = (error) => {
-            clearTimeout(timeout);
-            worker.terminate();
-            
-            // Clear worker reference
-            if (activeProcessing.has(cityData.name)) {
-              activeProcessing.get(cityData.name).worker = null;
-            }
-            
-            reject(error);
-          };
+      Object.entries(layerDefinitions).forEach(([domain, layers]) => {
+        layers.forEach(layer => {
+          allLayers.push({
+            tags: layer.tags,
+            filename: layer.filename,
+            domain: domain,
+          });
         });
+      });
 
-        worker.postMessage({
-          cityName: cityData.name,
-          boundary: boundary,
-          tagsList: batch,
-        });
+      let processedCount = 0;
+      let savedCount = 0;
+      const totalLayers = allLayers.length;
 
-        const batchResults = await workerPromise;
-        
-        // Check again if processing should be cancelled after worker completes
-        const processingInfoAfterWorker = activeProcessing.get(cityData.name);
-        if (!processingInfoAfterWorker || processingInfoAfterWorker.shouldCancel) {
-          console.log(`Processing cancelled for ${cityData.name} after worker completion`);
+      // Process in smaller batches to avoid worker timeouts
+      const BATCH_SIZE = 3;
+      
+      for (let i = 0; i < allLayers.length; i += BATCH_SIZE) {
+        // Check if processing should be cancelled
+        const processingInfo = activeProcessing.get(cityData.name);
+        if (!processingInfo || processingInfo.shouldCancel) {
+          console.log(`Processing cancelled for ${cityData.name}`);
           activeProcessing.delete(cityData.name);
           
           if (onProgressUpdate) {
@@ -1841,29 +1986,133 @@ export const processCityFeatures = async (cityData, country, province, city, onP
           return { processedLayers: processedCount, savedLayers: savedCount, totalLayers, cancelled: true };
         }
         
-        // Group results by layer and save each layer separately
-        const layerGroups = {};
-        
-        batchResults.forEach(feature => {
-          const layerName = feature.layer_name;
-          const domain = feature.domain_name;
+        // Check if city still exists
+        const cityExists = await checkCityExists(country, province, city);
+        if (!cityExists) {
+          console.log(`City ${cityData.name} was deleted during processing, aborting`);
+          activeProcessing.delete(cityData.name);
           
-          if (!layerGroups[layerName]) {
-            layerGroups[layerName] = {
-              features: [],
-              domain: domain,
-            };
+          // Delete any partially processed data
+          try {
+            await deleteCityData(cityData.name);
+          } catch (error) {
+            console.error(`Error cleaning up after city deletion:`, error);
           }
           
-          layerGroups[layerName].features.push(feature);
-        });
+          if (onProgressUpdate) {
+            onProgressUpdate(cityData.name, {
+              processed: processedCount,
+              saved: savedCount,
+              total: totalLayers,
+              status: 'cancelled'
+            });
+          }
+          
+          return { processedLayers: processedCount, savedLayers: savedCount, totalLayers, cancelled: true };
+        }
         
-        // Process each layer in the batch
-        for (const layerInfo of batch) {
-          // Check cancellation before each save
-          const processingInfoBeforeSave = activeProcessing.get(cityData.name);
-          if (!processingInfoBeforeSave || processingInfoBeforeSave.shouldCancel) {
-            console.log(`Processing cancelled for ${cityData.name} before saving layer`);
+        const batch = allLayers.slice(i, i + BATCH_SIZE);
+        
+        try {
+          console.log(`Processing batch ${Math.floor(i/BATCH_SIZE) + 1}/${Math.ceil(totalLayers/BATCH_SIZE)} for data source: ${targetDataSource}`);
+        
+          const worker = new Worker('/worker.js');
+          
+          // Store worker reference for potential cancellation
+          if (activeProcessing.has(cityData.name)) {
+            activeProcessing.get(cityData.name).worker = worker;
+          }
+          
+          // Capture current counts for this batch
+          const batchStartProcessed = processedCount;
+          const batchStartSaved = savedCount;
+          
+          const workerPromise = new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => {
+              worker.terminate();
+              reject(new Error('Worker timeout'));
+            }, 180000); // 3 minutes timeout
+            
+            worker.onmessage = (e) => {
+              console.log('===== WORKER MESSAGE RECEIVED =====');
+              console.log('Message data:', e.data);
+              console.log('Has progress?', !!e.data.progress);
+              console.log('Has results?', !!e.data.results);
+              
+              // Check if this is a progress update (not final results)
+              if (e.data.progress && !e.data.results) {
+                console.log('===== PROGRESS UPDATE DETECTED =====');
+                console.log('Worker progress:', e.data.progress);
+                console.log('Progress fields:', {
+                  processed: e.data.progress.processed,
+                  saved: e.data.progress.saved,
+                  total: e.data.progress.total,
+                  status: e.data.progress.status
+                });
+                console.log('Batch start values:', {
+                  batchStartProcessed,
+                  batchStartSaved,
+                  totalLayers
+                });
+                
+                // Forward progress to the callback without terminating worker
+                if (onProgressUpdate) {
+                  const progressData = {
+                    processed: batchStartProcessed + (e.data.progress.processed || 0),
+                    saved: batchStartSaved + (e.data.progress.saved || 0),
+                    total: totalLayers,
+                    status: 'processing'
+                  };
+                  console.log('Calling onProgressUpdate with:', progressData);
+                  onProgressUpdate(cityData.name, progressData);
+                } else {
+                  console.warn('onProgressUpdate callback is not defined!');
+                }
+                return; // Don't resolve/terminate - keep worker running
+              }
+              
+              console.log('===== FINAL RESULTS RECEIVED =====');
+              // This is the final result
+              clearTimeout(timeout);
+              worker.terminate();
+              
+              // Clear worker reference
+              if (activeProcessing.has(cityData.name)) {
+                activeProcessing.get(cityData.name).worker = null;
+              }
+              
+              if (e.data.error) {
+                reject(new Error(e.data.error));
+              } else {
+                resolve(e.data.results);
+              }
+            };
+            
+            worker.onerror = (error) => {
+              clearTimeout(timeout);
+              worker.terminate();
+              
+              // Clear worker reference
+              if (activeProcessing.has(cityData.name)) {
+                activeProcessing.get(cityData.name).worker = null;
+              }
+              
+              reject(error);
+            };
+          });
+        
+          worker.postMessage({
+            cityName: cityData.name,
+            boundary: boundary,
+            tagsList: batch,
+          });
+        
+          const batchResults = await workerPromise;
+          
+          // Check again if processing should be cancelled after worker completes
+          const processingInfoAfterWorker = activeProcessing.get(cityData.name);
+          if (!processingInfoAfterWorker || processingInfoAfterWorker.shouldCancel) {
+            console.log(`Processing cancelled for ${cityData.name} after worker completion`);
             activeProcessing.delete(cityData.name);
             
             if (onProgressUpdate) {
@@ -1878,26 +2127,82 @@ export const processCityFeatures = async (cityData, country, province, city, onP
             return { processedLayers: processedCount, savedLayers: savedCount, totalLayers, cancelled: true };
           }
           
-          const layerData = layerGroups[layerInfo.filename];
+          // Group results by layer and save each layer separately
+          const layerGroups = {};
           
-          if (layerData && layerData.features && layerData.features.length > 0) {
-            // Save layers that have features WITH BOUNDARY CROPPING
-            await saveLayerFeatures(
-              layerData.features,
-              country,
-              province,
-              city,
-              layerData.domain,
-              layerInfo.filename,
-              boundary  // Pass boundary for cropping
-            );
-            savedCount++;
-            console.log(`Saved layer ${layerInfo.filename} with cropped features`);
-          } else {
-            console.log(`Layer ${layerInfo.filename} processed with 0 features (not saving to S3)`);
+          batchResults.forEach(feature => {
+            const layerName = feature.layer_name;
+            const domain = feature.domain_name;
+            
+            if (!layerGroups[layerName]) {
+              layerGroups[layerName] = {
+                features: [],
+                domain: domain,
+              };
+            }
+            
+            layerGroups[layerName].features.push(feature);
+          });
+          
+          // Process each layer in the batch
+          for (const layerInfo of batch) {
+            // Check cancellation before each save
+            const processingInfoBeforeSave = activeProcessing.get(cityData.name);
+            if (!processingInfoBeforeSave || processingInfoBeforeSave.shouldCancel) {
+              console.log(`Processing cancelled for ${cityData.name} before saving layer`);
+              activeProcessing.delete(cityData.name);
+              
+              if (onProgressUpdate) {
+                onProgressUpdate(cityData.name, {
+                  processed: processedCount,
+                  saved: savedCount,
+                  total: totalLayers,
+                  status: 'cancelled'
+                });
+              }
+              
+              return { processedLayers: processedCount, savedLayers: savedCount, totalLayers, cancelled: true };
+            }
+            
+            const layerData = layerGroups[layerInfo.filename];
+            
+            if (layerData && layerData.features && layerData.features.length > 0) {
+              // Save layers that have features WITH BOUNDARY CROPPING
+              // The current DATA_SOURCE_PREFIX is already set to targetDataSource
+              await saveLayerFeatures(
+                layerData.features,
+                country,
+                province,
+                city,
+                layerData.domain,
+                layerInfo.filename,
+                boundary  // Pass boundary for cropping
+              );
+              savedCount++;
+              console.log(`Saved layer ${layerInfo.filename} with cropped features to ${targetDataSource}`);
+            } else {
+              console.log(`Layer ${layerInfo.filename} processed with 0 features (not saving to S3)`);
+            }
+            
+            processedCount++;
+            
+            if (onProgressUpdate) {
+              onProgressUpdate(cityData.name, {
+                processed: processedCount,
+                saved: savedCount,
+                total: totalLayers,
+                status: 'processing'
+              });
+            }
           }
-          
-          processedCount++;
+
+          console.log(`Completed batch processing (${processedCount}/${totalLayers} layers processed, ${savedCount} saved to ${targetDataSource})`);
+
+          await new Promise(resolve => setTimeout(resolve, 2000));
+
+        } catch (batchError) {
+          console.warn(`Error processing batch:`, batchError);
+          processedCount += batch.length;
           
           if (onProgressUpdate) {
             onProgressUpdate(cityData.name, {
@@ -1908,41 +2213,28 @@ export const processCityFeatures = async (cityData, country, province, city, onP
             });
           }
         }
-
-        console.log(`Completed batch processing (${processedCount}/${totalLayers} layers processed, ${savedCount} saved)`);
-
-        await new Promise(resolve => setTimeout(resolve, 2000));
-
-      } catch (batchError) {
-        console.warn(`Error processing batch:`, batchError);
-        processedCount += batch.length;
-        
-        if (onProgressUpdate) {
-          onProgressUpdate(cityData.name, {
-            processed: processedCount,
-            saved: savedCount,
-            total: totalLayers,
-            status: 'processing'
-          });
-        }
       }
-    }
 
-    console.log(`Completed background processing for ${cityData.name}: ${processedCount}/${totalLayers} layers processed, ${savedCount} saved`);
-    
-    // Remove from active processing on successful completion
-    activeProcessing.delete(cityData.name);
-    
-    if (onProgressUpdate) {
-      onProgressUpdate(cityData.name, {
-        processed: processedCount,
-        saved: savedCount,
-        total: totalLayers,
-        status: 'complete'
-      });
+      console.log(`Completed background processing for ${cityData.name} in ${targetDataSource}: ${processedCount}/${totalLayers} layers processed, ${savedCount} saved`);
+      
+      // Remove from active processing on successful completion
+      activeProcessing.delete(cityData.name);
+      
+      if (onProgressUpdate) {
+        onProgressUpdate(cityData.name, {
+          processed: processedCount,
+          saved: savedCount,
+          total: totalLayers,
+          status: 'complete'
+        });
+      }
+      
+      return { processedLayers: processedCount, savedLayers: savedCount, totalLayers, cancelled: false };
+    } finally {
+      // Always restore the original data source prefix
+      DATA_SOURCE_PREFIX = originalDataSource;
+      console.log(`Restored data source prefix to: ${originalDataSource}`);
     }
-    
-    return { processedLayers: processedCount, savedLayers: savedCount, totalLayers, cancelled: false };
   } catch (error) {
     console.error('Error in background processing:', error);
     activeProcessing.delete(cityData.name);

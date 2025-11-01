@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import LayerToggle from './LayerToggle';
 import LayerModal from './LayerModal';
 import { exportLayer, exportAllLayers } from '../utils/exportUtils';
-import { loadLayerForEditing } from '../utils/s3';
+import { loadLayerForEditing, processCityFeatures } from '../utils/s3';
 import '../styles/Sidebar.css';
 
 const Sidebar = ({
@@ -15,7 +15,10 @@ const Sidebar = ({
   domainColors,
   onLayerSave,
   onLayerDelete,
-  mapView = 'street'
+  mapView = 'street',
+  onImportComplete,
+  onCityStatusChange,
+  dataSource = 'osm'
 }) => {
   const [expandedDomains, setExpandedDomains] = useState(new Set());
   const [isAddLayerModalOpen, setIsAddLayerModalOpen] = useState(false);
@@ -28,12 +31,19 @@ const Sidebar = ({
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [openLayerExport, setOpenLayerExport] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const [importingCities, setImportingCities] = useState(new Set());
+  const [dropdownPositions, setDropdownPositions] = useState({});
 
   // Close export menus when clicking outside
   useEffect(() => {
     const handleClickOutside = (event) => {
-      if (showExportAllMenu && !event.target.closest('.bulk-export-wrapper')) {
-        setShowExportAllMenu(false);
+      if (showExportAllMenu) {
+        const exportWrapper = document.querySelector('.bulk-export-wrapper');
+        const exportDropdown = document.querySelector('.bulk-export-wrapper .export-dropdown');
+        if (exportWrapper && !exportWrapper.contains(event.target) && 
+            (!exportDropdown || !exportDropdown.contains(event.target))) {
+          setShowExportAllMenu(false);
+        }
       }
       if (showDomainExportMenu && !event.target.closest('.domain-export-wrapper')) {
         setShowDomainExportMenu(null);
@@ -243,7 +253,7 @@ const Sidebar = ({
     setIsAddLayerModalOpen(true);
   };
 
-  const handleDeleteLayer = async (domain, layerName) => {
+  const handleDeleteLayer = async (domain, layerName, options = {}) => {
     if (!domain || !layerName) {
       console.error('Invalid delete parameters:', { domain, layerName });
       alert('Cannot delete layer: missing domain or layer name');
@@ -252,41 +262,62 @@ const Sidebar = ({
   
     const displayName = layerName.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
   
-    if (window.confirm(`Are you sure you want to delete "${displayName}" from ${domain}?`)) {
-      try {
-        // Turn off layer visibility before deleting
-        if (activeLayers[layerName]) {
-          onLayerToggle(layerName, false);
-        }
+    if (!options.silent && !window.confirm(`Are you sure you want to delete "${displayName}" from ${domain}?`)) {
+      return;
+    }
   
-        await onLayerDelete(domain, layerName);
-      } catch (error) {
-        console.error('Failed to delete layer:', error);
-        alert(`Failed to delete layer: ${error.message}`);
+    try {
+      // Turn off layer visibility before deleting
+      if (activeLayers[layerName]) {
+        onLayerToggle(layerName, false);
       }
+  
+      await onLayerDelete(domain, layerName);
+      
+      // Check if this was the last layer - if so, notify parent to update city status
+      const remainingLayers = Object.keys(availableLayers).filter(name => name !== layerName);
+      if (remainingLayers.length === 0 && onCityStatusChange) {
+        console.log('Last layer deleted - updating city status to pending');
+        onCityStatusChange(selectedCity.name, false);
+      }
+    } catch (error) {
+      console.error('Failed to delete layer:', error);
+      alert(`Failed to delete layer: ${error.message}`);
     }
   };
 
   const handleDeleteDomain = async (domain, layers) => {
-  const domainName = formatDomainName(domain);
-  if (window.confirm(`Delete all ${layers.length} layer(s) in ${domainName}? This action cannot be undone.`)) {
-    try {
-      // Turn off all layers in domain first
-      layers.forEach(layer => {
-        if (activeLayers[layer.name]) {
-          onLayerToggle(layer.name, false);
+    const domainName = formatDomainName(domain);
+    if (window.confirm(`Delete all ${layers.length} layer(s) in ${domainName}? This action cannot be undone.`)) {
+      try {
+        // Turn off all layers in domain first
+        layers.forEach(layer => {
+          if (activeLayers[layer.name]) {
+            onLayerToggle(layer.name, false);
+          }
+        });
+  
+        for (const layer of layers) {
+          await onLayerDelete(domain, layer.name, { silent: true });
         }
-      });
-
-      for (const layer of layers) {
-        await onLayerDelete(domain, layer.name, { silent: true });
+        
+        // Check if this was the last domain with layers
+        const remainingDomains = Object.keys(availableLayersByDomain).filter(d => {
+          if (d === domain) return false;
+          return availableLayersByDomain[d].length > 0;
+        });
+        
+        if (remainingDomains.length === 0 && onCityStatusChange) {
+          console.log('All layers deleted - updating city status to pending');
+          onCityStatusChange(selectedCity.name, false);
+        }
+        
+        alert(`${domainName} layers deleted successfully!`);
+      } catch (error) {
+        alert(`Failed to delete domain layers: ${error.message}`);
       }
-      alert(`${domainName} layers deleted successfully!`);
-    } catch (error) {
-      alert(`Failed to delete domain layers: ${error.message}`);
     }
-  }
-};
+  };
 
   const handleExportLayer = async (domain, layerName, format) => {
     if (!domain || !layerName || !format) {
@@ -419,6 +450,13 @@ const Sidebar = ({
             await onLayerDelete(domain, layer.name, { silent: true });
           }
         }
+        
+        // Update city status to pending
+        if (onCityStatusChange) {
+          console.log('All layers deleted - updating city status to pending');
+          onCityStatusChange(selectedCity.name, false);
+        }
+        
         alert('All layers deleted successfully!');
       } catch (error) {
         alert(`Failed to delete all layers: ${error.message}`);
@@ -439,6 +477,163 @@ const Sidebar = ({
     layers.forEach((layer) => {
       onLayerToggle(layer.name, newState);
     });
+  };
+
+  const handleImportFromOSM = async () => {
+    if (!selectedCity) {
+      alert('No city selected');
+      return;
+    }
+  
+    // CAPTURE the current data source to prevent race conditions
+    const targetDataSource = dataSource;
+    const processingKey = `${selectedCity.name}@${targetDataSource}`;
+  
+    // Check if this city is already being imported IN THIS DATA SOURCE
+    if (importingCities.has(processingKey)) {
+      alert(`Import already in progress for ${selectedCity.name} in ${targetDataSource} data source`);
+      return;
+    }
+  
+    if (!window.confirm(
+      `Import all layers from OpenStreetMap for ${selectedCity.name} into ${targetDataSource} data source?\n\n` +
+      'This will fetch and process city features (roads, buildings, amenities, etc.) from OpenStreetMap. ' +
+      'This may take several minutes depending on city size.\n\n' +
+      'You can switch data sources and import the same city into the other source simultaneously if needed.'
+    )) {
+      return;
+    }
+  
+    // Mark this city+datasource as importing
+    setImportingCities(prev => new Set([...prev, processingKey]));
+  
+    // Store city info before we potentially deselect
+    const cityToImport = selectedCity;
+  
+    try {
+      // Parse city name to extract components
+      const parts = cityToImport.name.split(',').map(p => p.trim());
+      let city, province, country;
+      
+      if (parts.length === 2) {
+        [city, country] = parts;
+        province = '';
+      } else if (parts.length >= 3) {
+        city = parts[0];
+        province = parts[parts.length - 2];
+        country = parts[parts.length - 1];
+      } else {
+        throw new Error('Invalid city name format');
+      }
+  
+      console.log('Starting OSM import for:', { city, province, country, targetDataSource, processingKey });
+  
+      // Calculate total layers for progress tracking
+      const layerDefinitions = {
+        mobility: 8,
+        governance: 3,
+        health: 6,
+        economy: 4,
+        environment: 5,
+        culture: 6,
+        education: 4,
+        housing: 2,
+        social: 3
+      };
+      const totalLayers = Object.values(layerDefinitions).reduce((sum, count) => sum + count, 0);
+  
+      // Only deselect if this is the currently selected city AND we're in the same data source
+      if (selectedCity?.name === cityToImport.name && onImportComplete) {
+        onImportComplete(cityToImport.name, {
+          processed: 0,
+          saved: 0,
+          total: totalLayers,
+          status: 'processing',
+          dataSource: targetDataSource
+        });
+      }
+  
+      // Start the import asynchronously
+      processCityFeatures(
+        cityToImport,
+        country,
+        province,
+        city,
+        (progress) => {
+          console.log('Import progress:', cityToImport.name, 'in', targetDataSource, progress);
+          // Update progress through parent callback
+          if (onImportComplete) {
+            onImportComplete(cityToImport.name, {
+              ...progress,
+              dataSource: targetDataSource
+            });
+          }
+        },
+        targetDataSource
+      ).then(() => {
+        // Mark as complete and remove from processing
+        if (onImportComplete) {
+          onImportComplete(cityToImport.name, {
+            status: 'complete',
+            message: 'Import completed successfully',
+            dataSource: targetDataSource
+          });
+        }
+        
+        // Remove from importing set
+        setImportingCities(prev => {
+          const newSet = new Set(prev);
+          newSet.delete(processingKey);
+          return newSet;
+        });
+        
+        console.log(`OSM import completed successfully for ${cityToImport.name} in data source: ${targetDataSource}`);
+      }).catch(error => {
+        console.error('Error importing from OSM:', error);
+        
+        // Mark as failed
+        if (onImportComplete) {
+          onImportComplete(cityToImport.name, {
+            status: 'failed',
+            error: error.message,
+            dataSource: targetDataSource
+          });
+        }
+        
+        // Remove from importing set
+        setImportingCities(prev => {
+          const newSet = new Set(prev);
+          newSet.delete(processingKey);
+          return newSet;
+        });
+        
+        alert(`Failed to import from OSM for ${cityToImport.name} in ${targetDataSource}: ${error.message}`);
+      });
+  
+      // Show success message immediately (import continues in background)
+      alert(`Import started for ${cityToImport.name} in ${targetDataSource} data source.\n\nYou can switch to the other data source and import the same city there if needed, or select other cities.`);
+      
+    } catch (error) {
+      console.error('Error starting OSM import:', error);
+      
+      // Mark as failed
+      if (onImportComplete) {
+        onImportComplete(cityToImport.name, {
+          status: 'failed',
+          error: error.message,
+          dataSource: targetDataSource
+        });
+      }
+      
+      // Remove from importing set
+      setImportingCities(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(processingKey);
+        return newSet;
+      });
+      
+      alert(`Failed to start import from OSM: ${error.message}`);
+    }
   };
 
   const getAllFeatures = useCallback(async () => {
@@ -625,6 +820,23 @@ const Sidebar = ({
                       <i className="fas fa-plus"></i>
                       Add Layer
                     </button>
+                    {!selectedCity || (selectedCity && totalLayers === 0) ? (
+                      <button
+                        className="bulk-action-btn import-osm"
+                        onClick={handleImportFromOSM}
+                        disabled={!selectedCity || importingCities.has(`${selectedCity?.name}@${dataSource}`)}
+                        title={
+                          !selectedCity 
+                            ? "Select a city first" 
+                            : importingCities.has(`${selectedCity.name}@${dataSource}`)
+                            ? `Import already in progress for this city in ${dataSource} data source`
+                            : "Import all layers from OpenStreetMap"
+                        }
+                      >
+                        <i className={`fas ${importingCities.has(`${selectedCity?.name}@${dataSource}`) ? 'fa-spinner fa-spin' : 'fa-download'}`}></i>
+                        {importingCities.has(`${selectedCity?.name}@${dataSource}`) ? 'Importing...' : 'Import from OSM'}
+                      </button>
+                    ) : null}
                     {totalLayers > 0 && (
                       <>
                         <div className="bulk-export-wrapper">
@@ -684,101 +896,128 @@ const Sidebar = ({
                     )}
                   </div>
                 </div>
-                <div className="layers-scroll-content">
-                  {Object.keys(filteredAndSortedDomains).length === 0 ? (
-                    totalLayers === 0 ? (
-                      <div className="no-results-message">
-                        <i className="fas fa-layer-group"></i>
-                        <h3>No Layers Yet</h3>
-                        <p>Click "Add Layer" above to create your first data layer.</p>
-                      </div>
+                <div className="layers-scroll-wrapper">
+                  <div className="layers-scroll-content">
+                    {Object.keys(filteredAndSortedDomains).length === 0 ? (
+                      totalLayers === 0 ? (
+                        <div className="no-results-message">
+                          <i className="fas fa-layer-group"></i>
+                          <h3>No Layers Yet</h3>
+                          <p>Click "Add Layer" or "Import from OSM" above to create your first data layer.</p>
+                        </div>
+                      ) : (
+                        <div className="no-results-message">
+                          <i className="fas fa-search"></i>
+                          <h3>No Results</h3>
+                          <p>No layers or domains match "{searchQuery}"</p>
+                        </div>
+                      )
                     ) : (
-                      <div className="no-results-message">
-                        <i className="fas fa-search"></i>
-                        <h3>No Results</h3>
-                        <p>No layers or domains match "{searchQuery}"</p>
-                      </div>
-                    )
-                  ) : (
-                    Object.entries(filteredAndSortedDomains).map(([domain, layers]) => {
-                      const allActive = layers.every(layer => activeLayers[layer.name]);
-                      const someActive = layers.some(layer => activeLayers[layer.name]);
-                      const isExpanded = expandedDomains.has(domain);
-                      
-                      return (
-                        <div 
-                          key={domain} 
-                          className={`domain-section ${openLayerExport && openLayerExport.startsWith(domain) && layers[0].name === openLayerExport.split('-')[1] ? 'first-layer-export-open' : ''}`}
-                        >
-                          <motion.div
-                            className={`domain-header ${isExpanded ? 'expanded' : ''} ${allActive ? 'all-active' : someActive ? 'some-active' : ''}`}
-                            style={{
-                              backgroundColor: allActive 
-                                ? `${domainColors[domain]}10` 
-                                : someActive 
-                                ? `${domainColors[domain]}05` 
-                                : 'transparent'
-                            }}
+                      Object.entries(filteredAndSortedDomains).map(([domain, layers]) => {
+                        const allActive = layers.every(layer => activeLayers[layer.name]);
+                        const someActive = layers.some(layer => activeLayers[layer.name]);
+                        const isExpanded = expandedDomains.has(domain);
+                        
+                        return (
+                          <div 
+                            key={domain} 
+                            className={`domain-section ${openLayerExport && openLayerExport.startsWith(domain) && layers[0].name === openLayerExport.split('-')[1] ? 'first-layer-export-open' : ''}`}
                           >
-                            <div 
-                              className="domain-main-area"
-                              onClick={() => toggleDomain(domain)}
+                            <motion.div
+                              className={`domain-header ${isExpanded ? 'expanded' : ''} ${allActive ? 'all-active' : someActive ? 'some-active' : ''}`}
+                              style={{
+                                backgroundColor: allActive 
+                                  ? `${domainColors[domain]}10` 
+                                  : someActive 
+                                  ? `${domainColors[domain]}05` 
+                                  : 'transparent'
+                              }}
                             >
-                              <motion.button
-                                className={`domain-checkbox ${allActive ? 'checked' : someActive ? 'indeterminate' : ''}`}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleToggleDomainLayers(domain, layers);
-                                }}
-                                whileHover={{ scale: 1.05 }}
-                                whileTap={{ scale: 0.95 }}
+                              <div 
+                                className="domain-main-area"
+                                onClick={() => toggleDomain(domain)}
                               >
-                                {allActive ? (
-                                  <i className="fas fa-check" style={{ color: domainColors[domain] }}></i>
-                                ) : someActive ? (
-                                  <i className="fas fa-minus" style={{ color: domainColors[domain] }}></i>
-                                ) : null}
-                              </motion.button>
-                              
-                              <div className="domain-info">
-                                <div
-                                  className="domain-icon-wrapper"
-                                  style={{ backgroundColor: `${domainColors[domain]}15` }}
+                                <motion.button
+                                  className={`domain-checkbox ${allActive ? 'checked' : someActive ? 'indeterminate' : ''}`}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleToggleDomainLayers(domain, layers);
+                                  }}
+                                  whileHover={{ scale: 1.05 }}
+                                  whileTap={{ scale: 0.95 }}
                                 >
-                                  <i
-                                    className={domainIcons[domain]}
-                                    style={{ color: domainColors[domain] }}
-                                  />
+                                  {allActive ? (
+                                    <i className="fas fa-check" style={{ color: domainColors[domain] }}></i>
+                                  ) : someActive ? (
+                                    <i className="fas fa-minus" style={{ color: domainColors[domain] }}></i>
+                                  ) : null}
+                                </motion.button>
+                                
+                                <div className="domain-info">
+                                  <div
+                                    className="domain-icon-wrapper"
+                                    style={{ backgroundColor: `${domainColors[domain]}15` }}
+                                  >
+                                    <i
+                                      className={domainIcons[domain]}
+                                      style={{ color: domainColors[domain] }}
+                                    />
+                                  </div>
+                                  <span className="domain-name">{formatDomainName(domain)}</span>
+                                  <span className="layer-count">{layers.length}</span>
                                 </div>
-                                <span className="domain-name">{formatDomainName(domain)}</span>
-                                <span className="layer-count">{layers.length}</span>
                               </div>
-                            </div>
-                            <div className="domain-actions">
-                              <button
-                                className="domain-action-icon-btn add"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleAddLayer(domain);
-                                }}
-                                title="Add layer"
-                              >
-                                <i className="fas fa-plus"></i>
-                              </button>
-                              <div className="domain-export-wrapper">
+                              <div className="domain-actions">
+                                <button
+                                  className="domain-action-icon-btn add"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleAddLayer(domain);
+                                  }}
+                                  title="Add layer"
+                                >
+                                  <i className="fas fa-plus"></i>
+                                </button>
+                                <div className="domain-export-wrapper">
                                 <button
                                   className="domain-action-icon-btn export"
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    setShowDomainExportMenu(showDomainExportMenu === domain ? null : domain);
+                                    
+                                    if (showDomainExportMenu === domain) {
+                                      setShowDomainExportMenu(null);
+                                      setDropdownPositions({});
+                                    } else {
+                                      // Calculate position relative to scrollable container
+                                      const button = e.currentTarget;
+                                      const buttonRect = button.getBoundingClientRect();
+                                      const container = button.closest('.layers-scroll-wrapper') || button.closest('.layers-container');
+                                      const containerRect = container.getBoundingClientRect();
+                                      
+                                      const spaceBelow = containerRect.bottom - buttonRect.bottom;
+                                      const spaceAbove = buttonRect.top - containerRect.top;
+                                      
+                                      // If less than 180px below, show above
+                                      const showAbove = spaceBelow < 180 && spaceAbove > spaceBelow;
+                                      
+                                      setDropdownPositions({
+                                        ...dropdownPositions,
+                                        [`domain-${domain}`]: showAbove ? 'above' : 'below'
+                                      });
+                                      setShowDomainExportMenu(domain);
+                                    }
                                   }}
                                   title="Export all layers in domain"
                                   disabled={exportingDomain === domain}
                                 >
                                   <i className={`fas ${exportingDomain === domain ? 'fa-spinner fa-spin' : 'fa-download'}`}></i>
                                 </button>
-                                {showDomainExportMenu === domain && (
-                                  <div className="export-dropdown domain-export-dropdown">
+                                  {showDomainExportMenu === domain && (
+                                    <div 
+                                      className={`export-dropdown-inline ${
+                                        dropdownPositions[`domain-${domain}`] === 'below' ? 'dropdown-below' : ''
+                                      }`}
+                                    >
                                     <button
                                       className="export-option"
                                       onClick={(e) => {
@@ -787,8 +1026,7 @@ const Sidebar = ({
                                       }}
                                     >
                                       <i className="fas fa-database"></i>
-                                      <span className="format-label">Parquet</span>
-                                      <span className="format-ext">.parquet</span>
+                                      <span>Parquet</span>
                                     </button>
                                     <button
                                       className="export-option"
@@ -798,8 +1036,7 @@ const Sidebar = ({
                                       }}
                                     >
                                       <i className="fas fa-file-csv"></i>
-                                      <span className="format-label">CSV</span>
-                                      <span className="format-ext">.csv</span>
+                                      <span>CSV</span>
                                     </button>
                                     <button
                                       className="export-option"
@@ -809,8 +1046,7 @@ const Sidebar = ({
                                       }}
                                     >
                                       <i className="fas fa-map-marked-alt"></i>
-                                      <span className="format-label">GeoJSON</span>
-                                      <span className="format-ext">.geojson</span>
+                                      <span>GeoJSON</span>
                                     </button>
                                     <button
                                       className="export-option"
@@ -820,55 +1056,57 @@ const Sidebar = ({
                                       }}
                                     >
                                       <i className="fas fa-layer-group"></i>
-                                      <span className="format-label">Shapefile</span>
-                                      <span className="format-ext">.shp</span>
+                                      <span>Shapefile</span>
                                     </button>
                                   </div>
                                 )}
+                                </div>
+                                <button
+                                  className="domain-action-icon-btn delete"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleDeleteDomain(domain, layers);
+                                  }}
+                                  title="Delete all layers in domain"
+                                >
+                                  <i className="fas fa-trash"></i>
+                                </button>
                               </div>
-                              <button
-                                className="domain-action-icon-btn delete"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleDeleteDomain(domain, layers);
-                                }}
-                                title="Delete all layers in domain"
-                              >
-                                <i className="fas fa-trash"></i>
-                              </button>
-                            </div>
-                          </motion.div>
-                          <AnimatePresence>
-                            {expandedDomains.has(domain) && (
-                              <motion.div
-                                className="layers-list"
-                                initial={{ height: 0, opacity: 0 }}
-                                animate={{ height: 'auto', opacity: 1 }}
-                                exit={{ height: 0, opacity: 0 }}
-                                transition={{ duration: 0.2 }}
-                              >
-                                {layers.map((layer) => (
-                                  <LayerToggle
-                                    key={layer.name}
-                                    layer={layer}
-                                    domainColor={domainColors[domain]}
-                                    isActive={!!activeLayers[layer.name]}
-                                    onToggle={(isActive) => onLayerToggle(layer.name, isActive)}
-                                    onEdit={() => handleEditLayer(domain, layer)}
-                                    onDelete={() => handleDeleteLayer(domain, layer.name)}
-                                    onExport={(format) => handleExportLayer(domain, layer.name, format)}
-                                    isExporting={exportingLayer === layer.name}
-                                    onExportMenuOpen={() => setOpenLayerExport(`${domain}-${layer.name}`)}
-                                    onExportMenuClose={() => setOpenLayerExport(null)}
-                                  />
-                                ))}
-                              </motion.div>
-                            )}
-                          </AnimatePresence>
-                        </div>
-                      );
-                    })
-                  )}
+                            </motion.div>
+                            <AnimatePresence>
+                              {expandedDomains.has(domain) && (
+                                <motion.div
+                                  className="layers-list"
+                                  initial={{ height: 0, opacity: 0 }}
+                                  animate={{ height: 'auto', opacity: 1 }}
+                                  exit={{ height: 0, opacity: 0 }}
+                                  transition={{ duration: 0.2 }}
+                                >
+                                  {layers.map((layer) => (
+                                    <LayerToggle
+                                      key={layer.name}
+                                      layer={layer}
+                                      domainColor={domainColors[domain]}
+                                      isActive={!!activeLayers[layer.name]}
+                                      onToggle={(isActive) => onLayerToggle(layer.name, isActive)}
+                                      onEdit={() => handleEditLayer(domain, layer)}
+                                      onDelete={() => handleDeleteLayer(domain, layer.name)}
+                                      onExport={(format) => handleExportLayer(domain, layer.name, format)}
+                                      isExporting={exportingLayer === layer.name}
+                                      onExportMenuOpen={() => setOpenLayerExport(`${domain}-${layer.name}`)}
+                                      onExportMenuClose={() => setOpenLayerExport(null)}
+                                      dropdownPositions={dropdownPositions}
+                                      setDropdownPositions={setDropdownPositions}
+                                    />
+                                  ))}
+                                </motion.div>
+                              )}
+                            </AnimatePresence>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
                 </div>
               </>
             )}

@@ -12,7 +12,7 @@ import Papa from 'papaparse';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import '../styles/IndicatorsSidebar.css';
 
-const IndicatorsSidebar = ({ selectedCity, dataSource, onCalculateIndicators }) => {
+const IndicatorsSidebar = ({ selectedCity, dataSource, onCalculateIndicators, cities }) => {
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [selectedDateRange, setSelectedDateRange] = useState(null);
   const [availableDateRanges, setAvailableDateRanges] = useState([]);
@@ -115,17 +115,27 @@ const IndicatorsSidebar = ({ selectedCity, dataSource, onCalculateIndicators }) 
     if (!selectedDateRange) return;
     setIsLoading(true);
     try {
-      // Load cities to get boundaries for connectivity calculation
-      const cities = []; // Get from your app state or props
-      const data = await getSummaryDataWithConnectivity(dataSource, selectedDateRange, cities);
-      setSummaryData(data);
+      // Pass cities from props instead of empty array
+      const data = await getSummaryDataWithConnectivity(dataSource, selectedDateRange, cities || []);
+      
+      // Filter to only include cities that exist in the cities array
+      const cityNames = new Set((cities || []).map(c => c.name.toLowerCase()));
+      const filteredData = data.filter(row => {
+        const fullName = [row.city, row.province, row.country]
+          .filter(Boolean)
+          .join(', ')
+          .toLowerCase();
+        return cityNames.has(fullName);
+      });
+      
+      setSummaryData(filteredData);
     } catch (error) {
       console.error('Error loading summary data:', error);
       setSummaryData([]);
     } finally {
       setIsLoading(false);
     }
-  }, [dataSource, selectedDateRange]);
+  }, [dataSource, selectedDateRange, cities]);
 
   // Load available date ranges on mount or when data source changes
   useEffect(() => {

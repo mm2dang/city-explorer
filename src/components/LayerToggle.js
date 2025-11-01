@@ -1,7 +1,18 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 
-const LayerToggle = ({ layer, domainColor, isActive, onToggle, onEdit, onDelete, onExport, isExporting }) => {
+const LayerToggle = ({ 
+  layer, 
+  domainColor, 
+  isActive, 
+  onToggle, 
+  onEdit, 
+  onDelete, 
+  onExport, 
+  isExporting,
+  dropdownPositions,
+  setDropdownPositions 
+}) => {
   const [showExportMenu, setShowExportMenu] = useState(false);
   const exportMenuRef = useRef(null);
 
@@ -25,6 +36,33 @@ const LayerToggle = ({ layer, domainColor, isActive, onToggle, onEdit, onDelete,
       document.removeEventListener('mousedown', handleClickOutside);
     };
   }, [showExportMenu]);
+
+  const handleExportButtonClick = (e) => {
+    e.stopPropagation();
+    
+    if (showExportMenu) {
+      setShowExportMenu(false);
+      setDropdownPositions({});
+    } else {
+      // Calculate position relative to scrollable container
+      const button = e.currentTarget;
+      const buttonRect = button.getBoundingClientRect();
+      const container = button.closest('.layers-scroll-wrapper') || button.closest('.layers-container');
+      const containerRect = container.getBoundingClientRect();
+      
+      const spaceBelow = containerRect.bottom - buttonRect.bottom;
+      const spaceAbove = buttonRect.top - containerRect.top;
+      
+      // If less than 180px below, show above
+      const showAbove = spaceBelow < 180 && spaceAbove > spaceBelow;
+      
+      setDropdownPositions({
+        ...dropdownPositions,
+        [`layer-${layer.name}`]: showAbove ? 'above' : 'below'
+      });
+      setShowExportMenu(true);
+    }
+  };
 
   const handleExportClick = (format) => {
     console.log(`Export clicked for layer ${layer.name} with format: ${format}`);
@@ -80,11 +118,7 @@ const LayerToggle = ({ layer, domainColor, isActive, onToggle, onEdit, onDelete,
         <div className="export-menu-inline" ref={exportMenuRef}>
           <button
             className="inline-action-btn"
-            onClick={(e) => {
-              e.stopPropagation();
-              console.log('Export button clicked, menu state:', showExportMenu);
-              setShowExportMenu(!showExportMenu);
-            }}
+            onClick={handleExportButtonClick}
             title="Export"
             disabled={isExporting}
           >
@@ -98,7 +132,9 @@ const LayerToggle = ({ layer, domainColor, isActive, onToggle, onEdit, onDelete,
           <AnimatePresence>
             {showExportMenu && (
               <motion.div
-                className="export-dropdown-inline"
+                className={`export-dropdown-inline ${
+                  dropdownPositions[`layer-${layer.name}`] === 'below' ? 'dropdown-below' : ''
+                }`}
                 initial={{ opacity: 0, y: -5, scale: 0.95 }}
                 animate={{ opacity: 1, y: 0, scale: 1 }}
                 exit={{ opacity: 0, y: -5, scale: 0.95 }}

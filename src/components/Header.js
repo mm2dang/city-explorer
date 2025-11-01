@@ -42,15 +42,24 @@ const Header = ({
       return;
     }
   
-    const progress = processingProgress?.[city.name];
-    const isProcessing = progress && progress.status === 'processing';
+    // Create processing key for current data source
+    const processingKey = `${city.name}@${dataSource}`;
+    const progress = processingProgress?.[processingKey];
     
-    // Allow selection if the city is not processing
-    if (!isProcessing) {
-      onCitySelect(city);
-      setShowDropdown(false);
-      setSearchQuery(''); // Clear search when selecting a city
+    // Only block if processing in CURRENT data source
+    const isProcessing = progress && 
+                        progress.status === 'processing' && 
+                        progress.dataSource === dataSource;
+    
+    // Block selection if the city is processing in the CURRENT data source
+    if (isProcessing) {
+      console.log('Cannot select city - currently processing in', dataSource, 'data source:', city.name);
+      return;
     }
+    
+    onCitySelect(city);
+    setShowDropdown(false);
+    setSearchQuery('');
   };
 
   const handleCityDropdownToggle = () => {
@@ -82,16 +91,30 @@ const Header = ({
   };
 
   const getStatusCounts = () => {
-    const ready = cityDataStatus ? cities.filter(city => cityDataStatus[city.name]).length : 0;
+    // Count processing cities FOR CURRENT DATA SOURCE
     const processing = processingProgress
-      ? Object.keys(processingProgress).filter(cityName => {
-          const progress = processingProgress[cityName];
-          return progress && progress.status === 'processing';
+      ? Object.values(processingProgress).filter(progress => {
+          return progress && 
+                 progress.status === 'processing' && 
+                 progress.dataSource === dataSource;
         }).length
       : 0;
+    
+    // Only count as ready if has data layers AND is not currently processing in current data source
+    const ready = cityDataStatus 
+      ? cities.filter(city => {
+          const processingKey = `${city.name}@${dataSource}`;
+          const progress = processingProgress?.[processingKey];
+          const isProcessing = progress && 
+                              progress.status === 'processing' && 
+                              progress.dataSource === dataSource;
+          return cityDataStatus[city.name] && !isProcessing;
+        }).length 
+      : 0;
+    
     return { ready, processing, total: cities.length };
   };
-
+  
   const statusCounts = getStatusCounts();
 
   const handleSortChange = (field) => {
@@ -322,9 +345,28 @@ const Header = ({
                     ) : (
                       sortedCities.map((city) => {
                         const hasDataLayers = cityDataStatus ? cityDataStatus[city.name] : false;
-                        const progress = processingProgress?.[city.name];
-                        const isProcessing = progress && progress.status === 'processing';
-
+                        const processingKey = `${city.name}@${dataSource}`;
+                        const progress = processingProgress?.[processingKey];
+                        
+                        // A city is processing if it has progress data with status 'processing' for current data source
+                        const isProcessing = progress && 
+                                            progress.status === 'processing' && 
+                                            progress.dataSource === dataSource;
+                        
+                        // Determine display status: processing takes ABSOLUTE priority
+                        let displayStatus = 'pending';
+                        let statusIcon = 'clock';
+                        
+                        if (isProcessing) {
+                          // While processing, always show processing regardless of hasDataLayers
+                          displayStatus = 'processing';
+                          statusIcon = 'spinner fa-spin';
+                        } else if (hasDataLayers) {
+                          // Only show ready when NOT processing and has data
+                          displayStatus = 'ready';
+                          statusIcon = 'check-circle';
+                        }
+                      
                         return (
                           <div key={city.name} className="dropdown-item-container">
                             <motion.div
@@ -341,6 +383,7 @@ const Header = ({
                                       className="action-btn edit-btn"
                                       onClick={(e) => handleCityAction(e, 'edit', city)}
                                       title="Edit city"
+                                      disabled={isProcessing}
                                     >
                                       <i className="fas fa-edit"></i>
                                     </button>
@@ -348,12 +391,13 @@ const Header = ({
                                       className="action-btn delete-btn"
                                       onClick={(e) => handleCityAction(e, 'delete', city)}
                                       title="Delete city"
+                                      disabled={isProcessing}
                                     >
                                       <i className="fas fa-trash"></i>
                                     </button>
                                   </div>
                                 </div>
-
+                      
                                 {(city.population || city.size) && (
                                   <div className="city-meta-row">
                                     {city.population && (
@@ -370,14 +414,14 @@ const Header = ({
                                     )}
                                   </div>
                                 )}
-
+                      
                                 <div className="city-status-row">
-                                  <span className={`status-label ${isProcessing ? 'processing' : hasDataLayers ? 'ready' : 'pending'}`}>
-                                    <i className={`fas fa-${isProcessing ? 'spinner fa-spin' : hasDataLayers ? 'check-circle' : 'clock'}`}></i>
-                                    {isProcessing ? 'Processing' : hasDataLayers ? 'Ready' : 'Pending'}
+                                  <span className={`status-label ${displayStatus}`}>
+                                    <i className={`fas fa-${statusIcon}`}></i>
+                                    {displayStatus === 'processing' ? 'Processing' : displayStatus === 'ready' ? 'Ready' : 'Pending'}
                                   </span>
                                 </div>
-
+                      
                                 {isProcessing && progress && (
                                   <div className="processing-status">
                                     <div className="progress-bar">
