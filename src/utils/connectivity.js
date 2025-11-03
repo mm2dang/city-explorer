@@ -579,15 +579,21 @@ async function fetchWorldBankCoverage(countryCode) {
     }
     
     const data = await response.json();
-    
+
     console.log(`[Coverage] Raw API response for ${countryCode}:`, JSON.stringify(data, null, 2));
-    
+
     // World Bank API returns [metadata, data_array]
-    if (!data || !Array.isArray(data) || data.length < 2 || !Array.isArray(data[1]) || data[1].length === 0) {
-      console.warn(`[Coverage] No data available for ${countryCode}`);
+    if (!data || !Array.isArray(data) || data.length < 2) {
+      console.warn(`[Coverage] Invalid response structure for ${countryCode}`);
       return 0;
     }
-    
+
+    if (!Array.isArray(data[1]) || data[1].length === 0) {
+      console.warn(`[Coverage] No data records available for ${countryCode}`);
+      console.warn(`[Coverage] Response metadata:`, data[0]);
+      return 0;
+    }
+
     // Get the most recent non-null value
     const records = data[1];
     console.log(`[Coverage] Found ${records.length} records for ${countryCode}`);

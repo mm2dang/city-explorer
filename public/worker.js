@@ -881,47 +881,42 @@ self.onmessage = async (e) => {
               }
 
               if (isInside) {
-                // Extract proper feature name from OSM tags
                 const featureName = el.tags ? 
                   (el.tags.name || el.tags.brand || el.tags.operator || el.tags.ref || null) : null;
-
+              
                 // Crop geometry
                 let finalGeometry = geometry;
                 
                 if (geometry.type === 'LineString') {
                   try {
-                    // Check if completely within boundary first
-                    const lineFeature = { type: 'Feature', geometry, properties: {} };
-                    const isFullyWithin = turf.booleanWithin(lineFeature, boundaryFeature);
+                    console.log(`Processing LineString with ${geometry.coordinates.length} points`);
                     
-                    if (isFullyWithin) {
-                      finalGeometry = geometry;
+                    const clippedSegments = clipLineStringByBoundary(geometry.coordinates, boundaryFeature);
+                    
+                    if (clippedSegments.length === 0) {
+                      console.log('LineString completely outside boundary');
+                      continue;
+                    } else if (clippedSegments.length === 1) {
+                      finalGeometry = {
+                        type: 'LineString',
+                        coordinates: clippedSegments[0]
+                      };
                     } else {
-                      // Use segment-by-segment clipping
-                      const clippedSegments = clipLineStringByBoundary(geometry.coordinates, boundaryFeature);
-                      
-                      if (clippedSegments.length === 0) {
-                        console.log('LineString completely outside boundary');
-                        continue;
-                      } else if (clippedSegments.length === 1) {
-                        finalGeometry = {
-                          type: 'LineString',
-                          coordinates: clippedSegments[0]
-                        };
-                      } else {
-                        finalGeometry = {
-                          type: 'MultiLineString',
-                          coordinates: clippedSegments
-                        };
-                      }
+                      finalGeometry = {
+                        type: 'MultiLineString',
+                        coordinates: clippedSegments
+                      };
                     }
                   } catch (clipError) {
-                    console.warn('Error clipping LineString:', clipError);
-                    finalGeometry = geometry;
+                    console.error('Error clipping LineString:', clipError);
+                    // Skip feature if clipping fails completely
+                    continue;
                   }
                   
                 } else if (geometry.type === 'MultiLineString') {
                   try {
+                    console.log(`Processing MultiLineString with ${geometry.coordinates.length} lines`);
+                    
                     const clippedSegments = clipMultiLineStringByBoundary(geometry.coordinates, boundaryFeature);
                     
                     if (clippedSegments.length === 0) {
@@ -939,10 +934,11 @@ self.onmessage = async (e) => {
                       };
                     }
                   } catch (clipError) {
-                    console.warn('Error clipping MultiLineString:', clipError);
-                    finalGeometry = geometry;
+                    console.error('Error clipping MultiLineString:', clipError);
+                    // Skip feature if clipping fails completely
+                    continue;
                   }
-                  
+
                 } else if (geometry.type === 'Polygon' || geometry.type === 'MultiPolygon') {
                   // Keep existing polygon clipping logic
                   try {
@@ -962,12 +958,12 @@ self.onmessage = async (e) => {
                     finalGeometry = geometry;
                   }
                 }
-
+              
                 if (!finalGeometry) {
                   continue;
                 }
-
-                // Create feature with cropped geometry
+                
+                // Create feature with geometry
                 const feature = {
                   type: 'Feature',
                   geometry: finalGeometry,
@@ -980,6 +976,20 @@ self.onmessage = async (e) => {
                   layer_name: filename,
                   domain_name: domain,
                 };
+
+                if (geometry.type === 'LineString' || geometry.type === 'MultiLineString') {
+                  console.log(`[WORKER] Created feature for ${filename}:`, {
+                    originalType: geometry.type,
+                    originalCoordCount: geometry.type === 'LineString' 
+                      ? geometry.coordinates.length 
+                      : geometry.coordinates.reduce((sum, line) => sum + line.length, 0),
+                    finalType: finalGeometry.type,
+                    finalCoordCount: finalGeometry.type === 'LineString' 
+                      ? finalGeometry.coordinates.length 
+                      : finalGeometry.coordinates.reduce((sum, line) => sum + line.length, 0),
+                    wasCropped: JSON.stringify(geometry) !== JSON.stringify(finalGeometry)
+                  });
+                }
 
                 results.push(feature);
                 processedCount++;

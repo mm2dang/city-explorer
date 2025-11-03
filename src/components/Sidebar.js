@@ -18,7 +18,8 @@ const Sidebar = ({
   mapView = 'street',
   onImportComplete,
   onCityStatusChange,
-  dataSource = 'osm'
+  dataSource = 'osm',
+  onCitySelect
 }) => {
   const [expandedDomains, setExpandedDomains] = useState(new Set());
   const [isAddLayerModalOpen, setIsAddLayerModalOpen] = useState(false);
@@ -497,9 +498,7 @@ const Sidebar = ({
   
     if (!window.confirm(
       `Import all layers from OpenStreetMap for ${selectedCity.name} into ${targetDataSource} data source?\n\n` +
-      'This will fetch and process city features (roads, buildings, amenities, etc.) from OpenStreetMap. ' +
-      'This may take several minutes depending on city size.\n\n' +
-      'You can switch data sources and import the same city into the other source simultaneously if needed.'
+      'This may take several minutes depending on city size.\n\n'
     )) {
       return;
     }
@@ -507,8 +506,13 @@ const Sidebar = ({
     // Mark this city+datasource as importing
     setImportingCities(prev => new Set([...prev, processingKey]));
   
-    // Store city info before we potentially deselect
+    // Store city info before we deselect
     const cityToImport = selectedCity;
+
+    // Deselect the city BEFORE starting processing
+    if (onCitySelect) {
+      onCitySelect(null);
+    }
   
     try {
       // Parse city name to extract components
@@ -542,8 +546,8 @@ const Sidebar = ({
       };
       const totalLayers = Object.values(layerDefinitions).reduce((sum, count) => sum + count, 0);
   
-      // Only deselect if this is the currently selected city AND we're in the same data source
-      if (selectedCity?.name === cityToImport.name && onImportComplete) {
+      // Deselect the city before starting processing
+      if (onImportComplete) {
         onImportComplete(cityToImport.name, {
           processed: 0,
           saved: 0,
@@ -559,11 +563,11 @@ const Sidebar = ({
         country,
         province,
         city,
-        (progress) => {
-          console.log('Import progress:', cityToImport.name, 'in', targetDataSource, progress);
+        (cityName, progress) => {
+          console.log('Import progress:', cityName, 'in', targetDataSource, progress);
           // Update progress through parent callback
           if (onImportComplete) {
-            onImportComplete(cityToImport.name, {
+            onImportComplete(cityName, {
               ...progress,
               dataSource: targetDataSource
             });
@@ -611,7 +615,7 @@ const Sidebar = ({
       });
   
       // Show success message immediately (import continues in background)
-      alert(`Import started for ${cityToImport.name} in ${targetDataSource} data source.\n\nYou can switch to the other data source and import the same city there if needed, or select other cities.`);
+      alert(`Import started for ${cityToImport.name} in ${targetDataSource} data source.`);
       
     } catch (error) {
       console.error('Error starting OSM import:', error);

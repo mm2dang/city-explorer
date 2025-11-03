@@ -937,6 +937,9 @@ export const loadCityFeatures = async (cityName, activeLayers) => {
                 try {
                   // Parse the stored GeoJSON geometry
                   const geoJsonGeometry = JSON.parse(row.geometry_coordinates);
+
+                  console.log(`=== RAW geometry_coordinates from S3 (first 200 chars) ===`, 
+                    row.geometry_coordinates.substring(0, 200));
                   
                   if (geoJsonGeometry && geoJsonGeometry.type && geoJsonGeometry.coordinates) {
                     // Use the geometry directly - it's already valid GeoJSON
@@ -1003,11 +1006,28 @@ export const loadCityFeatures = async (cityName, activeLayers) => {
                   });
                   validFeatureCount++;
                   
-                  // Log first few valid features for debugging
                   if (validFeatureCount <= 3) {
-                    console.log(`=== S3: Valid feature ${validFeatureCount} ===`, {
+                    console.log(`=== S3: Valid feature ${validFeatureCount} DETAILED ===`, {
                       type: geometry.type,
-                      coordinates: geometry.type === 'Point' ? geometry.coordinates : 'complex',
+                      coordinateCount: geometry.type === 'Point' 
+                        ? 1
+                        : geometry.type === 'LineString'
+                        ? geometry.coordinates.length
+                        : geometry.type === 'MultiLineString'
+                        ? geometry.coordinates.reduce((sum, line) => sum + line.length, 0)
+                        : 'other',
+                      firstCoordinate: geometry.type === 'Point'
+                        ? geometry.coordinates
+                        : geometry.type === 'LineString'
+                        ? geometry.coordinates[0]
+                        : geometry.type === 'MultiLineString'
+                        ? geometry.coordinates[0][0]
+                        : null,
+                      lastCoordinate: geometry.type === 'LineString'
+                        ? geometry.coordinates[geometry.coordinates.length - 1]
+                        : geometry.type === 'MultiLineString'
+                        ? geometry.coordinates[geometry.coordinates.length - 1][geometry.coordinates[geometry.coordinates.length - 1].length - 1]
+                        : null,
                       properties: { feature_name: row.feature_name, layer_name: row.layer_name }
                     });
                   }
@@ -1101,11 +1121,25 @@ export const loadCityFeatures = async (cityName, activeLayers) => {
                       if (row.geometry_coordinates) {
                         try {
                           const geoJsonGeometry = JSON.parse(row.geometry_coordinates);
+                          
+                          if (geoJsonGeometry && (geoJsonGeometry.type === 'LineString' || geoJsonGeometry.type === 'MultiLineString')) {
+                            console.log(`[LOAD] Loading feature from layer ${layerName}:`, {
+                              type: geoJsonGeometry.type,
+                              coordCount: geoJsonGeometry.type === 'LineString' 
+                                ? geoJsonGeometry.coordinates.length 
+                                : geoJsonGeometry.coordinates.reduce((sum, line) => sum + line.length, 0),
+                              firstCoord: geoJsonGeometry.type === 'LineString' 
+                                ? geoJsonGeometry.coordinates[0] 
+                                : geoJsonGeometry.coordinates[0][0],
+                              rawStringLength: row.geometry_coordinates.length
+                            });
+                          }
+                          
                           if (geoJsonGeometry && geoJsonGeometry.type && geoJsonGeometry.coordinates) {
                             geometry = geoJsonGeometry;
                           }
                         } catch (parseError) {
-                          console.warn(`S3: Error parsing geometry for custom layer:`, parseError.message);
+                          console.warn(`S3: Error parsing stored GeoJSON geometry:`, parseError.message);
                         }
                       }
                       
@@ -1566,7 +1600,13 @@ const cropFeaturesByBoundary = (features, boundary) => {
     }
 
     // Parse boundary if it's a string
-    const boundaryGeometry = typeof boundary === 'string' ? JSON.parse(boundary) : boundary;
+    let boundaryGeometry = typeof boundary === 'string' ? JSON.parse(boundary) : boundary;
+    
+    // If boundary is a Feature object, extract just the geometry
+    if (boundaryGeometry.type === 'Feature' && boundaryGeometry.geometry) {
+      console.log('Boundary is a Feature object, extracting geometry');
+      boundaryGeometry = boundaryGeometry.geometry;
+    }
     
     // Validate boundary polygon structure
     try {
@@ -2117,7 +2157,6 @@ export const saveCustomLayer = async (cityName, layerData, boundary = null) => {
       throw new Error('No features to save. All features may have been outside the city boundary.');
     }
 
-    // Save directly without additional cropping since LayerModal already handled it
     await saveLayerFeatures(
       features,
       country,
@@ -2125,7 +2164,7 @@ export const saveCustomLayer = async (cityName, layerData, boundary = null) => {
       city,
       layerData.domain,
       layerData.name,
-      null  // Pass null for boundary since features are already cropped
+      null
     );
 
     console.log(`Custom layer ${layerData.name} saved successfully with ${features.length} features`);
@@ -2316,7 +2355,8 @@ export const processCityFeatures = async (cityData, country, province, city, onP
             processed: 0,
             saved: 0,
             total: 0,
-            status: 'cancelled'
+            status: 'cancelled',
+            dataSource: targetDataSource
           });
         }
         return { processedLayers: 0, savedLayers: 0, totalLayers: 0, cancelled: true };
@@ -2354,7 +2394,8 @@ export const processCityFeatures = async (cityData, country, province, city, onP
               processed: processedCount,
               saved: savedCount,
               total: totalLayers,
-              status: 'cancelled'
+              status: 'cancelled',
+              dataSource: targetDataSource
             });
           }
           
@@ -2379,7 +2420,8 @@ export const processCityFeatures = async (cityData, country, province, city, onP
               processed: processedCount,
               saved: savedCount,
               total: totalLayers,
-              status: 'cancelled'
+              status: 'cancelled',
+              dataSource: targetDataSource
             });
           }
           
@@ -2436,7 +2478,8 @@ export const processCityFeatures = async (cityData, country, province, city, onP
                     processed: batchStartProcessed + (e.data.progress.processed || 0),
                     saved: batchStartSaved + (e.data.progress.saved || 0),
                     total: totalLayers,
-                    status: 'processing'
+                    status: 'processing',
+                    dataSource: targetDataSource
                   };
                   console.log('Calling onProgressUpdate with:', progressData);
                   onProgressUpdate(cityData.name, progressData);
@@ -2495,7 +2538,8 @@ export const processCityFeatures = async (cityData, country, province, city, onP
                 processed: processedCount,
                 saved: savedCount,
                 total: totalLayers,
-                status: 'cancelled'
+                status: 'cancelled',
+                dataSource: targetDataSource
               });
             }
             
@@ -2532,7 +2576,8 @@ export const processCityFeatures = async (cityData, country, province, city, onP
                   processed: processedCount,
                   saved: savedCount,
                   total: totalLayers,
-                  status: 'cancelled'
+                  status: 'cancelled',
+                  dataSource: targetDataSource
                 });
               }
               
@@ -2542,8 +2587,7 @@ export const processCityFeatures = async (cityData, country, province, city, onP
             const layerData = layerGroups[layerInfo.filename];
             
             if (layerData && layerData.features && layerData.features.length > 0) {
-              // Save layers that have features WITH BOUNDARY CROPPING
-              // The current DATA_SOURCE_PREFIX is already set to targetDataSource
+              // Save layers that have features
               await saveLayerFeatures(
                 layerData.features,
                 country,
@@ -2551,7 +2595,7 @@ export const processCityFeatures = async (cityData, country, province, city, onP
                 city,
                 layerData.domain,
                 layerInfo.filename,
-                boundary  // Pass boundary for cropping
+                null
               );
               savedCount++;
               console.log(`Saved layer ${layerInfo.filename} with cropped features to ${targetDataSource}`);
@@ -2566,7 +2610,8 @@ export const processCityFeatures = async (cityData, country, province, city, onP
                 processed: processedCount,
                 saved: savedCount,
                 total: totalLayers,
-                status: 'processing'
+                status: 'processing',
+                dataSource: targetDataSource
               });
             }
           }
@@ -2584,7 +2629,8 @@ export const processCityFeatures = async (cityData, country, province, city, onP
               processed: processedCount,
               saved: savedCount,
               total: totalLayers,
-              status: 'processing'
+              status: 'processing',
+              dataSource: targetDataSource
             });
           }
         }
@@ -2600,7 +2646,8 @@ export const processCityFeatures = async (cityData, country, province, city, onP
           processed: processedCount,
           saved: savedCount,
           total: totalLayers,
-          status: 'complete'
+          status: 'complete',
+          dataSource: targetDataSource
         });
       }
       

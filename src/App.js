@@ -237,6 +237,15 @@ function App() {
         console.log('Starting background processing for:', cityData.name, 'in data source:', targetDataSource);
         console.log('Using processing key:', processingKey);
         
+        // Deselect the city before starting processing
+        if (selectedCity && selectedCity.name === cityData.name) {
+          console.log('Deselecting city before processing:', cityData.name);
+          setSelectedCity(null);
+          setActiveLayers({});
+          setFeatures([]);
+          setAvailableLayers({});
+        }
+        
         const layerDefinitions = {
           mobility: 8,
           governance: 3,
@@ -324,9 +333,9 @@ function App() {
       // Check if this city is currently selected and will be processed
       const isCurrentlySelected = selectedCity && 
         (selectedCity.name === updatedCityData.name || 
-         (editingCity && selectedCity.name === editingCity.name));
+          (editingCity && selectedCity.name === editingCity.name));
       const willBeProcessed = startProcessing !== null;
-      
+
       // If the selected city will be processed, deselect it first
       if (isCurrentlySelected && willBeProcessed) {
         console.log('Deselecting city before processing:', selectedCity.name);
@@ -974,34 +983,30 @@ function App() {
             progressDataSource: progress.dataSource, 
             currentDataSource: dataSource, 
             effectiveDataSource, 
-            processingKey 
+            processingKey,
+            progressData: progress 
           });
           
           if (progress.status === 'processing') {
             console.log('Starting OSM import processing for:', cityName, 'in', effectiveDataSource);
-            console.log('Using processing key:', processingKey);
+            console.log('Progress values:', progress.processed, '/', progress.total, 'saved:', progress.saved);
             
-            // Only reset map if this is the currently selected city AND same data source
-            if (selectedCity?.name === cityName && progress.dataSource === dataSource) {
-              console.log('Deselecting currently selected city for import');
-              setSelectedCity(null);
-              setActiveLayers({});
-              setFeatures([]);
-              setAvailableLayers({});
-            }
-            
-            // Set initial processing progress with data-source-specific key
-            setProcessingProgress(prev => ({
-              ...prev,
-              [processingKey]: {
-                cityName: cityName,
-                processed: progress.processed !== undefined ? progress.processed : (prev[processingKey]?.processed || 0),
-                saved: progress.saved !== undefined ? progress.saved : (prev[processingKey]?.saved || 0),
-                total: progress.total || prev[processingKey]?.total || 41,
-                status: 'processing',
-                dataSource: progress.dataSource || dataSource
-              }
-            }));
+            // Set processing progress with ALL fields
+            setProcessingProgress(prev => {
+              const newProgress = {
+                ...prev,
+                [processingKey]: {
+                  cityName: cityName,
+                  processed: progress.processed || 0,
+                  saved: progress.saved || 0,
+                  total: progress.total || 41,
+                  status: 'processing',
+                  dataSource: effectiveDataSource
+                }
+              };
+              console.log('Updated processingProgress state:', newProgress[processingKey]);
+              return newProgress;
+            });
             
             // Set city status to not ready
             setCityDataStatus(prev => ({
@@ -1050,6 +1055,7 @@ function App() {
         }}
         onCityStatusChange={handleCityStatusChange}
         dataSource={dataSource}
+        onCitySelect={handleCitySelect}
       />
       <MapViewer
         selectedCity={selectedCity}
