@@ -2245,6 +2245,58 @@ useEffect(() => {
     }
   };
 
+  const splitMultiGeometries = (features) => {
+    const splitFeatures = [];
+    
+    features.forEach((feature, index) => {
+      if (!feature.geometry) {
+        splitFeatures.push(feature);
+        return;
+      }
+      
+      if (feature.geometry.type === 'MultiPolygon') {
+        // Split MultiPolygon into individual Polygons
+        feature.geometry.coordinates.forEach((polygonCoords, polyIndex) => {
+          splitFeatures.push({
+            ...feature,
+            geometry: {
+              type: 'Polygon',
+              coordinates: polygonCoords
+            },
+            properties: {
+              ...feature.properties,
+              name: feature.properties?.name 
+                ? `${feature.properties.name} (Part ${polyIndex + 1})`
+                : `Feature ${index + 1} (Part ${polyIndex + 1})`
+            }
+          });
+        });
+      } else if (feature.geometry.type === 'MultiLineString') {
+        // Split MultiLineString into individual LineStrings
+        feature.geometry.coordinates.forEach((lineCoords, lineIndex) => {
+          splitFeatures.push({
+            ...feature,
+            geometry: {
+              type: 'LineString',
+              coordinates: lineCoords
+            },
+            properties: {
+              ...feature.properties,
+              name: feature.properties?.name 
+                ? `${feature.properties.name} (Part ${lineIndex + 1})`
+                : `Feature ${index + 1} (Part ${lineIndex + 1})`
+            }
+          });
+        });
+      } else {
+        // Keep other geometry types as-is
+        splitFeatures.push(feature);
+      }
+    });
+    
+    return splitFeatures;
+  };
+
   const handleFileUpload = async (e) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
@@ -2307,8 +2359,12 @@ useEffect(() => {
         .filter(f => f !== null);
       const croppedOutCount = parsedFeatures.length - boundaryFiltered.length;
       console.log(`After boundary crop: ${boundaryFiltered.length} features (${croppedOutCount} removed)`);
-      
-      if (boundaryFiltered.length === 0) {
+
+      console.log('Step 1.5: Splitting multi-geometries...');
+      const splitFeatures = splitMultiGeometries(boundaryFiltered);
+      console.log(`After splitting: ${splitFeatures.length} features (${splitFeatures.length - boundaryFiltered.length} new from splits)`);
+
+      if (splitFeatures.length === 0) {
         alert(
           'All features in the uploaded file are outside the city boundary.\n\n' +
           `${parsedFeatures.length} feature${parsedFeatures.length > 1 ? 's were' : ' was'} found but none are within the city limits.\n\n` +
@@ -2322,7 +2378,7 @@ useEffect(() => {
       }
       
       // Step 2: Combine with existing features if append mode
-      const combined = appendMode ? [...features, ...boundaryFiltered] : boundaryFiltered;
+      const combined = appendMode ? [...features, ...splitFeatures] : boundaryFiltered;
       console.log(`Step 2: ${appendMode ? 'Append' : 'Replace'} mode - ${combined.length} total features to check`);
       
       // Step 3: Remove duplicates based on coordinates across ALL domains

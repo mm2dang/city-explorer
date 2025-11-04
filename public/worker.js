@@ -21,6 +21,58 @@ const getGeometryHash = (geometry) => {
   }
 };
 
+const splitMultiGeometries = (features) => {
+  const splitFeatures = [];
+  
+  features.forEach((feature, index) => {
+    if (!feature.geometry) {
+      splitFeatures.push(feature);
+      return;
+    }
+    
+    if (feature.geometry.type === 'MultiPolygon') {
+      feature.geometry.coordinates.forEach((polygonCoords, polyIndex) => {
+        splitFeatures.push({
+          ...feature,
+          geometry: {
+            type: 'Polygon',
+            coordinates: polygonCoords
+          },
+          properties: {
+            ...feature.properties
+          },
+          feature_name: feature.feature_name 
+            ? `${feature.feature_name} (Part ${polyIndex + 1})`
+            : `Feature ${index + 1} (Part ${polyIndex + 1})`,
+          layer_name: feature.layer_name,
+          domain_name: feature.domain_name
+        });
+      });
+    } else if (feature.geometry.type === 'MultiLineString') {
+      feature.geometry.coordinates.forEach((lineCoords, lineIndex) => {
+        splitFeatures.push({
+          ...feature,
+          geometry: {
+            type: 'LineString',
+            coordinates: lineCoords
+          },
+          properties: {
+            ...feature.properties
+          },
+          feature_name: feature.feature_name 
+            ? `${feature.feature_name} (Part ${lineIndex + 1})`
+            : `Feature ${index + 1} (Part ${lineIndex + 1})`,
+          layer_name: feature.layer_name,
+          domain_name: feature.domain_name
+        });
+      });
+    } else {
+      splitFeatures.push(feature);
+    }
+  });
+  
+  return splitFeatures;
+};
 
 self.onmessage = async (e) => {
   try {
@@ -1048,8 +1100,14 @@ self.onmessage = async (e) => {
     }
 
     console.log(`Worker completed processing with ${results.length} total features`);
+    
+    // Split multi-geometries
+    console.log('Splitting multi-geometries in worker...');
+    const splitResults = splitMultiGeometries(results);
+    console.log(`After splitting: ${splitResults.length} features (${splitResults.length - results.length} new from splits)`);
+    
     self.postMessage({ 
-      results,
+      results: splitResults,
       progress: {
         processed: processedLayers,
         saved: savedLayers,

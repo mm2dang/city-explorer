@@ -40,6 +40,7 @@ cityexplorer/
 │   │   ├── MapViewer.css
 │   │   └── Sidebar.css
 │   ├── App.js                        # Main application component
+│   ├── proxy-server.js               # Proxy server for world bank
 │   └── index.js                      # React entry point
 ├── package.json
 ├── .env                              # Environment variables
@@ -95,6 +96,7 @@ REACT_APP_S3_CONNECTIVITY_BUCKET_NAME=qoli-mobile-ping-connectivity-dev
 ```
 4. Run the development server
 ```bash
+node src/proxy-server.js
 npm start
 ```
 5. Open http://localhost:3000 in your browser

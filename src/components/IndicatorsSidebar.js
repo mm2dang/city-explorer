@@ -11,6 +11,7 @@ import {
 import Papa from 'papaparse';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import '../styles/IndicatorsSidebar.css';
+import { getCountryCode } from '../utils/connectivity';
 
 const IndicatorsSidebar = ({ selectedCity, dataSource, onCalculateIndicators, cities }) => {
   const [isCollapsed, setIsCollapsed] = useState(false);
@@ -35,7 +36,7 @@ const IndicatorsSidebar = ({ selectedCity, dataSource, onCalculateIndicators, ci
   const indicators = useMemo(() => ({
     out_at_night: {
       label: 'Out at Night',
-      description: 'Proportion of people seen after dark (8 PM - 4 AM)',
+      description: 'Proportion of people seen after dark',
       color: '#8b5cf6',
       unit: '%',
       icon: 'fa-moon',
@@ -43,8 +44,8 @@ const IndicatorsSidebar = ({ selectedCity, dataSource, onCalculateIndicators, ci
       frequency: 'monthly'
     },
     leisure_dwell_time: {
-      label: 'Leisure Dwell Time',
-      description: 'Average dwell time in cultural or recreational sites',
+      label: 'Leisure Time',
+      description: 'Mean dwell time in cultural or recreational sites',
       color: '#10b981',
       unit: 'min',
       icon: 'fa-clock',
@@ -53,7 +54,7 @@ const IndicatorsSidebar = ({ selectedCity, dataSource, onCalculateIndicators, ci
     },
     cultural_visits: {
       label: 'Cultural Visits',
-      description: 'Average number of visits to cultural or recreational sites per month',
+      description: 'Median number of visits to cultural or recreational sites per month',
       color: '#f59e0b',
       unit: 'visits',
       icon: 'fa-palette',
@@ -149,6 +150,13 @@ const IndicatorsSidebar = ({ selectedCity, dataSource, onCalculateIndicators, ci
     }
   }, [selectedDateRange, loadSummaryData]);
 
+  // Clear time series data when selected city changes
+  useEffect(() => {
+    setTimeSeriesData({});
+    setLoadingTimeSeries({});
+    setExpandedIndicator(null);
+  }, [selectedCity]);
+
   // Poll for job status when calculating
   useEffect(() => {
     let intervalId;
@@ -205,23 +213,25 @@ const IndicatorsSidebar = ({ selectedCity, dataSource, onCalculateIndicators, ci
       setConnectivityProgress(progress);
       setIsCalculatingConnectivity(true);
     };
-
+  
     const handleConnectivityComplete = () => {
       setIsCalculatingConnectivity(false);
       setConnectivityProgress(null);
+      // Reload data after connectivity calculation completes
+      loadDateRanges();
       if (selectedDateRange) {
         loadSummaryData();
       }
     };
-
+  
     window.addEventListener('connectivity-progress', handleConnectivityProgress);
     window.addEventListener('connectivity-complete', handleConnectivityComplete);
-
+  
     return () => {
       window.removeEventListener('connectivity-progress', handleConnectivityProgress);
       window.removeEventListener('connectivity-complete', handleConnectivityComplete);
     };
-  }, [selectedDateRange, loadSummaryData]);
+  }, [selectedDateRange, loadDateRanges, loadSummaryData]);
 
   const handleSort = (key) => {
     let direction = 'asc';
@@ -504,7 +514,11 @@ const IndicatorsSidebar = ({ selectedCity, dataSource, onCalculateIndicators, ci
                         <LineChart data={chartData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
                           <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
                           <XAxis 
-                            dataKey={info.frequency === 'monthly' ? 'month' : 'quarter'}
+                            dataKey={
+                              key === 'coverage' 
+                                ? 'year' 
+                                : (info.frequency === 'monthly' ? 'month' : 'quarter')
+                            }
                             tick={{ fontSize: 11 }}
                             stroke="#9ca3af"
                           />
@@ -520,6 +534,12 @@ const IndicatorsSidebar = ({ selectedCity, dataSource, onCalculateIndicators, ci
                               fontSize: '12px'
                             }}
                             formatter={(value) => [Number(value).toFixed(2) + ' ' + info.unit, info.label]}
+                            labelFormatter={(label) => {
+                              if (key === 'coverage') {
+                                return `Year: ${label}`;
+                              }
+                              return label;
+                            }}
                           />
                           <Line 
                             type="monotone" 
@@ -621,6 +641,60 @@ const IndicatorsSidebar = ({ selectedCity, dataSource, onCalculateIndicators, ci
     return { city: parts[0], province: parts[1], country: parts[2] };
   };
 
+  const fetchHistoricalCoverage = async (country) => {
+    try {
+      const countryCode = getCountryCode(country);
+      if (!countryCode) {
+        console.warn('No country code found for:', country);
+        return [];
+      }
+  
+      const proxyUrl = `http://localhost:3001/api/worldbank/${countryCode}`;
+      console.log(`[Coverage] Fetching historical data for ${country} (${countryCode})...`);
+      
+      const response = await fetch(proxyUrl);
+      const data = await response.json();
+      
+      if (data.error) {
+        console.error(`[Coverage] Error for ${countryCode}:`, data.error);
+        return [];
+      }
+      
+      const wbUrl = `https://api.worldbank.org/v2/country/${countryCode}/indicator/IT.CEL.SETS.P2?format=json&per_page=50&date=2000:2023`;
+      
+      const wbResponse = await fetch(wbUrl);
+      const text = await wbResponse.text();
+      
+      let wbData;
+      try {
+        wbData = JSON.parse(text);
+      } catch (parseError) {
+        console.error('Failed to parse World Bank response:', parseError);
+        return [];
+      }
+  
+      if (!wbData || !Array.isArray(wbData) || wbData.length < 2 || !Array.isArray(wbData[1])) {
+        console.log('No historical data available');
+        return [];
+      }
+  
+      const records = wbData[1];
+      const historicalData = records
+        .filter(record => record.value !== null && !isNaN(record.value) && record.value > 0)
+        .map(record => ({
+          year: record.date,
+          value: parseFloat(record.value)
+        }))
+        .sort((a, b) => a.year - b.year);
+  
+      console.log(`[Coverage] Found ${historicalData.length} historical data points`);
+      return historicalData;
+    } catch (error) {
+      console.error('[Coverage] Error fetching historical data:', error);
+      return [];
+    }
+  };
+
   const handleIndicatorClick = async (indicatorKey) => {
     if (!selectedCity || !selectedDateRange) return;
     
@@ -642,7 +716,13 @@ const IndicatorsSidebar = ({ selectedCity, dataSource, onCalculateIndicators, ci
       const { city, province, country } = parseSelectedCityName(selectedCity.name);
       
       let data;
-      if (indicator.type === 'mobile_ping') {
+      
+      // Special handling for coverage indicator
+      if (indicatorKey === 'coverage') {
+        console.log(`[Coverage] Fetching historical data for ${country}...`);
+        data = await fetchHistoricalCoverage(country);
+        console.log('[Coverage] Historical data:', data);
+      } else if (indicator.type === 'mobile_ping') {
         data = await getMonthlyIndicatorData(
           dataSource,
           country,
@@ -709,14 +789,14 @@ const IndicatorsSidebar = ({ selectedCity, dataSource, onCalculateIndicators, ci
         <div className="indicators-content">
           <div className="controls-section">
             <div className="controls-buttons">
-            <button
-              className="calculate-btn"
-              onClick={() => onCalculateIndicators()}
-              disabled={isCalculating || isCalculatingConnectivity}
-            >
-              <i className={`fas ${isCalculating || isCalculatingConnectivity ? 'fa-spinner fa-spin' : 'fa-calculator'}`}></i>
-              {isCalculating || isCalculatingConnectivity ? 'Calculating...' : 'Calculate Indicators'}
-            </button>
+              <button
+                className="calculate-btn"
+                onClick={() => onCalculateIndicators()}
+                disabled={isCalculating || isCalculatingConnectivity}
+              >
+                <i className={`fas ${(isCalculating || isCalculatingConnectivity) ? 'fa-spinner fa-spin' : 'fa-calculator'}`}></i>
+                {(isCalculating || isCalculatingConnectivity) ? 'Calculating...' : 'Calculate Indicators'}
+              </button>
               {canExport && (
                 <div className="export-menu-wrapper">
                   <button
@@ -758,12 +838,13 @@ const IndicatorsSidebar = ({ selectedCity, dataSource, onCalculateIndicators, ci
                 </div>
               )}
             </div>
+            
             {/* Show Glue job status */}
             {isCalculating && calculationStatus && (
               <div className="calculation-status">
                 <div className="status-header">
-                  <i className="fas fa-cog"></i>
-                  <span>Indicator Calculation</span>
+                  <i className="fas fa-cog fa-spin"></i>
+                  <span>Mobile Ping Calculation</span>
                 </div>
                 <div className="status-bar">
                   <div
@@ -774,31 +855,31 @@ const IndicatorsSidebar = ({ selectedCity, dataSource, onCalculateIndicators, ci
                 <small>{calculationStatus.state}: {calculationStatus.message || 'Processing...'}</small>
               </div>
             )}
+            
             {/* Show connectivity calculation status */}
             {isCalculatingConnectivity && connectivityProgress && (
               <div className="calculation-status connectivity-status">
                 <div className="status-header">
-                  <i className="fas fa-signal"></i>
                   <span>Connectivity Calculation</span>
                 </div>
                 <div className="status-bar">
                   <div
                     className="status-fill"
                     style={{ 
-                      width: `${(connectivityProgress.current / connectivityProgress.total) * 100}%`,
-                      background: '#3b82f6'
+                      width: `${Math.round((connectivityProgress.current / connectivityProgress.total) * 100)}%`
                     }}
                   />
                 </div>
                 <small>
-                  {connectivityProgress.current} of {connectivityProgress.total} cities
+                  Processing {connectivityProgress.current} of {connectivityProgress.total} cities
                   {connectivityProgress.currentCity && ` - ${connectivityProgress.currentCity}`}
                 </small>
-                {connectivityProgress.currentProgress && (
+                {connectivityProgress.currentProgress && connectivityProgress.currentProgress.message && (
                   <small className="sub-progress">{connectivityProgress.currentProgress.message}</small>
                 )}
               </div>
             )}
+            
             <div className="date-range-selector">
               <label>Date Range:</label>
               <select

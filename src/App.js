@@ -669,7 +669,9 @@ function App() {
 
   const handleCalculateIndicators = async (calculationParams) => {
     try {
+      // Set loading state IMMEDIATELY before any async operations
       setIsCalculatingIndicators(true);
+      
       console.log('Starting indicator calculation with parameters:', calculationParams);
       
       const shouldCalculateConnectivity = calculationParams.calculateConnectivity;
@@ -681,6 +683,9 @@ function App() {
         setIsCalculatingIndicators(false);
         return;
       }
+      
+      // Close modal BEFORE starting calculations (so progress is visible)
+      setShowCalculateIndicatorsModal(false);
       
       // Start connectivity calculation if enabled
       let connectivityPromise = null;
@@ -711,8 +716,6 @@ function App() {
         console.log('Mobile ping calculation skipped (checkbox not checked)');
       }
       
-      setShowCalculateIndicatorsModal(false);
-      
       // Build alert message based on what's running
       let alertMessage = '';
       if (shouldCalculateConnectivity && shouldCalculateMobilePing) {
@@ -737,6 +740,10 @@ function App() {
     } finally {
       setIsCalculatingIndicators(false);
     }
+  };
+
+  const normalizeCountryName = (country) => {
+    return country.toLowerCase().trim().replace(/\s+/g, ' ');
   };
 
   const calculateConnectivityForCities = async (calculationParams, onConnectivityProgress) => {
@@ -781,38 +788,41 @@ function App() {
     const months = generateMonthRange(startMonth, endMonth);
     console.log(`Generated ${months.length} months:`, months);
     
-    // Fetch coverage data by country (cache to avoid duplicate API calls)
+    // Fetch coverage data by country
     const coverageByCountry = new Map();
-    const uniqueCountries = [...new Set(countries)];
-    
+
+    // Normalize ALL country names consistently
+    const normalizedCountries = countries.map(c => normalizeCountryName(c));
+    const uniqueCountries = [...new Set(normalizedCountries)];
+
     console.log(`\n--- Fetching World Bank coverage data for ${uniqueCountries.length} countries ---`);
-    
-    for (const country of uniqueCountries) {
+    console.log('Normalized country names:', uniqueCountries);
+
+    for (const normalizedCountry of uniqueCountries) {
       try {
-        const countryCode = getCountryCode(country);
-        console.log(`[Coverage] Fetching for ${country} (code: ${countryCode})`);
+        const countryCode = getCountryCode(normalizedCountry);
+        console.log(`[Coverage] Fetching for ${normalizedCountry} (code: ${countryCode})`);
         
         if (countryCode) {
           const coverage = await fetchWorldBankCoverage(countryCode);
-          const countryKey = country.toLowerCase().trim();
-          coverageByCountry.set(countryKey, coverage);
-          console.log(`[Coverage] ${country}: ${coverage}% (stored with key: "${countryKey}")`);
+          coverageByCountry.set(normalizedCountry, coverage);
+          console.log(`[Coverage] ${normalizedCountry}: ${coverage}% (stored with key: "${normalizedCountry}")`);
         } else {
-          console.warn(`[Coverage] No country code mapping for: ${country}`);
-          coverageByCountry.set(country.toLowerCase().trim(), 0);
+          console.warn(`[Coverage] No country code mapping for: ${normalizedCountry}`);
+          coverageByCountry.set(normalizedCountry, 0);
         }
         
         // Add small delay to avoid rate limiting
         await new Promise(resolve => setTimeout(resolve, 200));
         
       } catch (error) {
-        console.error(`[Coverage] Error fetching coverage for ${country}:`, error);
+        console.error(`[Coverage] Error fetching coverage for ${normalizedCountry}:`, error);
         console.error(`[Coverage] Error details:`, error.message);
-        coverageByCountry.set(country.toLowerCase().trim(), 0);
+        coverageByCountry.set(normalizedCountry, 0);
       }
     }
     
-    // Debug: Log the entire coverage map
+    // Log the entire coverage map
     console.log('[Coverage] Final coverage map:');
     for (const [key, value] of coverageByCountry.entries()) {
       console.log(`  "${key}": ${value}%`);
@@ -858,7 +868,8 @@ function App() {
       try {
         console.log(`Starting connectivity metrics calculation...`);
         
-        const connectivity = await calculateConnectivityMetrics(
+        // Returns array of quarterly results
+        const quarterlyMetrics = await calculateConnectivityMetrics(
           cityObj.boundary,
           months,
           (progress) => {
@@ -874,36 +885,40 @@ function App() {
         );
         
         // Get coverage from the country-level cache
-        const countryKey = country.toLowerCase().trim();
-        const coverage = coverageByCountry.get(countryKey);
-        
+        const normalizedCountryForLookup = normalizeCountryName(country);
+        const coverage = coverageByCountry.get(normalizedCountryForLookup);
+
         console.log(`[Coverage] Looking up coverage for country: "${country}"`);
-        console.log(`[Coverage] Using key: "${countryKey}"`);
+        console.log(`[Coverage] Normalized to: "${normalizedCountryForLookup}"`);
         console.log(`[Coverage] Found value: ${coverage}%`);
-        
+
         if (coverage === undefined) {
-          console.error(`[Coverage] WARNING: No coverage found for key "${countryKey}"`);
+          console.error(`[Coverage] WARNING: No coverage found for key "${normalizedCountryForLookup}"`);
           console.log('[Coverage] Available keys:', Array.from(coverageByCountry.keys()));
         }
-        
+
         const finalCoverage = coverage !== undefined ? coverage : 0;
         
         const cityElapsed = ((Date.now() - cityStartTime) / 1000).toFixed(2);
         
         console.log(`Connectivity calculation completed in ${cityElapsed}s`);
-        console.log(`  Speed: ${connectivity.speed.toFixed(2)} kbps`);
-        console.log(`  Latency: ${connectivity.latency.toFixed(2)} ms`);
-        console.log(`  Coverage: ${finalCoverage.toFixed(2)}%`);
+        console.log(`Calculated ${quarterlyMetrics.length} quarterly results`);
         
-        connectivityResults.push({
-          city: cityName,
-          province: province,
-          country: country,
-          speed: connectivity.speed,
-          latency: connectivity.latency,
-          coverage: finalCoverage,
-          dateRange: `${startMonth}_to_${endMonth}`
-        });
+        // Create one result per quarter
+        for (const quarterData of quarterlyMetrics) {
+          console.log(`  Quarter ${quarterData.quarter}: Speed ${quarterData.speed.toFixed(2)} kbps, Latency ${quarterData.latency.toFixed(2)} ms`);
+          
+          connectivityResults.push({
+            city: cityName,
+            province: province,
+            country: country,
+            quarter: quarterData.quarter,
+            speed: quarterData.speed,
+            latency: quarterData.latency,
+            coverage: finalCoverage,
+            dateRange: `${startMonth}_to_${endMonth}`
+          });
+        }
         
       } catch (error) {
         const cityElapsed = ((Date.now() - cityStartTime) / 1000).toFixed(2);
@@ -916,13 +931,14 @@ function App() {
     
     console.log(`\n=== CONNECTIVITY CALCULATION SUMMARY ===`);
     console.log(`Total time: ${totalElapsed}s`);
-    console.log(`Successful: ${connectivityResults.length}/${cityNames.length} cities`);
+    console.log(`Total quarterly results: ${connectivityResults.length}`);
+    console.log(`Cities processed: ${cityNames.length}`);
     
     if (connectivityResults.length > 0) {
       try {
         console.log(`\nSaving ${connectivityResults.length} connectivity results to S3...`);
         console.log('Data source:', dataSource);
-        console.log('Results:', connectivityResults);
+        console.log('Sample results:', connectivityResults.slice(0, 3));
         
         await saveConnectivityResults(dataSource, connectivityResults);
         

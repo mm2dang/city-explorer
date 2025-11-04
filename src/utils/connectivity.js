@@ -4,7 +4,7 @@ import { tableFromIPC } from 'apache-arrow';
 import pako from 'pako';
 import Papa from 'papaparse';
 
-// Create separate S3 client for Ookla data (public bucket, no credentials needed)
+// Create separate S3 client for Ookla data
 const ooklaS3Client = new S3Client({
   region: 'us-west-2',
   credentials: {
@@ -238,138 +238,155 @@ console.log(`[Parquet] Found ${validRows.length} valid tiles from ${numRows.toLo
  * Calculate connectivity metrics for a city
  */
 export async function calculateConnectivityMetrics(cityBoundary, months, onProgress) {
-    console.log('[Connectivity] Starting calculation');
-    console.log('[Connectivity] Months to process:', months);
-    
-    try {
-      if (!cityBoundary) {
-        console.warn('[Connectivity] No city boundary provided');
-        return { speed: 0, latency: 0 };
-      }
+  console.log('[Connectivity] Starting calculation');
+  console.log('[Connectivity] Months to process:', months);
   
+  try {
+    if (!cityBoundary) {
+      console.warn('[Connectivity] No city boundary provided');
+      return [];
+    }
+
+    await yieldToEventLoop();
+
+    console.log('[Connectivity] Parsing city boundary...');
+    const bounds = getPolygonBounds(cityBoundary);
+    console.log('[Connectivity] City bounds:', bounds);
+
+    // Add buffer to bounds
+    const bufferedBounds = {
+      minLon: bounds.minLon - 0.1,
+      minLat: bounds.minLat - 0.1,
+      maxLon: bounds.maxLon + 0.1,
+      maxLat: bounds.maxLat + 0.1
+    };
+    console.log('[Connectivity] Buffered bounds:', bufferedBounds);
+
+    const quarters = getQuarters(months);
+    console.log('[Connectivity] Processing quarters:', quarters);
+
+    // Store tiles by quarter
+    const tilesByQuarter = new Map();
+    let processedQuarters = 0;
+
+    // Load connectivity data for each quarter
+    for (const quarterStr of quarters) {
+      console.log(`\n[Connectivity] Processing quarter: ${quarterStr}`);
+      
       await yieldToEventLoop();
-  
-      console.log('[Connectivity] Parsing city boundary...');
-      const bounds = getPolygonBounds(cityBoundary);
-      console.log('[Connectivity] City bounds:', bounds);
-  
-      // Add buffer to bounds
-      const bufferedBounds = {
-        minLon: bounds.minLon - 0.1,
-        minLat: bounds.minLat - 0.1,
-        maxLon: bounds.maxLon + 0.1,
-        maxLat: bounds.maxLat + 0.1
-      };
-      console.log('[Connectivity] Buffered bounds:', bufferedBounds);
-  
-      const quarters = getQuarters(months);
-      console.log('[Connectivity] Processing quarters:', quarters);
-  
-      let allTiles = [];
-      let processedQuarters = 0;
-  
-      // Load connectivity data for each quarter
-      // Ookla structure: parquet/performance/type=mobile/year=YYYY/quarter=Q/[files]
-      for (const quarterStr of quarters) {
-        console.log(`\n[Connectivity] Processing quarter: ${quarterStr}`);
+      
+      try {
+        const [year, quarter] = quarterStr.split('-Q');
+        const prefix = `parquet/performance/type=mobile/year=${year}/quarter=${quarter}/`;
         
-        await yieldToEventLoop();
+        console.log(`[Connectivity] Looking for data at: s3://${CONNECTIVITY_BUCKET}/${prefix}`);
         
-        try {
-          const [year, quarter] = quarterStr.split('-Q');
-          const prefix = `parquet/performance/type=mobile/year=${year}/quarter=${quarter}/`;
-          
-          console.log(`[Connectivity] Looking for data at: s3://${CONNECTIVITY_BUCKET}/${prefix}`);
-          
-          const listCommand = new ListObjectsV2Command({
-            Bucket: CONNECTIVITY_BUCKET,
-            Prefix: prefix,
-            MaxKeys: 1000
-          });
+        const listCommand = new ListObjectsV2Command({
+          Bucket: CONNECTIVITY_BUCKET,
+          Prefix: prefix,
+          MaxKeys: 1000
+        });
+      
+        console.log(`[Connectivity] Listing files in Ookla bucket with prefix: ${prefix}`);
+        const listResult = await ooklaS3Client.send(listCommand);
         
-          console.log(`[Connectivity] Listing files in Ookla bucket with prefix: ${prefix}`);
-          const listResult = await ooklaS3Client.send(listCommand);
-          
-          console.log(`[Connectivity] S3 returned ${(listResult.Contents || []).length} total objects`);
-          
-          const allParquetFiles = (listResult.Contents || [])
-            .filter(obj => obj.Key.endsWith('.parquet'));
-          
-          console.log(`[Connectivity] Found ${allParquetFiles.length} parquet files`);
-          if (allParquetFiles.length > 0) {
-            console.log(`[Connectivity] First file: ${allParquetFiles[0].Key}`);
-          }
-
-          if (allParquetFiles.length === 0) {
-            console.warn(`[Connectivity] No parquet files found in quarter ${quarterStr}`);
-            continue;
-          }
-
-          // Process ALL files for better coverage (can limit later if needed)
-          const parquetFiles = allParquetFiles;
-          console.log(`[Connectivity] Processing ${parquetFiles.length} file(s) from this quarter`);
-  
-          for (let fileIdx = 0; fileIdx < parquetFiles.length; fileIdx++) {
-            const file = parquetFiles[fileIdx];
-            console.log(`[Connectivity] Processing: ${file.Key}`);
-
-            await yieldToEventLoop();
-
-            try {
-              console.log(`[Connectivity] Searching for tiles in bounds: [${bufferedBounds.minLon.toFixed(2)}, ${bufferedBounds.minLat.toFixed(2)}] to [${bufferedBounds.maxLon.toFixed(2)}, ${bufferedBounds.maxLat.toFixed(2)}]`);
-              
-              const validRows = await readParquetFromS3(
-                CONNECTIVITY_BUCKET, 
-                file.Key, 
-                bufferedBounds,
-                onProgress
-              );
-              
-              console.log(`[Connectivity] Added ${validRows.length} tiles from this file`);
-              allTiles.push(...validRows);
-              
-            } catch (fileError) {
-              console.warn(`[Connectivity] Error processing file ${file.Key}:`, fileError);
-            }
-          }
-  
-          processedQuarters++;
-          console.log(`[Connectivity] Quarter ${quarterStr} complete (${processedQuarters}/${quarters.length})`);
-          console.log(`[Connectivity] Running total: ${allTiles.length} tiles`);
-          
-          if (onProgress) {
-            onProgress({
-              current: processedQuarters,
-              total: quarters.length,
-              message: `Processed ${quarterStr}`
-            });
-          }
-  
-        } catch (quarterError) {
-          console.warn(`[Connectivity] Error processing quarter ${quarterStr}:`, quarterError);
+        console.log(`[Connectivity] S3 returned ${(listResult.Contents || []).length} total objects`);
+        
+        const allParquetFiles = (listResult.Contents || [])
+          .filter(obj => obj.Key.endsWith('.parquet'));
+        
+        console.log(`[Connectivity] Found ${allParquetFiles.length} parquet files`);
+        if (allParquetFiles.length > 0) {
+          console.log(`[Connectivity] First file: ${allParquetFiles[0].Key}`);
         }
+
+        if (allParquetFiles.length === 0) {
+          console.warn(`[Connectivity] No parquet files found in quarter ${quarterStr}`);
+          continue;
+        }
+
+        // Initialize tiles array for this quarter
+        const quarterTiles = [];
+
+        // Process ALL files for better coverage
+        const parquetFiles = allParquetFiles;
+        console.log(`[Connectivity] Processing ${parquetFiles.length} file(s) from this quarter`);
+
+        for (let fileIdx = 0; fileIdx < parquetFiles.length; fileIdx++) {
+          const file = parquetFiles[fileIdx];
+          console.log(`[Connectivity] Processing: ${file.Key}`);
+
+          await yieldToEventLoop();
+
+          try {
+            console.log(`[Connectivity] Searching for tiles in bounds: [${bufferedBounds.minLon.toFixed(2)}, ${bufferedBounds.minLat.toFixed(2)}] to [${bufferedBounds.maxLon.toFixed(2)}, ${bufferedBounds.maxLat.toFixed(2)}]`);
+            
+            const validRows = await readParquetFromS3(
+              CONNECTIVITY_BUCKET, 
+              file.Key, 
+              bufferedBounds,
+              onProgress
+            );
+            
+            console.log(`[Connectivity] Added ${validRows.length} tiles from this file`);
+            quarterTiles.push(...validRows);
+            
+          } catch (fileError) {
+            console.warn(`[Connectivity] Error processing file ${file.Key}:`, fileError);
+          }
+        }
+
+        // Store tiles for this quarter
+        tilesByQuarter.set(quarterStr, quarterTiles);
+        
+        processedQuarters++;
+        console.log(`[Connectivity] Quarter ${quarterStr} complete (${processedQuarters}/${quarters.length})`);
+        console.log(`[Connectivity] Quarter total: ${quarterTiles.length} tiles`);
+        
+        if (onProgress) {
+          onProgress({
+            current: processedQuarters,
+            total: quarters.length,
+            message: `Processed ${quarterStr}`
+          });
+        }
+
+      } catch (quarterError) {
+        console.warn(`[Connectivity] Error processing quarter ${quarterStr}:`, quarterError);
       }
-  
-      console.log(`\n[Connectivity] Applying strict bounds filter...`);
+    }
+
+    console.log(`\n[Connectivity] Calculating metrics per quarter...`);
+    
+    await yieldToEventLoop();
+    
+    // Calculate metrics for each quarter separately
+    const quarterlyResults = [];
+    
+    for (const [quarter, tiles] of tilesByQuarter.entries()) {
+      console.log(`\n[Connectivity] Processing quarter ${quarter} (${tiles.length} tiles)...`);
       
-      await yieldToEventLoop();
-      
-      const validTiles = allTiles.filter(tile => 
+      const validTiles = tiles.filter(tile => 
         tile.devices > 0 &&
         tile.avg_d_kbps > 0 &&
         tile.avg_lat_ms > 0
       );
-  
-      console.log(`[Connectivity] Final valid tiles: ${validTiles.length}`);
+
+      console.log(`[Connectivity] Valid tiles for ${quarter}: ${validTiles.length}`);
       
       if (validTiles.length === 0) {
-        console.warn('[Connectivity] No valid connectivity tiles found in city bounds');
-        console.warn('[Connectivity] City bounds:', bounds);
-        console.warn('[Connectivity] Total tiles before filtering:', allTiles.length);
-        return { speed: 0, latency: 0 };
+        console.warn(`[Connectivity] No valid connectivity tiles found for quarter ${quarter}`);
+        // Still add a result with zero values to maintain consistency
+        quarterlyResults.push({
+          quarter: quarter,
+          speed: 0,
+          latency: 0,
+          tileCount: 0,
+          deviceCount: 0
+        });
+        continue;
       }
-  
-      console.log('[Connectivity] Calculating weighted averages...');
+
       const totalDevices = validTiles.reduce((sum, tile) => sum + tile.devices, 0);
       const weightedSpeed = validTiles.reduce((sum, tile) => 
         sum + (tile.avg_d_kbps * tile.devices), 0
@@ -377,28 +394,35 @@ export async function calculateConnectivityMetrics(cityBoundary, months, onProgr
       const weightedLatency = validTiles.reduce((sum, tile) => 
         sum + (tile.avg_lat_ms * tile.devices), 0
       );
-  
+
       const avgSpeed = weightedSpeed / totalDevices;
       const avgLatency = weightedLatency / totalDevices;
-  
-      console.log(`[Connectivity] ✓ Complete:`);
+
+      console.log(`[Connectivity] Quarter ${quarter} metrics:`);
       console.log(`  Valid tiles: ${validTiles.length}`);
       console.log(`  Total devices: ${totalDevices.toLocaleString()}`);
       console.log(`  Avg speed: ${avgSpeed.toFixed(2)} kbps`);
       console.log(`  Avg latency: ${avgLatency.toFixed(2)} ms`);
-  
-      return {
+      
+      quarterlyResults.push({
+        quarter: quarter,
         speed: avgSpeed,
         latency: avgLatency,
-        coverage: null
-      };
-  
-    } catch (error) {
-      console.error('[Connectivity] Error calculating connectivity metrics:', error);
-      console.error('[Connectivity] Error stack:', error.stack);
-      return { speed: 0, latency: 0 };
+        tileCount: validTiles.length,
+        deviceCount: totalDevices
+      });
     }
+
+    console.log(`\n[Connectivity] ✓ Complete - calculated metrics for ${quarterlyResults.length} quarters`);
+
+    return quarterlyResults;
+
+  } catch (error) {
+    console.error('[Connectivity] Error calculating connectivity metrics:', error);
+    console.error('[Connectivity] Error stack:', error.stack);
+    return [];
   }
+}
 
   /**
  * Save connectivity results to S3 in both quarterly and summary formats
@@ -406,12 +430,9 @@ export async function calculateConnectivityMetrics(cityBoundary, months, onProgr
 export async function saveConnectivityResults(dataSource, results) {
   try {
     await initializeWasm();
-    
-    // Import S3Client and PutObjectCommand
     const { S3Client, PutObjectCommand } = await import('@aws-sdk/client-s3');
     const { tableFromArrays, tableToIPC } = await import('apache-arrow');
-    
-    // Create S3 client for connectivity bucket
+
     const connectivityS3Client = new S3Client({
       region: process.env.REACT_APP_AWS_REGION,
       credentials: {
@@ -420,14 +441,9 @@ export async function saveConnectivityResults(dataSource, results) {
         sessionToken: process.env.REACT_APP_AWS_SESSION_TOKEN,
       }
     });
-    
     const CONNECTIVITY_RESULT_BUCKET = process.env.REACT_APP_S3_CONNECTIVITY_BUCKET_NAME || 'qoli-mobile-ping-connectivity-dev';
-    
-    console.log('[Connectivity] Saving results to S3...');
-    console.log('[Connectivity] Results count:', results.length);
-    console.log('[Connectivity] Data source:', dataSource);
-    
-    // Group results by date range for summary
+
+    // Group by date-range
     const resultsByDateRange = {};
     for (const result of results) {
       const dateRange = result.dateRange;
@@ -436,102 +452,103 @@ export async function saveConnectivityResults(dataSource, results) {
       }
       resultsByDateRange[dateRange].push(result);
     }
-    
-    // Save summary files (aggregated across date range)
+
+    // Save summary file
     for (const [dateRange, cityResults] of Object.entries(resultsByDateRange)) {
-      const summaryKey = `summary/${dateRange}/part-${Date.now()}-connectivity.csv.gz`;
-      
-      console.log(`[Connectivity] Saving summary to: ${summaryKey}`);
-      
-      const csvData = cityResults.map(r => ({
-        city: r.city,
-        province: r.province || '',
-        country: r.country,
-        speed: r.speed.toFixed(2),
-        latency: r.latency.toFixed(2),
-        coverage: r.coverage ? r.coverage.toFixed(2) : '0.00'
+      const summaryByCity = {};
+
+      for (const r of cityResults) {
+        const key = `${r.city}|${r.province || ''}|${r.country}`;
+        if (!summaryByCity[key]) {
+          summaryByCity[key] = {
+            city: r.city,
+            province: r.province || '',
+            country: r.country,
+            speedSum: 0,
+            latencySum: 0,
+            coverageSum: 0,
+            quarterCount: 0
+          };
+        }
+        const s = summaryByCity[key];
+        s.speedSum   += r.speed;
+        s.latencySum += r.latency;
+        s.coverageSum += (r.coverage || 0);
+        s.quarterCount += 1;
+      }
+
+      const csvRows = Object.values(summaryByCity).map(s => ({
+        city: s.city,
+        province: s.province,
+        country: s.country,
+        speed: (s.speedSum / s.quarterCount).toFixed(2),
+        latency: (s.latencySum / s.quarterCount).toFixed(2),
+        coverage: (s.coverageSum / s.quarterCount).toFixed(2)
       }));
-      
-      const csv = Papa.unparse(csvData, {
+
+      const csv = Papa.unparse(csvRows, {
         columns: ['city', 'province', 'country', 'speed', 'latency', 'coverage']
       });
-      
-      // Explicitly convert string to Uint8Array for pako
+
       const textEncoder = new TextEncoder();
-      const csvBytes = textEncoder.encode(csv);
-      const compressed = pako.gzip(csvBytes);
-      
-      // Verify gzip header
-      console.log('[Connectivity] First two bytes:', compressed[0], compressed[1], '(should be 31, 139)');
-      
-      const putCommand = new PutObjectCommand({
-        Bucket: CONNECTIVITY_RESULT_BUCKET,
-        Key: summaryKey,
-        Body: compressed,
-        ContentType: 'application/gzip'
-      });
-      
-      await connectivityS3Client.send(putCommand);
-      console.log(`[Connectivity] ✓ Saved summary: ${summaryKey}`);
+      const compressed = pako.gzip(textEncoder.encode(csv));
+
+      const summaryKey = `summary/${dateRange}/part-${Date.now()}-connectivity.csv.gz`;
+      await connectivityS3Client.send(
+        new PutObjectCommand({
+          Bucket: CONNECTIVITY_RESULT_BUCKET,
+          Key: summaryKey,
+          Body: compressed,
+          ContentType: 'application/gzip'
+        })
+      );
+      console.log(`[Connectivity] Saved summary: ${summaryKey}`);
     }
-    
-    // Save quarterly parquet files per city
+
+    // Save quarterly parquet files
     for (const result of results) {
       const normalizedCity = result.city.toLowerCase().replace(/\s+/g, '_');
-      const normalizedProvince = result.province ? result.province.toLowerCase().replace(/\s+/g, '_') : '';
+      const normalizedProvince = result.province
+        ? result.province.toLowerCase().replace(/\s+/g, '_')
+        : '';
       const normalizedCountry = result.country.toLowerCase().replace(/\s+/g, '_');
-      
-      // Parse date range to get quarters
-      const [startDate, endDate] = result.dateRange.split('_to_');
-      const quarters = getQuartersFromDateRange(startDate, endDate);
-      
-      // Save one parquet file per quarter
-      for (const quarter of quarters) {
-        const resultKey = normalizedProvince
-          ? `results/country=${normalizedCountry}/province=${normalizedProvince}/city=${normalizedCity}/quarter=${quarter}/part-${Date.now()}.snappy.parquet`
-          : `results/country=${normalizedCountry}/city=${normalizedCity}/quarter=${quarter}/part-${Date.now()}.snappy.parquet`;
-        
-        console.log(`[Connectivity] Saving quarterly result to: ${resultKey}`);
-        
-        // Create Arrow table with single row
-        const table = tableFromArrays({
-          city: [result.city],
-          province: [result.province || ''],
-          country: [result.country],
-          quarter: [quarter],
-          speed: [result.speed],
-          latency: [result.latency],
-          coverage: [result.coverage || 0]
-        });
-        
-        // Convert to IPC format
-        const ipcBuffer = tableToIPC(table, 'stream');
-        
-        // Convert to parquet with Snappy compression
-        const { Table, writeParquet, WriterPropertiesBuilder, Compression } = await import('parquet-wasm');
-        const wasmTable = Table.fromIPCStream(ipcBuffer);
-        
-        const writerProperties = new WriterPropertiesBuilder()
-          .setCompression(Compression.SNAPPY)
-          .build();
-        
-        const parquetBuffer = writeParquet(wasmTable, writerProperties);
-        
-        const putCommand = new PutObjectCommand({
+      const quarter = result.quarter;
+
+      const resultKey = normalizedProvince
+        ? `results/country=${normalizedCountry}/province=${normalizedProvince}/city=${normalizedCity}/quarter=${quarter}/part-${Date.now()}.snappy.parquet`
+        : `results/country=${normalizedCountry}/city=${normalizedCity}/quarter=${quarter}/part-${Date.now()}.snappy.parquet`;
+
+      const table = tableFromArrays({
+        city: [result.city],
+        province: [result.province || ''],
+        country: [result.country],
+        quarter: [quarter],
+        speed: [result.speed],
+        latency: [result.latency],
+        coverage: [result.coverage || 0]
+      });
+
+      const ipcBuffer = tableToIPC(table, 'stream');
+      const { Table, writeParquet, WriterPropertiesBuilder, Compression } = await import('parquet-wasm');
+      const wasmTable = Table.fromIPCStream(ipcBuffer);
+      const writerProperties = new WriterPropertiesBuilder()
+        .setCompression(Compression.SNAPPY)
+        .build();
+      const parquetBuffer = writeParquet(wasmTable, writerProperties);
+
+      await connectivityS3Client.send(
+        new PutObjectCommand({
           Bucket: CONNECTIVITY_RESULT_BUCKET,
           Key: resultKey,
           Body: parquetBuffer,
           ContentType: 'application/octet-stream'
-        });
-        
-        await connectivityS3Client.send(putCommand);
-        console.log(`[Connectivity] ✓ Saved quarterly parquet: ${resultKey}`);
-      }
+        })
+      );
+      console.log(`[Connectivity] Saved quarterly parquet: ${resultKey}`);
     }
-    
-    console.log('[Connectivity] ✓ All results saved successfully');
+
+    console.log('[Connectivity] All results saved successfully');
     return true;
-    
   } catch (error) {
     console.error('[Connectivity] Error saving results:', error);
     throw error;
@@ -539,78 +556,38 @@ export async function saveConnectivityResults(dataSource, results) {
 }
 
 /**
- * Get quarters from date range (helper function)
- */
-function getQuartersFromDateRange(startMonth, endMonth) {
-  const months = [];
-  const [startYear, startMon] = startMonth.split('-').map(Number);
-  const [endYear, endMon] = endMonth.split('-').map(Number);
-
-  let currentYear = startYear;
-  let currentMonth = startMon;
-
-  while (currentYear < endYear || (currentYear === endYear && currentMonth <= endMon)) {
-    months.push(`${currentYear}-${String(currentMonth).padStart(2, '0')}`);
-    currentMonth++;
-    if (currentMonth > 12) {
-      currentMonth = 1;
-      currentYear++;
-    }
-  }
-  
-  return getQuarters(months);
-}
-
-/**
  * Fetch mobile cellular subscriptions per 100 people from World Bank API
  */
+const coverageCache = new Map();
+
 async function fetchWorldBankCoverage(countryCode) {
+  // Check cache first
+  if (coverageCache.has(countryCode)) {
+    console.log(`[Coverage] Using cached data for ${countryCode}`);
+    return coverageCache.get(countryCode);
+  }
+  
   try {
-    // World Bank API endpoint for mobile cellular subscriptions
-    const url = `https://api.worldbank.org/v2/country/${countryCode}/indicator/IT.CEL.SETS.P2?format=json&per_page=20&mrnev=1`;
-    
+    const proxyUrl = `http://localhost:3001/api/worldbank/${countryCode}`;
     console.log(`[Coverage] Fetching World Bank data for ${countryCode}...`);
-    console.log(`[Coverage] URL: ${url}`);
     
-    const response = await fetch(url);
-    if (!response.ok) {
-      console.warn(`[Coverage] World Bank API returned ${response.status} for ${countryCode}`);
-      return 0;
-    }
-    
+    const response = await fetch(proxyUrl);
     const data = await response.json();
-
-    console.log(`[Coverage] Raw API response for ${countryCode}:`, JSON.stringify(data, null, 2));
-
-    // World Bank API returns [metadata, data_array]
-    if (!data || !Array.isArray(data) || data.length < 2) {
-      console.warn(`[Coverage] Invalid response structure for ${countryCode}`);
+    
+    if (data.error) {
+      console.error(`[Coverage] Error for ${countryCode}:`, data.error);
+      coverageCache.set(countryCode, 0);
       return 0;
     }
-
-    if (!Array.isArray(data[1]) || data[1].length === 0) {
-      console.warn(`[Coverage] No data records available for ${countryCode}`);
-      console.warn(`[Coverage] Response metadata:`, data[0]);
-      return 0;
-    }
-
-    // Get the most recent non-null value
-    const records = data[1];
-    console.log(`[Coverage] Found ${records.length} records for ${countryCode}`);
     
-    for (const record of records) {
-      console.log(`[Coverage] ${countryCode} - Year ${record.date}: ${record.value}`);
-      if (record.value !== null && !isNaN(record.value)) {
-        console.log(`[Coverage] ${countryCode}: ${record.value}% (year: ${record.date})`);
-        return parseFloat(record.value);
-      }
-    }
-    
-    console.warn(`[Coverage] No valid values found for ${countryCode}`);
-    return 0;
+    const value = data.value || 0;
+    console.log(`[Coverage] ${countryCode}: ${value}% (year: ${data.year})`);
+    coverageCache.set(countryCode, value);
+    return value;
     
   } catch (error) {
-    console.error(`[Coverage] Error fetching World Bank data for ${countryCode}:`, error);
+    console.error(`[Coverage] Failed to fetch ${countryCode}:`, error.message);
+    coverageCache.set(countryCode, 0);
     return 0;
   }
 }
@@ -668,7 +645,6 @@ const COUNTRY_CODE_MAP = {
   'cocos (keeling) islands': 'CCK',
   'colombia': 'COL',
   'comoros': 'COM',
-  'congo (democratic republic of the)': 'COD',
   'congo': 'COG',
   'cook islands': 'COK',
   'costa rica': 'CRI',
@@ -678,6 +654,7 @@ const COUNTRY_CODE_MAP = {
   'cyprus': 'CYP',
   'czechia': 'CZE',
   "côte d'ivoire": 'CIV',
+  'democratic republic of congo': 'COD',
   'denmark': 'DNK',
   'djibouti': 'DJI',
   'dominica': 'DMA',
@@ -690,7 +667,7 @@ const COUNTRY_CODE_MAP = {
   'estonia': 'EST',
   'eswatini': 'SWZ',
   'ethiopia': 'ETH',
-  'falkland islands (malvinas)': 'FLK',
+  'falkland islands': 'FLK',
   'faroe islands': 'FRO',
   'fiji': 'FJI',
   'finland': 'FIN',
@@ -736,8 +713,7 @@ const COUNTRY_CODE_MAP = {
   'kazakhstan': 'KAZ',
   'kenya': 'KEN',
   'kiribati': 'KIR',
-  "korea (democratic people's republic of)": 'PRK',
-  'korea (republic of)': 'KOR',
+  'korea': 'KOR',
   'kuwait': 'KWT',
   'kyrgyzstan': 'KGZ',
   "lao people's democratic republic": 'LAO',
@@ -762,7 +738,7 @@ const COUNTRY_CODE_MAP = {
   'mauritius': 'MUS',
   'mayotte': 'MYT',
   'mexico': 'MEX',
-  'micronesia (federated states of)': 'FSM',
+  'micronesia': 'FSM',
   'moldova': 'MDA',
   'monaco': 'MCO',
   'mongolia': 'MNG',

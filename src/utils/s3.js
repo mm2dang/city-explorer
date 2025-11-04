@@ -1593,6 +1593,55 @@ const getGeometryHash = (geometry) => {
   }
 };
 
+const splitMultiGeometries = (features) => {
+  const splitFeatures = [];
+  
+  features.forEach((feature, index) => {
+    if (!feature.geometry) {
+      splitFeatures.push(feature);
+      return;
+    }
+    
+    if (feature.geometry.type === 'MultiPolygon') {
+      feature.geometry.coordinates.forEach((polygonCoords, polyIndex) => {
+        splitFeatures.push({
+          ...feature,
+          geometry: {
+            type: 'Polygon',
+            coordinates: polygonCoords
+          },
+          properties: {
+            ...feature.properties,
+            feature_name: feature.properties?.feature_name 
+              ? `${feature.properties.feature_name} (Part ${polyIndex + 1})`
+              : `Feature ${index + 1} (Part ${polyIndex + 1})`
+          }
+        });
+      });
+    } else if (feature.geometry.type === 'MultiLineString') {
+      feature.geometry.coordinates.forEach((lineCoords, lineIndex) => {
+        splitFeatures.push({
+          ...feature,
+          geometry: {
+            type: 'LineString',
+            coordinates: lineCoords
+          },
+          properties: {
+            ...feature.properties,
+            feature_name: feature.properties?.feature_name 
+              ? `${feature.properties.feature_name} (Part ${lineIndex + 1})`
+              : `Feature ${index + 1} (Part ${lineIndex + 1})`
+          }
+        });
+      });
+    } else {
+      splitFeatures.push(feature);
+    }
+  });
+  
+  return splitFeatures;
+};
+
 const cropFeaturesByBoundary = (features, boundary) => {
   try {
     if (!boundary || features.length === 0) {
@@ -1883,7 +1932,12 @@ const cropFeaturesByBoundary = (features, boundary) => {
     console.log(`  Geometry duplicates removed: ${geometryDuplicatesCount}`);
     console.log(`  Total removed: ${features.length - croppedFeatures.length}`);
     
-    return croppedFeatures;
+    // Split multi-geometries into individual geometries
+    console.log(`\nSplitting multi-geometries...`);
+    const splitFeatures = splitMultiGeometries(croppedFeatures);
+    console.log(`After splitting: ${splitFeatures.length} features (${splitFeatures.length - croppedFeatures.length} new from splits)`);
+    
+    return splitFeatures;
     
   } catch (error) {
     console.error('Error in cropFeaturesByBoundary:', error);

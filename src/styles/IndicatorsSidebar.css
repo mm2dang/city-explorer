@@ -261,7 +261,68 @@
   }
   
   .calculation-status {
-    margin-top: 8px;
+    margin-top: 16px;
+    padding: 16px;
+    background: #f4fcfe;
+    border: 2px solid  #14b8a6;
+    border-radius: 12px;
+  }
+  
+  .connectivity-status .status-header i {
+    color: #14b8a6;
+    animation: pulse 2s ease-in-out infinite;
+  }
+  
+  @keyframes pulse {
+    0%, 100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.7;
+    }
+  }
+  
+  .calculation-status .status-bar {
+    width: 100%;
+    height: 8px;
+    background-color: #dbeafe;
+    border-radius: 4px;
+    overflow: hidden;
+    margin-bottom: 8px;
+  }
+  
+  .connectivity-status .status-bar {
+    background-color: #e0f2fe;
+  }
+  
+  .calculation-status .status-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #0891b2, #06b6d4);
+    transition: width 0.5s ease;
+    animation: shimmer 2s ease-in-out infinite;
+  }
+  
+  @keyframes shimmer {
+    0%, 100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.85;
+    }
+  }
+  
+  .calculation-status small {
+    display: block;
+    font-size: 11px;
+    color: #0369a1;
+    font-weight: 500;
+    line-height: 1.4;
+  }
+  
+  .calculation-status .sub-progress {
+    margin-top: 4px;
+    opacity: 0.8;
+    font-style: italic;
   }
   
   .status-bar {
@@ -277,12 +338,6 @@
     height: 100%;
     background: linear-gradient(90deg, #0891b2, #10b981);
     transition: width 0.3s ease;
-  }
-  
-  .calculation-status small {
-    font-size: 11px;
-    color: #6b7280;
-    display: block;
   }
   
   .date-range-selector {
