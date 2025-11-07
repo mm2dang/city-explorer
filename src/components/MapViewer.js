@@ -503,6 +503,10 @@ const MapViewer = ({
 
   // Clear all markers and layers
   const clearAllLayers = useCallback(() => {
+    if (!mapInstanceRef.current || !mapInstanceRef.current.getContainer()) {
+      console.log('MapViewer: Cannot clear layers - map instance invalid');
+      return;
+    }
     if (!mapInstanceRef.current) return;
   
     // Clear displayed geometries first
@@ -612,6 +616,11 @@ const MapViewer = ({
         mapInstance: !!mapInstanceRef.current,
         loadCityFeatures: !!loadCityFeatures
       });
+      return;
+    }
+
+    if (!mapInstanceRef.current || !mapInstanceRef.current.getContainer()) {
+      console.log('MapViewer: Map instance is no longer valid');
       return;
     }
   
@@ -775,6 +784,11 @@ const MapViewer = ({
         chunkInterval: 200,
         chunkDelay: 50
       });
+
+      if (!mapInstanceRef.current || !mapInstanceRef.current.getContainer()) {
+        console.log('MapViewer: Map instance became invalid, aborting');
+        return;
+      }
       
       // Process all layers and add to single cluster group
       for (const [layerName, layerFeatures] of Object.entries(groupedFeatures)) {
@@ -1056,9 +1070,19 @@ const MapViewer = ({
       }
   
       if (globalClusterGroup.getLayers().length > 0) {
-        globalClusterGroup.addTo(mapInstanceRef.current);
-        clusterGroupsRef.current['__global__'] = globalClusterGroup;
-        console.log(`MapViewer: Added global cluster group with ${globalClusterGroup.getLayers().length} markers from all layers`);
+        if (!mapInstanceRef.current || !mapInstanceRef.current.getContainer()) {
+          console.log('MapViewer: Map instance invalid, cannot add cluster group');
+          return;
+        }
+        
+        try {
+          globalClusterGroup.addTo(mapInstanceRef.current);
+          clusterGroupsRef.current['__global__'] = globalClusterGroup;
+          console.log(`MapViewer: Added global cluster group with ${globalClusterGroup.getLayers().length} markers from all layers`);
+        } catch (error) {
+          console.error('MapViewer: Error adding cluster group to map:', error);
+          return;
+        }
       }
   
       setFeatureCount(totalFeatures);
