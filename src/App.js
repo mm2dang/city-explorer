@@ -335,7 +335,7 @@ function App() {
         (selectedCity.name === updatedCityData.name || 
           (editingCity && selectedCity.name === editingCity.name));
       const willBeProcessed = startProcessing !== null;
-
+  
       // If the selected city will be processed, deselect it first
       if (isCurrentlySelected && willBeProcessed) {
         console.log('Deselecting city before processing:', selectedCity.name);
@@ -396,7 +396,7 @@ function App() {
       if (editingCity) {
         const isRename = editingCity.name !== updatedCityData.name;
         
-        // Check if the old city is currently processing IN THIS DATA SOURCE
+        // Check if the old city is currently processing
         const oldProcessingKey = getProcessingKey(editingCity.name, targetDataSource);
         const oldCityProgress = processingProgress?.[oldProcessingKey];
         const isOldCityProcessing = oldCityProgress && oldCityProgress.status === 'processing';
@@ -404,18 +404,18 @@ function App() {
         if (isRename) {
           console.log('City renamed, moving data and saving new metadata...');
           
-          // If the old city is processing in THIS data source and being renamed, cancel and delete processed layers
+          // If the old city is processing in data source and being renamed, cancel and delete processed layers
           if (isOldCityProcessing) {
             console.log(`Old city is processing in ${targetDataSource} - cancelling and deleting processed layers...`);
             
-            // Cancel the processing for this data source
+            // Cancel the processing for current data source only
             const wasCancelled = await cancelCityProcessing(editingCity.name);
             if (wasCancelled) {
-              console.log('Cancelled active processing for old city name');
+              console.log('Cancelled active processing for old city name in', targetDataSource);
             }
             
             // Delete all processed layers for the old city
-            console.log('Deleting all processed layers for old city name...');
+            console.log('Deleting all processed layers for old city name in', targetDataSource, '...');
             try {
               // Get list of available layers for the old city
               const oldLayers = await getAvailableLayersForCity(editingCity.name);
@@ -424,17 +424,51 @@ function App() {
               for (const layerName of Object.keys(oldLayers)) {
                 const layerInfo = oldLayers[layerName];
                 if (layerInfo.domain) {
-                  console.log(`Deleting layer: ${layerName} (${layerInfo.domain})`);
+                  console.log(`Deleting layer: ${layerName} (${layerInfo.domain}) from ${targetDataSource}`);
                   await handleDeleteLayer(layerInfo.domain, layerName, { silent: true });
                 }
               }
-              console.log('Successfully deleted all processed layers for old city name');
+              console.log('Successfully deleted all processed layers for old city name in', targetDataSource);
             } catch (layerError) {
               console.error('Error deleting processed layers:', layerError);
-              // Continue with rename even if layer deletion fails
             }
             
-            // Clear the processing progress for the old city name IN THIS DATA SOURCE
+            // Clear the processing progress for the old city name
+            setProcessingProgress(prev => {
+              const newProgress = { ...prev };
+              delete newProgress[oldProcessingKey];
+              return newProgress;
+            });
+          }
+        } else {
+          // if city is processing, we need to handle it
+          if (isOldCityProcessing) {
+            console.log(`City is being edited while processing in ${targetDataSource} - will cancel and clear processed layers`);
+            
+            // Cancel the current processing
+            const wasCancelled = await cancelCityProcessing(editingCity.name);
+            if (wasCancelled) {
+              console.log('Cancelled active processing for city being edited in', targetDataSource);
+            }
+            
+            // Delete all processed layers
+            console.log('Deleting all processed layers for city being edited in', targetDataSource, '...');
+            try {
+              const oldLayers = await getAvailableLayersForCity(editingCity.name);
+              
+              for (const layerName of Object.keys(oldLayers)) {
+                const layerInfo = oldLayers[layerName];
+                if (layerInfo.domain) {
+                  console.log(`Deleting layer: ${layerName} (${layerInfo.domain}) from ${targetDataSource}`);
+                  await handleDeleteLayer(layerInfo.domain, layerName, { silent: true });
+                }
+              }
+              console.log('Successfully deleted all processed layers in', targetDataSource);
+            } catch (layerError) {
+              console.error('Error deleting processed layers:', layerError);
+            }
+            
+            // Clear the processing progress for current data source only
             setProcessingProgress(prev => {
               const newProgress = { ...prev };
               delete newProgress[oldProcessingKey];
@@ -516,33 +550,49 @@ function App() {
   };
 
   const handleDeleteCity = async (cityName) => {
-    if (!window.confirm(`Are you sure you want to delete ${cityName}? This will remove all data for this city.`)) {
-      return;
-    }
-
-    try {
-      console.log('Deleting city:', cityName);
-      const wasCancelled = await cancelCityProcessing(cityName);
-      if (wasCancelled) {
-        console.log('Cancelled active processing for city');
+    // Only check processing
+    const processingKey = getProcessingKey(cityName, dataSource);
+    const progress = processingProgress[processingKey];
+    const isProcessing = progress && progress.status === 'processing';
+    
+    if (isProcessing) {
+      const confirmMessage = `${cityName} is currently being processed in ${dataSource === 'osm' ? 'OpenStreetMap' : 'Uploaded'} data source. Deleting will cancel processing and remove all data. Are you sure?`;
+      if (!window.confirm(confirmMessage)) {
+        return;
       }
-
+    } else {
+      if (!window.confirm(`Are you sure you want to delete ${cityName} from ${dataSource === 'osm' ? 'OpenStreetMap' : 'Uploaded'} data source? This will remove all data for this city.`)) {
+        return;
+      }
+    }
+  
+    try {
+      console.log('Deleting city from current data source:', cityName, dataSource);
+      
+      // Cancel processing only for current data source if active
+      if (isProcessing) {
+        console.log(`Cancelling processing for: ${processingKey}`);
+        await cancelCityProcessing(cityName);
+      }
+  
+      // Delete city data (this already respects the current DATA_SOURCE_PREFIX in s3.js)
       await deleteCityData(cityName);
-
+  
       if (selectedCity?.name === cityName) {
         setSelectedCity(null);
         setActiveLayers({});
         setFeatures([]);
       }
-
+  
+      // Clear processing progress only for current data source
       setProcessingProgress(prev => {
         const newProgress = { ...prev };
-        delete newProgress[cityName];
+        delete newProgress[processingKey];
         return newProgress;
       });
-
+  
       await loadCities();
-      console.log('City deleted successfully');
+      console.log('City deleted successfully from', dataSource);
     } catch (error) {
       console.error('Error deleting city:', error);
       alert(`Error deleting city: ${error.message}`);
@@ -1103,6 +1153,7 @@ function App() {
           onComplete={editingCity ? handleUpdateCity : handleAddCity}
           editingCity={editingCity}
           dataSource={dataSource}
+          processingProgress={processingProgress}
         />
       </div>
       )}

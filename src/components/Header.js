@@ -383,7 +383,6 @@ const Header = ({
                                       className="action-btn edit-btn"
                                       onClick={(e) => handleCityAction(e, 'edit', city)}
                                       title="Edit city"
-                                      disabled={isProcessing}
                                     >
                                       <i className="fas fa-edit"></i>
                                     </button>
@@ -391,7 +390,6 @@ const Header = ({
                                       className="action-btn delete-btn"
                                       onClick={(e) => handleCityAction(e, 'delete', city)}
                                       title="Delete city"
-                                      disabled={isProcessing}
                                     >
                                       <i className="fas fa-trash"></i>
                                     </button>

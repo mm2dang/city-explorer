@@ -161,7 +161,7 @@ const mergeGeometries = (geometries) => {
   };
 };
 
-const AddCityWizard = ({ editingCity, onComplete, onCancel, dataSource = 'city' }) => {
+const AddCityWizard = ({ editingCity, onComplete, onCancel, dataSource = 'city', processingProgress = {} }) => {
   const [step, setStep] = useState(1);
   const [cityName, setCityName] = useState('');
   const [province, setProvince] = useState('');
@@ -996,6 +996,19 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel, dataSource = 'city' 
     if (!validation.valid) {
       alert(`Invalid boundary: ${validation.error}`);
       return;
+    }
+  
+    // Check if city is currently processing
+    if (editingCity) {
+      const processingKey = `${editingCity.name}@${dataSource}`;
+      const progress = processingProgress[processingKey];
+      const isProcessing = progress && progress.status === 'processing';
+      
+      if (isProcessing && !window.confirm(
+        `This city is currently being processed in ${dataSource === 'osm' ? 'OpenStreetMap' : 'Uploaded'} data source. Editing will cancel processing and delete any layers already processed in this data source only. Continue?`
+      )) {
+        return;
+      }
     }
   
     setIsProcessing(true);
