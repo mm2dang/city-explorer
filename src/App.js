@@ -1063,6 +1063,9 @@ function App() {
         onLayerSave={handleSaveLayer}
         onLayerDelete={handleDeleteLayer}
         mapView={mapView}
+        cities={cities}
+        cityDataStatus={cityDataStatus}
+        processingProgress={processingProgress}
         onImportComplete={(cityName, progress) => {
           const effectiveDataSource = progress.dataSource || dataSource;
           const processingKey = getProcessingKey(cityName, effectiveDataSource);

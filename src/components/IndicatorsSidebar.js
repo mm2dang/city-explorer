@@ -37,6 +37,9 @@ const IndicatorsSidebar = ({
   const [expandedIndicator, setExpandedIndicator] = useState(null);
   const [timeSeriesData, setTimeSeriesData] = useState({});
   const [loadingTimeSeries, setLoadingTimeSeries] = useState({});
+  const [dateRangeStats, setDateRangeStats] = useState({});
+  const [showDateRangeDropdown, setShowDateRangeDropdown] = useState(false);
+  const [showDateRangeStats, setShowDateRangeStats] = useState(true);
 
   // Indicator definitions with labels and descriptions
   const indicators = useMemo(() => ({
@@ -96,6 +99,67 @@ const IndicatorsSidebar = ({
     }
   }), []);
 
+  // Load calculation statistics for each date range
+  const loadDateRangeStats = useCallback(async (dateRanges) => {
+    const stats = {};
+    
+    for (const range of dateRanges) {
+      try {
+        const data = await getSummaryDataWithConnectivity(dataSource, range, cities || []);
+        
+        // Filter to only include cities that exist in the cities array
+        const cityNames = new Set((cities || []).map(c => c.name.toLowerCase()));
+        const filteredData = data.filter(row => {
+          const fullName = [row.city, row.province, row.country]
+            .filter(Boolean)
+            .join(', ')
+            .toLowerCase();
+          return cityNames.has(fullName);
+        });
+        
+        // Count statuses
+        let calculated = 0;
+        let notCalculated = 0;
+        let connectivityOnly = 0;
+        let mobilePingOnly = 0;
+        
+        filteredData.forEach(row => {
+          const hasMobilePing = row.out_at_night != null || row.leisure_dwell_time != null || row.cultural_visits != null;
+          const hasConnectivity = row.coverage != null || row.speed != null || row.latency != null;
+          
+          if (hasMobilePing && hasConnectivity) {
+            calculated++;
+          } else if (hasConnectivity) {
+            connectivityOnly++;
+          } else if (hasMobilePing) {
+            mobilePingOnly++;
+          } else {
+            notCalculated++;
+          }
+        });
+        
+        stats[range] = {
+          calculated,
+          notCalculated,
+          connectivityOnly,
+          mobilePingOnly,
+          total: filteredData.length
+        };
+      } catch (error) {
+        console.error(`Error loading stats for ${range}:`, error);
+        stats[range] = {
+          calculated: 0,
+          notCalculated: 0,
+          connectivityOnly: 0,
+          mobilePingOnly: 0,
+          total: 0
+        };
+      }
+    }
+    
+    return stats;
+  }, [dataSource, cities]);
+
   // Load available date ranges
   const loadDateRanges = useCallback(async () => {
     try {
@@ -112,10 +176,28 @@ const IndicatorsSidebar = ({
       if (allRanges.length > 0 && !selectedDateRange) {
         setSelectedDateRange(allRanges[0]); // Select most recent by default
       }
+      
+      // Load statistics for each date range
+      if (allRanges.length > 0) {
+        const stats = await loadDateRangeStats(allRanges);
+        setDateRangeStats(stats);
+      }
     } catch (error) {
       console.error('Error loading date ranges:', error);
     }
-  }, [dataSource, selectedDateRange]);
+  }, [dataSource, selectedDateRange, loadDateRangeStats]);
+
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (showDateRangeDropdown && !event.target.closest('.date-range-selector')) {
+        setShowDateRangeDropdown(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [showDateRangeDropdown]);
 
   // Load summary data
   const loadSummaryData = useCallback(async () => {
@@ -781,8 +863,30 @@ const IndicatorsSidebar = ({
           renderCollapsedView()
         ) : (
           <div className="collapsed-indicators-view">
-            <div className="no-data-icon">
-              <i className="fas fa-map-pin"></i>
+            <div className="collapsed-stat-item">
+              <div className="collapsed-stat-icon" style={{ color: '#06b6d4' }}>
+                <i className="fas fa-database"></i>
+              </div>
+              <div className="collapsed-stat-value">{availableDateRanges.length}</div>
+              <div className="collapsed-stat-label">Periods</div>
+            </div>
+            
+            <div className="collapsed-stat-item">
+              <div className="collapsed-stat-icon" style={{ color: '#06b6d4' }}>
+                <i className="fas fa-city"></i>
+              </div>
+              <div className="collapsed-stat-value">{summaryData.length}</div>
+              <div className="collapsed-stat-label">Cities</div>
+            </div>
+            
+            <div className="collapsed-stat-item">
+              <div className="collapsed-stat-icon" style={{ color: '#06b6d4' }}>
+                <i className="fas fa-chart-line"></i>
+              </div>
+              <div className="collapsed-stat-value">
+                {Object.keys(indicators).length}
+              </div>
+              <div className="collapsed-stat-label">Metrics</div>
             </div>
           </div>
         )
@@ -889,22 +993,81 @@ const IndicatorsSidebar = ({
             )}
             
             <div className="date-range-selector">
-              <label>Date Range:</label>
-              <select
-                value={selectedDateRange || ''}
-                onChange={(e) => setSelectedDateRange(e.target.value)}
-                disabled={isLoading || availableDateRanges.length === 0}
-              >
-                {availableDateRanges.length === 0 ? (
-                  <option value="">No date ranges available</option>
-                ) : (
-                  availableDateRanges.map(range => (
-                    <option key={range} value={range}>
-                      {range.replace('_to_', ' to ')}
-                    </option>
-                  ))
+              <div className="date-range-header">
+                <label>Date Range</label>
+                {!selectedCity && selectedDateRange && dateRangeStats[selectedDateRange] && (
+                  <button
+                    className="toggle-stats-btn"
+                    onClick={() => setShowDateRangeStats(!showDateRangeStats)}
+                    title={showDateRangeStats ? "Hide statistics" : "Show statistics"}
+                  >
+                    <i className={`fas fa-chevron-${showDateRangeStats ? 'up' : 'down'}`}></i>
+                  </button>
                 )}
-              </select>
+              </div>
+              
+              <div className="date-range-dropdown-wrapper">
+                <button
+                  className="date-range-selector-btn"
+                  onClick={() => setShowDateRangeDropdown(!showDateRangeDropdown)}
+                  disabled={isLoading || availableDateRanges.length === 0}
+                >
+                  <span>
+                    {selectedDateRange 
+                      ? selectedDateRange.replace('_to_', ' to ')
+                      : availableDateRanges.length === 0 
+                        ? 'No date ranges available' 
+                        : 'Select date range'}
+                  </span>
+                  <i className={`fas fa-chevron-${showDateRangeDropdown ? 'up' : 'down'}`}></i>
+                </button>
+                
+                {showDateRangeDropdown && availableDateRanges.length > 0 && (
+                  <motion.div
+                    className="date-range-dropdown"
+                    initial={{ opacity: 0, y: -10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -10 }}
+                  >
+                    {availableDateRanges.map(range => (
+                      <div
+                        key={range}
+                        className={`date-range-option ${selectedDateRange === range ? 'selected' : ''}`}
+                        onClick={() => {
+                          setSelectedDateRange(range);
+                          setShowDateRangeDropdown(false);
+                        }}
+                      >
+                        <span className="range-text">{range.replace('_to_', ' to ')}</span>
+                        {selectedDateRange === range && (
+                          <i className="fas fa-check"></i>
+                        )}
+                      </div>
+                    ))}
+                  </motion.div>
+                )}
+              </div>
+              
+              {!selectedCity && selectedDateRange && dateRangeStats[selectedDateRange] && showDateRangeStats && (
+                <div className="date-range-stats">
+                  <div className="stat-item stat-calculated">
+                    <i className="fas fa-check-circle"></i>
+                    <span>{dateRangeStats[selectedDateRange].calculated} Calculated</span>
+                  </div>
+                  <div className="stat-item stat-pending">
+                    <i className="fas fa-clock"></i>
+                    <span>{dateRangeStats[selectedDateRange].notCalculated} Pending</span>
+                  </div>
+                  <div className="stat-item stat-connectivity">
+                    <i className="fas fa-signal"></i>
+                    <span>{dateRangeStats[selectedDateRange].connectivityOnly} Connectivity Only</span>
+                  </div>
+                  <div className="stat-item stat-mobile">
+                    <i className="fas fa-mobile-alt"></i>
+                    <span>{dateRangeStats[selectedDateRange].mobilePingOnly} Mobile Ping Only</span>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
           <div className="indicators-scroll-content">

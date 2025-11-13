@@ -416,6 +416,7 @@
 /* Settings dropdown */
 .settings-selector {
   position: relative;
+  z-index: 10000;
 }
 
 .settings-btn {
@@ -451,7 +452,7 @@
   box-shadow: 0 10px 40px rgba(0, 0, 0, 0.15);
   border: 1px solid #e2e8f0;
   min-width: 320px;
-  z-index: 1000;
+  z-index: 10000;
   overflow: hidden;
 }
 

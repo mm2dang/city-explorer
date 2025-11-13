@@ -19,7 +19,10 @@ const Sidebar = ({
   onImportComplete,
   onCityStatusChange,
   dataSource = 'osm',
-  onCitySelect
+  onCitySelect,
+  cities = [],
+  cityDataStatus = {},
+  processingProgress = {}
 }) => {
   const [expandedDomains, setExpandedDomains] = useState(new Set());
   const [isAddLayerModalOpen, setIsAddLayerModalOpen] = useState(false);
@@ -131,6 +134,18 @@ const Sidebar = ({
     housing: 'fas fa-home',
     social: 'fas fa-users',
   }), []);
+
+  const statusCounts = useMemo(() => ({
+    ready: Object.entries(cityDataStatus).filter(([_, hasData]) => hasData).length,
+    processing: Object.keys(processingProgress).filter(key => {
+      const progress = processingProgress[key];
+      return progress && progress.status === 'processing';
+    }).length,
+    pending: cities.length - Object.entries(cityDataStatus).filter(([_, hasData]) => hasData).length - Object.keys(processingProgress).filter(key => {
+      const progress = processingProgress[key];
+      return progress && progress.status === 'processing';
+    }).length
+  }), [cities, cityDataStatus, processingProgress]);
 
   // Get available layers organized by domain
   const availableLayersByDomain = useMemo(() => {
@@ -699,11 +714,139 @@ const Sidebar = ({
             <i className={`fas fa-chevron-${isSidebarCollapsed ? 'right' : 'left'}`}></i>
           </motion.button>
         </div>
-        {!isSidebarCollapsed && (
-          <div className="no-layers-message">
-            <i className="fas fa-map-marked-alt"></i>
-            <h3>No City Selected</h3>
-            <p>Select a city to view available data layers.</p>
+  
+        {isSidebarCollapsed ? (
+          // Collapsed view - show stats
+          <div className="collapsed-layers-view">
+            <div className="collapsed-stats-view">
+              <div className="collapsed-stat-item">
+                <div className="collapsed-stat-icon">
+                  <i className="fas fa-check-circle" style={{ color: '#10b981' }}></i>
+                </div>
+                <div className="collapsed-stat-value">{statusCounts.ready}</div>
+                <div className="collapsed-stat-label">Ready</div>
+              </div>
+              <div className="collapsed-stat-item">
+                <div className="collapsed-stat-icon">
+                  <i className="fas fa-spinner fa-spin" style={{ color: '#f59e0b' }}></i>
+                </div>
+                <div className="collapsed-stat-value">{statusCounts.processing}</div>
+                <div className="collapsed-stat-label">Processing</div>
+              </div>
+              <div className="collapsed-stat-item">
+                <div className="collapsed-stat-icon">
+                  <i className="fas fa-clock" style={{ color: '#64748b' }}></i>
+                </div>
+                <div className="collapsed-stat-value">{statusCounts.pending}</div>
+                <div className="collapsed-stat-label">Pending</div>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="world-view-content">
+            <div className="global-stats">
+              <h3>
+                <i className="fas fa-globe"></i>
+                Global Overview
+              </h3>
+              <div className="stats-grid">
+                <div className="stat-card">
+                  <div className="stat-value">{statusCounts.ready}</div>
+                  <div className="stat-label">Ready</div>
+                  <div className="stat-icon">
+                    <i className="fas fa-check-circle" style={{ color: '#10b981' }}></i>
+                  </div>
+                </div>
+                <div className="stat-card">
+                  <div className="stat-value">{statusCounts.processing}</div>
+                  <div className="stat-label">Processing</div>
+                  <div className="stat-icon">
+                    <i className="fas fa-spinner fa-spin" style={{ color: '#f59e0b' }}></i>
+                  </div>
+                </div>
+                <div className="stat-card">
+                  <div className="stat-value">{statusCounts.pending}</div>
+                  <div className="stat-label">Pending</div>
+                  <div className="stat-icon">
+                    <i className="fas fa-clock" style={{ color: '#64748b' }}></i>
+                  </div>
+                </div>
+              </div>
+            </div>
+  
+            <div className="map-legend">
+              <h4>
+                <i className="fas fa-map-marker-alt"></i>
+                Map Guide
+              </h4>
+              <div className="legend-items">
+                <div className="legend-item">
+                  <div className="legend-marker ready">
+                    <i className="fas fa-city"></i>
+                  </div>
+                  <div className="legend-text">
+                    <strong>Ready Cities</strong>
+                    <small>Click to explore data layers</small>
+                  </div>
+                </div>
+                <div className="legend-item">
+                  <div className="legend-marker processing">
+                    <i className="fas fa-spinner fa-spin"></i>
+                  </div>
+                  <div className="legend-text">
+                    <strong>Processing</strong>
+                    <small>Data is being imported</small>
+                  </div>
+                </div>
+                <div className="legend-item">
+                  <div className="legend-marker pending">
+                    <i className="fas fa-clock"></i>
+                  </div>
+                  <div className="legend-text">
+                    <strong>Pending</strong>
+                    <small>No data layers yet</small>
+                  </div>
+                </div>
+              </div>
+            </div>
+  
+            <div className="getting-started">
+              <h4>
+                <i className="fas fa-compass"></i>
+                Getting Started
+              </h4>
+              <ol className="steps-list">
+                <li>
+                  <div className="step-number">1</div>
+                  <div className="step-content">
+                    <strong>Select a city</strong>
+                    <small>Click a marker on the map or use the dropdown above</small>
+                  </div>
+                </li>
+                <li>
+                  <div className="step-number">2</div>
+                  <div className="step-content">
+                    <strong>Toggle layers</strong>
+                    <small>Enable data layers to visualize features</small>
+                  </div>
+                </li>
+                <li>
+                  <div className="step-number">3</div>
+                  <div className="step-content">
+                    <strong>Explore data</strong>
+                    <small>Click markers and geometries to see details</small>
+                  </div>
+                </li>
+              </ol>
+            </div>
+  
+            {cities.length === 0 && (
+              <div className="empty-state">
+                <i className="fas fa-map-marked-alt"></i>
+                <h3>No Cities Yet</h3>
+                <p>Add your first city to get started exploring urban data.</p>
+              </div>
+            )}
           </div>
         )}
       </motion.div>

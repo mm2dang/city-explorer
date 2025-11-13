@@ -398,7 +398,7 @@ const MapViewer = ({
           className: 'city-marker-icon',
           html: `
             <div class="city-icon-wrapper" style="
-              background-color: ${isProcessing ? '#94a3b8' : '#0891b2'};
+              background-color: ${city.hasDataLayers ? '#0891b2' : isProcessing ? '#94a3b8' : '#cbd5e1'};
               width: 32px;
               height: 32px;
               border-radius: 50%;
@@ -407,13 +407,13 @@ const MapViewer = ({
               display: flex;
               align-items: center;
               justify-content: center;
-              color: white;
+              color: ${city.hasDataLayers || isProcessing ? 'white' : '#64748b'};
               font-size: 14px;
               cursor: ${isProcessing ? 'not-allowed' : 'pointer'};
               transition: all 0.2s;
               opacity: ${isProcessing ? '0.6' : '1'};
             ">
-              <i class="fas ${isProcessing ? 'fa-spinner fa-spin' : 'fa-city'}"></i>
+              <i class="fas ${isProcessing ? 'fa-spinner fa-spin' : city.hasDataLayers ? 'fa-city' : 'fa-clock'}"></i>
             </div>
           `,
           iconSize: [32, 32],
@@ -461,7 +461,11 @@ const MapViewer = ({
             const innerDiv = this._icon?.querySelector('.city-icon-wrapper');
             if (innerDiv) {
               innerDiv.style.transform = 'scale(1.15)';
-              innerDiv.style.backgroundColor = '#0e7490';
+              if (city.hasDataLayers) {
+                innerDiv.style.backgroundColor = '#0e7490';
+              } else {
+                innerDiv.style.backgroundColor = '#94a3b8';
+              }
             }
           });
         
@@ -469,7 +473,11 @@ const MapViewer = ({
             const innerDiv = this._icon?.querySelector('.city-icon-wrapper');
             if (innerDiv) {
               innerDiv.style.transform = 'scale(1)';
-              innerDiv.style.backgroundColor = '#0891b2';
+              if (city.hasDataLayers) {
+                innerDiv.style.backgroundColor = '#0891b2';
+              } else {
+                innerDiv.style.backgroundColor = '#cbd5e1';
+              }
             }
           });
         }
@@ -1152,7 +1160,7 @@ const MapViewer = ({
 
   const showEnableLayersMessage = () => {
     if (!selectedCity) {
-      alert(`${cities.length} cities available. Click on a city marker to explore.`);
+      alert(`${cities.length} total cities. Click on a city marker to explore.`);
     } else {
       alert('Enable layers in the sidebar to view features on the map.');
     }
@@ -1252,7 +1260,7 @@ const MapViewer = ({
         {!selectedCity ? (
           <>
             <i className="fas fa-city"></i>
-            <span>{cities.length.toLocaleString()} {cities.length === 1 ? 'city' : 'cities'} available</span>
+            <span>{cities.length.toLocaleString()} total {cities.length === 1 ? 'city' : 'cities'}</span>
           </>
         ) : (
           <>

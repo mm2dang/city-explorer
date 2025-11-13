@@ -90,33 +90,6 @@ const Header = ({
     setSearchQuery('');
   };
 
-  const getStatusCounts = () => {
-    // Count processing cities FOR CURRENT DATA SOURCE
-    const processing = processingProgress
-      ? Object.values(processingProgress).filter(progress => {
-          return progress && 
-                 progress.status === 'processing' && 
-                 progress.dataSource === dataSource;
-        }).length
-      : 0;
-    
-    // Only count as ready if has data layers AND is not currently processing in current data source
-    const ready = cityDataStatus 
-      ? cities.filter(city => {
-          const processingKey = `${city.name}@${dataSource}`;
-          const progress = processingProgress?.[processingKey];
-          const isProcessing = progress && 
-                              progress.status === 'processing' && 
-                              progress.dataSource === dataSource;
-          return cityDataStatus[city.name] && !isProcessing;
-        }).length 
-      : 0;
-    
-    return { ready, processing, total: cities.length };
-  };
-  
-  const statusCounts = getStatusCounts();
-
   const handleSortChange = (field) => {
     if (sortBy === field) {
       setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
@@ -212,13 +185,6 @@ const Header = ({
           <div className="title-row">
             <i className="fas fa-map-marked-alt"></i>
             <h1>CityExplorer</h1>
-          </div>
-          <div className="status-summary">
-            <small>
-              {cities.length} cities available
-              {statusCounts.ready > 0 && ` • ${statusCounts.ready} ready`}
-              {statusCounts.processing > 0 && ` • ${statusCounts.processing} processing`}
-            </small>
           </div>
         </motion.div>
 
@@ -448,6 +414,17 @@ const Header = ({
             )}
           </div>
 
+          <motion.button
+            className="add-city-btn"
+            onClick={onAddCity}
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
+            title="Add a new city to the system"
+          >
+            <i className="fas fa-plus"></i>
+            Add City
+          </motion.button>
+
           <div className="settings-selector">
             <motion.button
               className="settings-btn"
@@ -536,17 +513,6 @@ const Header = ({
               </motion.div>
             )}
           </div>
-
-          <motion.button
-            className="add-city-btn"
-            onClick={onAddCity}
-            whileHover={{ scale: 1.05 }}
-            whileTap={{ scale: 0.95 }}
-            title="Add a new city to the system"
-          >
-            <i className="fas fa-plus"></i>
-            Add City
-          </motion.button>
         </div>
       </div>
     </header>
