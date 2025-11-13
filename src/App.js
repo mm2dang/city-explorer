@@ -38,10 +38,10 @@ function App() {
   const [editingLayer, setEditingLayer] = useState(null);
   const [dataSource, setDataSourceState] = useState('city');
   const [mapView, setMapView] = useState('street');
-  // eslint-disable-next-line no-unused-vars
-  const [features, setFeatures] = useState([]);
   const [showCalculateIndicatorsModal, setShowCalculateIndicatorsModal] = useState(false);
   const [isCalculatingIndicators, setIsCalculatingIndicators] = useState(false);
+  const [connectivityProgress, setConnectivityProgress] = useState(null);
+  const [isCalculatingConnectivity, setIsCalculatingConnectivity] = useState(false);
 
   // Domain colors for consistent styling
   const domainColors = {
@@ -78,15 +78,11 @@ function App() {
         try {
           const cityFeatures = await loadCityFeatures(selectedCity.name, activeLayers);
           console.log(`Loaded ${cityFeatures.length} features for active layers`);
-          setFeatures(cityFeatures);
         } catch (error) {
           console.error('Error loading features:', error);
-          setFeatures([]);
         } finally {
           setIsLoading(false);
         }
-      } else if (selectedCity && Object.keys(activeLayers).length === 0) {
-        setFeatures([]);
       }
     };
     
@@ -134,7 +130,6 @@ function App() {
     setDataSource(newSource);
     setSelectedCity(null);
     setActiveLayers({});
-    setFeatures([]);
     setAvailableLayers({});
   
     // Filter processing progress to show ALL items regardless of data source
@@ -171,7 +166,6 @@ function App() {
       console.log('City deselected');
       setSelectedCity(null);
       setActiveLayers({});
-      setFeatures([]);
       setAvailableLayers({});
       return;
     }
@@ -179,7 +173,6 @@ function App() {
     console.log('City selected:', city.name);
     setSelectedCity(city);
     setActiveLayers({});
-    setFeatures([]);
   
     try {
       const layers = await getAvailableLayersForCity(city.name);
@@ -242,7 +235,6 @@ function App() {
           console.log('Deselecting city before processing:', cityData.name);
           setSelectedCity(null);
           setActiveLayers({});
-          setFeatures([]);
           setAvailableLayers({});
         }
         
@@ -341,7 +333,6 @@ function App() {
         console.log('Deselecting city before processing:', selectedCity.name);
         setSelectedCity(null);
         setActiveLayers({});
-        setFeatures([]);
         setAvailableLayers({});
       }
       
@@ -581,7 +572,6 @@ function App() {
       if (selectedCity?.name === cityName) {
         setSelectedCity(null);
         setActiveLayers({});
-        setFeatures([]);
       }
   
       // Clear processing progress only for current data source
@@ -644,22 +634,19 @@ function App() {
       if (!selectedCity) {
         throw new Error('No city selected');
       }
-
+  
       await saveCustomLayer(selectedCity.name, layerData, selectedCity.boundary);
-
+  
       const layers = await getAvailableLayersForCity(selectedCity.name);
       setAvailableLayers(layers);
-
+  
       setCityDataStatus(prev => ({
         ...prev,
         [selectedCity.name]: true
       }));
 
-      if (activeLayers[layerData.name]) {
-        const cityFeatures = await loadCityFeatures(selectedCity.name, activeLayers);
-        setFeatures(cityFeatures);
-      }
-
+      await loadCities();
+  
       setShowLayerModal(false);
       setEditingLayer(null);
       console.log('Layer saved successfully');
@@ -708,6 +695,8 @@ function App() {
       if (Object.keys(layers).length === 0) {
         console.log('Last layer deleted - updating city status to pending');
         handleCityStatusChange(selectedCity.name, false);
+        
+        await loadCities();
       }
       
       console.log('Layer deleted successfully');
@@ -718,10 +707,13 @@ function App() {
   };
 
   const handleCalculateIndicators = async (calculationParams) => {
+    // Set loading state IMMEDIATELY before any async operations
+    setIsCalculatingIndicators(true);
+    
+    // Close modal IMMEDIATELY after setting loading state
+    setShowCalculateIndicatorsModal(false);
+    
     try {
-      // Set loading state IMMEDIATELY before any async operations
-      setIsCalculatingIndicators(true);
-      
       console.log('Starting indicator calculation with parameters:', calculationParams);
       
       const shouldCalculateConnectivity = calculationParams.calculateConnectivity;
@@ -734,8 +726,20 @@ function App() {
         return;
       }
       
-      // Close modal BEFORE starting calculations (so progress is visible)
-      setShowCalculateIndicatorsModal(false);
+      // If connectivity is enabled, set connectivity state immediately to show progress bar
+      if (shouldCalculateConnectivity) {
+        setIsCalculatingConnectivity(true);
+        
+        // Parse cities to get total count for progress
+        const cityCount = calculationParams.cities.CITY.split(',').length;
+        
+        setConnectivityProgress({
+          current: 0,
+          total: cityCount,
+          currentCity: 'Initializing...',
+          currentProgress: { message: 'Starting connectivity calculations...' }
+        });
+      }
       
       // Start connectivity calculation if enabled
       let connectivityPromise = null;
@@ -744,6 +748,9 @@ function App() {
           window.dispatchEvent(new CustomEvent('connectivity-progress', { detail: progress }));
         }).catch(error => {
           console.error('Connectivity calculation failed:', error);
+          // Clear connectivity state on error
+          setIsCalculatingConnectivity(false);
+          setConnectivityProgress(null);
         });
       }
       
@@ -787,6 +794,9 @@ function App() {
     } catch (error) {
       console.error('Error starting calculation:', error);
       alert(`Error starting calculation: ${error.message}`);
+      // Clear connectivity state on error
+      setIsCalculatingConnectivity(false);
+      setConnectivityProgress(null);
     } finally {
       setIsCalculatingIndicators(false);
     }
@@ -1008,6 +1018,19 @@ function App() {
     return connectivityResults;
   };
 
+  const cancelConnectivityCalculation = () => {
+    console.log('Cancelling connectivity calculation...');
+    
+    // Set a flag to stop processing
+    window.connectivityCancelled = true;
+    
+    // Clear the connectivity state
+    setIsCalculatingConnectivity(false);
+    setConnectivityProgress(null);
+    
+    alert('Connectivity calculation cancelled');
+  };
+
   return (
     <div className="App">
       <Header
@@ -1140,6 +1163,9 @@ function App() {
         dataSource={dataSource}
         onCalculateIndicators={() => setShowCalculateIndicatorsModal(true)}
         cities={cities}
+        connectivityProgress={connectivityProgress}
+        isCalculatingConnectivity={isCalculatingConnectivity}
+        onCancelConnectivity={cancelConnectivityCalculation}
       />
     </div>
 
@@ -1190,6 +1216,7 @@ function App() {
             onCancel={() => setShowCalculateIndicatorsModal(false)}
             onCalculate={handleCalculateIndicators}
             isLoading={isCalculatingIndicators}
+            processingProgress={processingProgress}
           />
         </div>
       )}

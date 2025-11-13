@@ -789,10 +789,37 @@
   .status-header {
     display: flex;
     align-items: center;
+    justify-content: space-between;
     gap: 8px;
     font-weight: 600;
     margin-bottom: 8px;
     font-size: 13px;
+  }
+
+  .cancel-connectivity-btn {
+    background: transparent;
+    border: none;
+    width: 20px;
+    height: 20px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.2s;
+    color: #9ca3af;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    padding: 0;
+    margin-left: auto;
+  }
+  
+  .cancel-connectivity-btn:hover {
+    background: rgba(239, 68, 68, 0.1);
+    color: #ef4444;
+  }
+  
+  .cancel-connectivity-btn:active {
+    transform: scale(0.95);
   }
   
   .sub-progress {

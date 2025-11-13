@@ -239,7 +239,6 @@
   .clear-search-btn:hover {
     background: #e5e7eb;
     color: #374151;
-    transform: scale(1.05);
   }
   
   /* Sort Controls */
@@ -517,6 +516,112 @@
   .modal-content::-webkit-scrollbar-thumb:hover {
     background: #94a3b8;
   }
+
+  /* City item with status badge */
+  .city-item-content {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    gap: 12px;
+  }
+
+  .city-item .city-name {
+    flex: 1;
+    min-width: 0;
+    display: block;
+    font-size: 14px;
+    font-weight: 500;
+    color: #1a202c;
+  }
+
+  /* Calculation status badges */
+  .calculation-status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    border-radius: 8px;
+    font-size: 11px;
+    font-weight: 600;
+    white-space: nowrap;
+    flex-shrink: 0;
+    border: 1px solid;
+  }
+
+  .calculation-status-badge i {
+    font-size: 10px;
+  }
+
+  .status-calculated {
+    background: linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%);
+    color: #065f46;
+    border-color: #6ee7b7;
+  }
+
+  .status-not-calculated {
+    background: linear-gradient(135deg, #fee2e2 0%, #fecaca 100%);
+    color: #991b1b;
+    border-color: #fca5a5;
+  }
+
+  .status-connectivity-only {
+    background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%);
+    color: #1e40af;
+    border-color: #93c5fd;
+  }
+
+  .status-mobile-ping-only {
+    background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
+    color: #92400e;
+    border-color: #fcd34d;
+  }
+
+  /* Loading status message */
+  .loading-status-message {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 48px 20px;
+    color: #94a3b8;
+    text-align: center;
+    min-height: 180px;
+    background: white;
+    border-radius: 8px;
+  }
+
+  .loading-status-message i {
+    font-size: 40px;
+    margin-bottom: 16px;
+    color: #0891b2;
+    animation: spin 1s linear infinite;
+  }
+
+  .loading-status-message p {
+    font-size: 14px;
+    margin: 0;
+    font-weight: 500;
+    color: #64748b;
+  }
+
+  @keyframes spin {
+    from {
+      transform: rotate(0deg);
+    }
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
+  /* Update no cities message to include small text */
+  .no-cities-message small {
+    display: block;
+    margin-top: 8px;
+    font-size: 13px;
+    color: #94a3b8;
+    font-weight: 500;
+  }
   
   /* Mobile responsive styles */
   @media (max-width: 768px) {
@@ -573,5 +678,27 @@
   
     .footer-spacer {
       display: none;
+    }
+
+    .city-item-content {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 8px;
+    }
+    
+    .calculation-status-badge {
+      align-self: flex-start;
+      font-size: 10px;
+      padding: 4px 10px;
+    }
+    
+    .loading-status-message {
+      padding: 32px 16px;
+      min-height: 140px;
+    }
+    
+    .loading-status-message i {
+      font-size: 32px;
+      margin-bottom: 12px;
     }
   }

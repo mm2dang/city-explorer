@@ -241,6 +241,9 @@ export async function calculateConnectivityMetrics(cityBoundary, months, onProgr
   console.log('[Connectivity] Starting calculation');
   console.log('[Connectivity] Months to process:', months);
   
+  // Reset cancellation flag
+  window.connectivityCancelled = false;
+  
   try {
     if (!cityBoundary) {
       console.warn('[Connectivity] No city boundary provided');
@@ -271,6 +274,12 @@ export async function calculateConnectivityMetrics(cityBoundary, months, onProgr
 
     // Load connectivity data for each quarter
     for (const quarterStr of quarters) {
+      // Check for cancellation
+      if (window.connectivityCancelled) {
+        console.log('[Connectivity] Calculation cancelled by user');
+        return [];
+      }
+      
       console.log(`\n[Connectivity] Processing quarter: ${quarterStr}`);
       
       await yieldToEventLoop();
@@ -313,6 +322,12 @@ export async function calculateConnectivityMetrics(cityBoundary, months, onProgr
         console.log(`[Connectivity] Processing ${parquetFiles.length} file(s) from this quarter`);
 
         for (let fileIdx = 0; fileIdx < parquetFiles.length; fileIdx++) {
+          // Check for cancellation
+          if (window.connectivityCancelled) {
+            console.log('[Connectivity] Calculation cancelled by user');
+            return [];
+          }
+          
           const file = parquetFiles[fileIdx];
           console.log(`[Connectivity] Processing: ${file.Key}`);
 

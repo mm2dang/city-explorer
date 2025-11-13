@@ -13,7 +13,15 @@ import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 import '../styles/IndicatorsSidebar.css';
 import { getCountryCode } from '../utils/connectivity';
 
-const IndicatorsSidebar = ({ selectedCity, dataSource, onCalculateIndicators, cities }) => {
+const IndicatorsSidebar = ({ 
+  selectedCity, 
+  dataSource, 
+  onCalculateIndicators, 
+  cities,
+  connectivityProgress,
+  isCalculatingConnectivity,
+  onCancelConnectivity 
+}) => {
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [selectedDateRange, setSelectedDateRange] = useState(null);
   const [availableDateRanges, setAvailableDateRanges] = useState([]);
@@ -26,8 +34,6 @@ const IndicatorsSidebar = ({ selectedCity, dataSource, onCalculateIndicators, ci
   const [jobId, setJobId] = useState(null);
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
-  const [connectivityProgress, setConnectivityProgress] = useState(null);
-  const [isCalculatingConnectivity, setIsCalculatingConnectivity] = useState(false);
   const [expandedIndicator, setExpandedIndicator] = useState(null);
   const [timeSeriesData, setTimeSeriesData] = useState({});
   const [loadingTimeSeries, setLoadingTimeSeries] = useState({});
@@ -206,18 +212,13 @@ const IndicatorsSidebar = ({ selectedCity, dataSource, onCalculateIndicators, ci
     };
   }, [showExportMenu]);
 
-  // Listen for connectivity progress updates from App.js
   useEffect(() => {
     const handleConnectivityProgress = (e) => {
-      const progress = e.detail;
-      setConnectivityProgress(progress);
-      setIsCalculatingConnectivity(true);
+      console.log('Connectivity progress event received:', e.detail);
     };
   
     const handleConnectivityComplete = () => {
-      setIsCalculatingConnectivity(false);
-      setConnectivityProgress(null);
-      // Reload data after connectivity calculation completes
+      console.log('Connectivity complete event received');
       loadDateRanges();
       if (selectedDateRange) {
         loadSummaryData();
@@ -861,6 +862,13 @@ const IndicatorsSidebar = ({ selectedCity, dataSource, onCalculateIndicators, ci
               <div className="calculation-status connectivity-status">
                 <div className="status-header">
                   <span>Connectivity Calculation</span>
+                  <button 
+                    className="cancel-connectivity-btn"
+                    onClick={onCancelConnectivity}
+                    title="Cancel connectivity calculation"
+                  >
+                    <i className="fas fa-times"></i>
+                  </button>
                 </div>
                 <div className="status-bar">
                   <div

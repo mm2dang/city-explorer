@@ -1,8 +1,9 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { motion } from 'framer-motion';
+import { batchCheckCityCalculationStatus } from '../utils/indicators';
 import '../styles/CalculateIndicatorsModal.css';
 
-const CalculateIndicatorsModal = ({ cities, selectedCity, dataSource, onCancel, onCalculate, isLoading }) => {
+const CalculateIndicatorsModal = ({ cities, selectedCity, dataSource, onCancel, onCalculate, isLoading, processingProgress }) => {
   // Page state
   const [currentPage, setCurrentPage] = useState(1);
 
@@ -13,59 +14,167 @@ const CalculateIndicatorsModal = ({ cities, selectedCity, dataSource, onCancel, 
   
   const [startMonth, setStartMonth] = useState(`${lastYear}-06`);
   const [endMonth, setEndMonth] = useState(`${currentYear}-06`);
-  const [selectedCities, setSelectedCities] = useState(
-    selectedCity ? new Set([selectedCity.name]) : new Set()
-  );
+  const [selectedCities, setSelectedCities] = useState(new Set());
   const [searchQuery, setSearchQuery] = useState('');
-  const [sortBy, setSortBy] = useState('city');
-  const [sortOrder, setSortOrder] = useState('asc');
 
   const [calculateConnectivity, setCalculateConnectivity] = useState(true);
   const [calculateMobilePing, setCalculateMobilePing] = useState(true);
 
+  const [cityStatusMap, setCityStatusMap] = useState(new Map());
+  const [loadingStatus, setLoadingStatus] = useState(false);
+
+  const [sortBy, setSortBy] = useState('name');
+  const [sortOrder, setSortOrder] = useState('asc');
+  const hasSetInitialCity = useRef(false);
+
+  // Load calculation status
+  useEffect(() => {
+    const loadCalculationStatus = async () => {
+      if (!startMonth || !endMonth || cities.length === 0) return;
+      
+      setLoadingStatus(true);
+      try {
+        const dateRange = `${startMonth}_to_${endMonth}`;
+        const statusMap = await batchCheckCityCalculationStatus(cities, dateRange, dataSource);
+        setCityStatusMap(statusMap);
+        console.log('Loaded calculation status for all cities');
+      } catch (error) {
+        console.error('Error loading calculation status:', error);
+      } finally {
+        setLoadingStatus(false);
+      }
+    };
+
+    if (currentPage === 2 && startMonth && endMonth) {
+      loadCalculationStatus();
+    }
+  }, [currentPage, startMonth, endMonth, cities, dataSource]);
+
+  const parseCityName = (cityName) => {
+    const parts = cityName.split(',').map(part => part.trim());
+    return {
+      city: parts[0] || '',
+      province: parts[1] || '',
+      country: parts[2] || ''
+    };
+  };
+  
+  const handleSortChange = (field) => {
+    if (sortBy === field) {
+      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortBy(field);
+      setSortOrder('asc');
+    }
+  };
+
   // Filter and sort cities
   const filteredAndSortedCities = useMemo(() => {
-    // First filter by search query
+    // First filter by cities with data and not processing
     let filtered = cities.filter(city => {
+      // Check if city is currently processing
+      const processingKey = `${city.name}@${dataSource}`;
+      const progress = processingProgress?.[processingKey];
+      const isProcessing = progress && progress.status === 'processing';
+      if (isProcessing) return false;
+
+      // If mobile ping is selected, check if city has data layers
+      if (calculateMobilePing) {
+        const hasData = city.hasDataLayers;
+        if (!hasData) return false;
+      }
+
+      // Apply search filter
       if (!searchQuery.trim()) return true;
       
       const query = searchQuery.toLowerCase();
-      const parts = city.name.split(',').map(p => p.trim());
-      
-      return parts.some(part => part.toLowerCase().includes(query));
+      const parsed = parseCityName(city.name);
+      const cityName = parsed.city.toLowerCase();
+      const province = parsed.province.toLowerCase();
+      const country = parsed.country.toLowerCase();
+
+      // Get calculation status for searching
+      const status = cityStatusMap.get(city.name.toLowerCase()) || 'not_calculated';
+      const statusLabels = {
+        'calculated': 'calculated',
+        'not_calculated': 'not calculated',
+        'connectivity_only': 'connectivity only',
+        'mobile_ping_only': 'mobile ping only'
+      };
+      const statusText = statusLabels[status] || '';
+
+      return (
+        cityName.includes(query) ||
+        province.includes(query) ||
+        country.includes(query) ||
+        statusText.includes(query)
+      );
     });
 
-    // Sort the filtered cities
-    const sorted = [...filtered].sort((a, b) => {
-      const aParts = a.name.split(',').map(p => p.trim());
-      const bParts = b.name.split(',').map(p => p.trim());
-      
-      let aValue, bValue;
-      
-      if (sortBy === 'city') {
-        aValue = aParts[0].toLowerCase();
-        bValue = bParts[0].toLowerCase();
-      } else if (sortBy === 'province') {
-        // Province is second to last part (or empty if only city and country)
-        aValue = (aParts.length >= 3 ? aParts[aParts.length - 2] : '').toLowerCase();
-        bValue = (bParts.length >= 3 ? bParts[bParts.length - 2] : '').toLowerCase();
-      } else if (sortBy === 'country') {
-        aValue = aParts[aParts.length - 1].toLowerCase();
-        bValue = bParts[bParts.length - 1].toLowerCase();
+    // Add calculation status to each city
+    const citiesWithStatus = filtered.map(city => {
+      const status = cityStatusMap.get(city.name.toLowerCase()) || 'not_calculated';
+      return {
+        ...city,
+        calculationStatus: status
+      };
+    });
+
+    // Sort by selected field
+    const sorted = [...citiesWithStatus].sort((a, b) => {
+      let compareA, compareB;
+
+      switch (sortBy) {
+        case 'name':
+          compareA = parseCityName(a.name).city.toLowerCase();
+          compareB = parseCityName(b.name).city.toLowerCase();
+          break;
+        case 'province':
+          compareA = parseCityName(a.name).province.toLowerCase();
+          compareB = parseCityName(b.name).province.toLowerCase();
+          break;
+        case 'country':
+          compareA = parseCityName(a.name).country.toLowerCase();
+          compareB = parseCityName(b.name).country.toLowerCase();
+          break;
+        case 'status':
+          const statusOrder = {
+            'not_calculated': 0,
+            'connectivity_only': 1,
+            'mobile_ping_only': 2,
+            'calculated': 3
+          };
+          compareA = statusOrder[a.calculationStatus] || 0;
+          compareB = statusOrder[b.calculationStatus] || 0;
+          break;
+        case 'selected':
+          compareA = selectedCities.has(a.name) ? 1 : 0;
+          compareB = selectedCities.has(b.name) ? 1 : 0;
+          break;
+        default:
+          compareA = a.name.toLowerCase();
+          compareB = b.name.toLowerCase();
       }
-      
-      if (aValue < bValue) return sortOrder === 'asc' ? -1 : 1;
-      if (aValue > bValue) return sortOrder === 'asc' ? 1 : -1;
+
+      if (compareA < compareB) return sortOrder === 'asc' ? -1 : 1;
+      if (compareA > compareB) return sortOrder === 'asc' ? 1 : -1;
       return 0;
     });
 
-    // Separate selected and unselected
-    const selected = sorted.filter(city => selectedCities.has(city.name));
-    const unselected = sorted.filter(city => !selectedCities.has(city.name));
+    return sorted;
+  }, [cities, searchQuery, selectedCities, dataSource, processingProgress, cityStatusMap, sortBy, sortOrder, calculateMobilePing]);
 
-    return [...selected, ...unselected];
-  }, [cities, searchQuery, sortBy, sortOrder, selectedCities]);
-
+  // Set initial selected city only if it passes filters
+  useEffect(() => {
+    if (selectedCity && currentPage === 2 && !hasSetInitialCity.current) {
+      const cityExists = filteredAndSortedCities.some(city => city.name === selectedCity.name);
+      if (cityExists) {
+        setSelectedCities(new Set([selectedCity.name]));
+      }
+      hasSetInitialCity.current = true;
+    }
+  }, [currentPage, filteredAndSortedCities, selectedCity]);
+  
   const toggleCity = (cityName) => {
     const newSelected = new Set(selectedCities);
     if (newSelected.has(cityName)) {
@@ -160,6 +269,40 @@ const CalculateIndicatorsModal = ({ cities, selectedCity, dataSource, onCancel, 
   };
 
   const allSelected = selectedCities.size === filteredAndSortedCities.length && filteredAndSortedCities.length > 0;
+
+  const renderStatusBadge = (status) => {
+    const statusConfig = {
+      'calculated': {
+        icon: 'fa-check-circle',
+        label: 'Calculated',
+        className: 'status-calculated'
+      },
+      'not_calculated': {
+        icon: 'fa-times-circle',
+        label: 'Not Calculated',
+        className: 'status-not-calculated'
+      },
+      'connectivity_only': {
+        icon: 'fa-signal',
+        label: 'Connectivity Only',
+        className: 'status-connectivity-only'
+      },
+      'mobile_ping_only': {
+        icon: 'fa-mobile-alt',
+        label: 'Mobile Ping Only',
+        className: 'status-mobile-ping-only'
+      }
+    };
+
+    const config = statusConfig[status] || statusConfig['not_calculated'];
+
+    return (
+      <span className={`calculation-status-badge ${config.className}`}>
+        <i className={`fas ${config.icon}`}></i>
+        {config.label}
+      </span>
+    );
+  };
 
   return (
     <div className="modal-overlay-indicators" onClick={(e) => {
@@ -270,7 +413,7 @@ const CalculateIndicatorsModal = ({ cities, selectedCity, dataSource, onCancel, 
                   <input
                     type="text"
                     className="search-input"
-                    placeholder="Search by city, province, or country..."
+                    placeholder="Search by city, province, country, or status..."
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                   />
@@ -286,46 +429,37 @@ const CalculateIndicatorsModal = ({ cities, selectedCity, dataSource, onCancel, 
 
                 {/* Sort Controls */}
                 <div className="sort-controls">
-                <span className="sort-label">Sort by:</span>
-                <button
-                    className={`sort-btn ${sortBy === 'city' ? 'active' : ''}`}
-                    onClick={() => {
-                    if (sortBy === 'city') {
-                        setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
-                    } else {
-                        setSortBy('city');
-                        setSortOrder('asc');
-                    }
-                    }}
-                >
-                    City {sortBy === 'city' && <i className={`fas fa-chevron-${sortOrder === 'asc' ? 'up' : 'down'}`}></i>}
-                </button>
-                <button
+                  <span className="sort-label">Sort by:</span>
+                  <button
+                    className={`sort-btn ${sortBy === 'name' ? 'active' : ''}`}
+                    onClick={() => handleSortChange('name')}
+                  >
+                    City {sortBy === 'name' && <i className={`fas fa-chevron-${sortOrder === 'asc' ? 'up' : 'down'}`}></i>}
+                  </button>
+                  <button
                     className={`sort-btn ${sortBy === 'province' ? 'active' : ''}`}
-                    onClick={() => {
-                    if (sortBy === 'province') {
-                        setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
-                    } else {
-                        setSortBy('province');
-                        setSortOrder('asc');
-                    }
-                    }}
-                >
+                    onClick={() => handleSortChange('province')}
+                  >
                     Province {sortBy === 'province' && <i className={`fas fa-chevron-${sortOrder === 'asc' ? 'up' : 'down'}`}></i>}
-                </button>
-                <button
+                  </button>
+                  <button
                     className={`sort-btn ${sortBy === 'country' ? 'active' : ''}`}
-                    onClick={() => {
-                    if (sortBy === 'country') {
-                        setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
-                    } else {
-                        setSortBy('country');
-                        setSortOrder('asc');
-                    }
-                    }}
-                >
+                    onClick={() => handleSortChange('country')}
+                  >
                     Country {sortBy === 'country' && <i className={`fas fa-chevron-${sortOrder === 'asc' ? 'up' : 'down'}`}></i>}
-                </button>
+                  </button>
+                  <button
+                    className={`sort-btn ${sortBy === 'status' ? 'active' : ''}`}
+                    onClick={() => handleSortChange('status')}
+                  >
+                    Status {sortBy === 'status' && <i className={`fas fa-chevron-${sortOrder === 'asc' ? 'up' : 'down'}`}></i>}
+                  </button>
+                  <button
+                    className={`sort-btn ${sortBy === 'selected' ? 'active' : ''}`}
+                    onClick={() => handleSortChange('selected')}
+                  >
+                    Selected {sortBy === 'selected' && <i className={`fas fa-chevron-${sortOrder === 'asc' ? 'up' : 'down'}`}></i>}
+                  </button>
                 </div>
 
                 {/* Select All / Deselect All */}
@@ -344,7 +478,12 @@ const CalculateIndicatorsModal = ({ cities, selectedCity, dataSource, onCancel, 
 
                 {/* Cities List */}
                 <div className="cities-list">
-                  {filteredAndSortedCities.length === 0 ? (
+                  {loadingStatus ? (
+                    <div className="loading-status-message">
+                      <i className="fas fa-spinner fa-spin"></i>
+                      <p>Checking calculation status...</p>
+                    </div>
+                  ) : filteredAndSortedCities.length === 0 ? (
                     <div className="no-cities-message">
                       {searchQuery ? (
                         <>
@@ -354,7 +493,8 @@ const CalculateIndicatorsModal = ({ cities, selectedCity, dataSource, onCancel, 
                       ) : (
                         <>
                           <i className="fas fa-inbox"></i>
-                          <p>No cities available</p>
+                          <p>No cities available with complete data</p>
+                          <small>Cities must have data layers and not be processing</small>
                         </>
                       )}
                     </div>
@@ -366,8 +506,9 @@ const CalculateIndicatorsModal = ({ cities, selectedCity, dataSource, onCancel, 
                           checked={selectedCities.has(city.name)}
                           onChange={() => toggleCity(city.name)}
                         />
-                        <span className="checkbox-label">
+                        <span className="checkbox-label city-item-content">
                           <span className="city-name">{city.name}</span>
+                          {renderStatusBadge(city.calculationStatus)}
                         </span>
                       </label>
                     ))
@@ -403,8 +544,9 @@ const CalculateIndicatorsModal = ({ cities, selectedCity, dataSource, onCancel, 
             <motion.button
               className="btn btn-primary"
               onClick={handleNextPage}
-              whileHover={{ scale: 1.02 }}
-              whileTap={{ scale: 0.98 }}
+              disabled={!calculateMobilePing && !calculateConnectivity}
+              whileHover={{ scale: (!calculateMobilePing && !calculateConnectivity) ? 1 : 1.02 }}
+              whileTap={{ scale: (!calculateMobilePing && !calculateConnectivity) ? 1 : 0.98 }}
             >
               Next
               <i className="fas fa-arrow-right"></i>

@@ -1051,3 +1051,258 @@ export function getQuarters(months) {
   }
   return Array.from(quarters).sort();
 }
+
+/**
+ * Check calculation status for a specific city
+ * Returns: 'calculated', 'not_calculated', 'connectivity_only', 'mobile_ping_only'
+ */
+export async function getCityCalculationStatus(city, province, country, dateRange, dataSource) {
+  try {
+    console.log(`[Status] Checking calculation status for ${city}, ${province}, ${country} in ${dateRange}`);
+
+    // Check for mobile ping data (Glue results)
+    let hasMobilePingData = false;
+    try {
+      const prefix = `${dataSource}/summary/${dateRange}/`;
+
+      const listCommand = new ListObjectsV2Command({
+        Bucket: RESULT_BUCKET,
+        Prefix: prefix
+      });
+
+      const result = await s3Client.send(listCommand);
+      const csvFiles = (result.Contents || []).filter(obj => obj.Key.endsWith('.csv.gz'));
+
+      // Check if any summary file contains this city
+      for (const file of csvFiles) {
+        const data = await readGzippedCsv(RESULT_BUCKET, file.Key);
+        const cityData = data.find(row => {
+          const rowCity = String(row.city || '').toLowerCase().trim();
+          const rowProvince = String(row.province || '').toLowerCase().trim();
+          const rowCountry = String(row.country || '').toLowerCase().trim();
+          
+          const matchesCity = rowCity === city.toLowerCase().trim();
+          const matchesCountry = rowCountry === country.toLowerCase().trim();
+          const matchesProvince = !province || rowProvince === province.toLowerCase().trim();
+          
+          return matchesCity && matchesCountry && matchesProvince;
+        });
+
+        if (cityData) {
+          // Check if any mobile ping indicators have values
+          const hasOutAtNight = cityData.out_at_night != null && !isNaN(cityData.out_at_night);
+          const hasLeisure = cityData.leisure_dwell_time != null && !isNaN(cityData.leisure_dwell_time);
+          const hasCultural = cityData.cultural_visits != null && !isNaN(cityData.cultural_visits);
+          
+          hasMobilePingData = hasOutAtNight || hasLeisure || hasCultural;
+          if (hasMobilePingData) {
+            console.log(`[Status] Found mobile ping data for ${city}`);
+            break;
+          }
+        }
+      }
+    } catch (error) {
+      console.log(`[Status] No mobile ping data found for ${city}:`, error.message);
+    }
+
+    // Check for connectivity data
+    let hasConnectivityData = false;
+    try {
+      const prefix = `summary/${dateRange}/`;
+
+      const listCommand = new ListObjectsV2Command({
+        Bucket: CONNECTIVITY_RESULT_BUCKET,
+        Prefix: prefix
+      });
+
+      const result = await s3Client.send(listCommand);
+      const csvFiles = (result.Contents || []).filter(obj => 
+        obj.Key.endsWith('.csv.gz') || obj.Key.endsWith('-connectivity.csv.gz')
+      );
+
+      // Check if any connectivity file contains this city
+      for (const file of csvFiles) {
+        const data = await readGzippedCsv(CONNECTIVITY_RESULT_BUCKET, file.Key);
+        const cityData = data.find(row => {
+          const rowCity = String(row.city || '').toLowerCase().trim();
+          const rowProvince = String(row.province || '').toLowerCase().trim();
+          const rowCountry = String(row.country || '').toLowerCase().trim();
+          
+          const matchesCity = rowCity === city.toLowerCase().trim();
+          const matchesCountry = rowCountry === country.toLowerCase().trim();
+          const matchesProvince = !province || rowProvince === province.toLowerCase().trim();
+          
+          return matchesCity && matchesCountry && matchesProvince;
+        });
+
+        if (cityData) {
+          // Check if any connectivity indicators have values
+          const hasSpeed = cityData.speed != null && !isNaN(cityData.speed) && cityData.speed > 0;
+          const hasLatency = cityData.latency != null && !isNaN(cityData.latency) && cityData.latency > 0;
+          
+          hasConnectivityData = hasSpeed || hasLatency;
+          if (hasConnectivityData) {
+            console.log(`[Status] Found connectivity data for ${city}`);
+            break;
+          }
+        }
+      }
+    } catch (error) {
+      console.log(`[Status] No connectivity data found for ${city}:`, error.message);
+    }
+
+    // Determine status based on what was found
+    if (hasMobilePingData && hasConnectivityData) {
+      console.log(`[Status] ${city}: calculated (both)`);
+      return 'calculated';
+    } else if (hasConnectivityData) {
+      console.log(`[Status] ${city}: connectivity_only`);
+      return 'connectivity_only';
+    } else if (hasMobilePingData) {
+      console.log(`[Status] ${city}: mobile_ping_only`);
+      return 'mobile_ping_only';
+    } else {
+      console.log(`[Status] ${city}: not_calculated`);
+      return 'not_calculated';
+    }
+  } catch (error) {
+    console.error(`[Status] Error checking calculation status for ${city}:`, error);
+    return 'not_calculated';
+  }
+}
+
+/**
+ * Batch check calculation status for multiple cities
+ * More efficient than checking each city individually
+ */
+export async function batchCheckCityCalculationStatus(cities, dateRange, dataSource) {
+  try {
+    console.log(`[Status] Batch checking calculation status for ${cities.length} cities in ${dateRange}`);
+    
+    const statusMap = new Map();
+    
+    // Initialize all cities as not_calculated
+    cities.forEach(city => {
+      statusMap.set(city.name.toLowerCase(), 'not_calculated');
+    });
+
+    // Load all mobile ping summary data once
+    let mobilePingSummary = [];
+    try {
+      const prefix = `${dataSource}/summary/${dateRange}/`;
+      const listCommand = new ListObjectsV2Command({
+        Bucket: RESULT_BUCKET,
+        Prefix: prefix
+      });
+
+      const result = await s3Client.send(listCommand);
+      const csvFiles = (result.Contents || []).filter(obj => obj.Key.endsWith('.csv.gz'));
+
+      for (const file of csvFiles) {
+        const data = await readGzippedCsv(RESULT_BUCKET, file.Key);
+        mobilePingSummary = mobilePingSummary.concat(data);
+      }
+      
+      console.log(`[Status] Loaded ${mobilePingSummary.length} rows of mobile ping summary data`);
+    } catch (error) {
+      console.log(`[Status] No mobile ping summary data found:`, error.message);
+    }
+
+    // Load all connectivity data once
+    let connectivitySummary = [];
+    try {
+      const prefix = `summary/${dateRange}/`;
+      const listCommand = new ListObjectsV2Command({
+        Bucket: CONNECTIVITY_RESULT_BUCKET,
+        Prefix: prefix
+      });
+
+      const result = await s3Client.send(listCommand);
+      const csvFiles = (result.Contents || []).filter(obj => 
+        obj.Key.endsWith('.csv.gz') || obj.Key.endsWith('-connectivity.csv.gz')
+      );
+
+      for (const file of csvFiles) {
+        const data = await readGzippedCsv(CONNECTIVITY_RESULT_BUCKET, file.Key);
+        connectivitySummary = connectivitySummary.concat(data);
+      }
+      
+      console.log(`[Status] Loaded ${connectivitySummary.length} rows of connectivity summary data`);
+    } catch (error) {
+      console.log(`[Status] No connectivity summary data found:`, error.message);
+    }
+
+    // Check each city against the loaded data
+    cities.forEach(cityObj => {
+      const parts = cityObj.name.split(',').map(p => p.trim());
+      let city, province, country;
+      
+      if (parts.length === 2) {
+        [city, country] = parts;
+        province = '';
+      } else {
+        [city, province, country] = parts;
+      }
+
+      const cityLower = city.toLowerCase();
+      const provinceLower = (province || '').toLowerCase();
+      const countryLower = country.toLowerCase();
+
+      // Check mobile ping data
+      const hasMobilePing = mobilePingSummary.some(row => {
+        const rowCity = String(row.city || '').toLowerCase().trim();
+        const rowProvince = String(row.province || '').toLowerCase().trim();
+        const rowCountry = String(row.country || '').toLowerCase().trim();
+        
+        if (rowCity !== cityLower || rowCountry !== countryLower) return false;
+        if (provinceLower && rowProvince !== provinceLower) return false;
+        
+        const hasOutAtNight = row.out_at_night != null && !isNaN(row.out_at_night);
+        const hasLeisure = row.leisure_dwell_time != null && !isNaN(row.leisure_dwell_time);
+        const hasCultural = row.cultural_visits != null && !isNaN(row.cultural_visits);
+        
+        return hasOutAtNight || hasLeisure || hasCultural;
+      });
+
+      // Check connectivity data
+      const hasConnectivity = connectivitySummary.some(row => {
+        const rowCity = String(row.city || '').toLowerCase().trim();
+        const rowProvince = String(row.province || '').toLowerCase().trim();
+        const rowCountry = String(row.country || '').toLowerCase().trim();
+        
+        if (rowCity !== cityLower || rowCountry !== countryLower) return false;
+        if (provinceLower && rowProvince !== provinceLower) return false;
+        
+        const hasSpeed = row.speed != null && !isNaN(row.speed) && row.speed > 0;
+        const hasLatency = row.latency != null && !isNaN(row.latency) && row.latency > 0;
+        
+        return hasSpeed || hasLatency;
+      });
+
+      // Determine status
+      let status;
+      if (hasMobilePing && hasConnectivity) {
+        status = 'calculated';
+      } else if (hasConnectivity) {
+        status = 'connectivity_only';
+      } else if (hasMobilePing) {
+        status = 'mobile_ping_only';
+      } else {
+        status = 'not_calculated';
+      }
+
+      statusMap.set(cityObj.name.toLowerCase(), status);
+      console.log(`[Status] ${cityObj.name}: ${status}`);
+    });
+
+    return statusMap;
+  } catch (error) {
+    console.error(`[Status] Error in batch status check:`, error);
+    // Return map with all cities as not_calculated on error
+    const errorMap = new Map();
+    cities.forEach(city => {
+      errorMap.set(city.name.toLowerCase(), 'not_calculated');
+    });
+    return errorMap;
+  }
+}
