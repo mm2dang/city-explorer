@@ -1021,12 +1021,13 @@ function App() {
   const cancelConnectivityCalculation = () => {
     console.log('Cancelling connectivity calculation...');
     
-    // Set a flag to stop processing
     window.connectivityCancelled = true;
     
-    // Clear the connectivity state
     setIsCalculatingConnectivity(false);
     setConnectivityProgress(null);
+    
+    // Dispatch complete event so IndicatorsSidebar also clears its state
+    window.dispatchEvent(new CustomEvent('connectivity-complete'));
     
     alert('Connectivity calculation cancelled');
   };
@@ -1169,6 +1170,8 @@ function App() {
         connectivityProgress={connectivityProgress}
         isCalculatingConnectivity={isCalculatingConnectivity}
         onCancelConnectivity={cancelConnectivityCalculation}
+        onConnectivityProgressUpdate={setConnectivityProgress}
+        onConnectivityStateChange={setIsCalculatingConnectivity}
       />
     </div>
 

@@ -20,7 +20,9 @@ const IndicatorsSidebar = ({
   cities,
   connectivityProgress,
   isCalculatingConnectivity,
-  onCancelConnectivity 
+  onCancelConnectivity,
+  onConnectivityProgressUpdate,
+  onConnectivityStateChange
 }) => {
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [selectedDateRange, setSelectedDateRange] = useState(null);
@@ -297,24 +299,36 @@ const IndicatorsSidebar = ({
   useEffect(() => {
     const handleConnectivityProgress = (e) => {
       console.log('Connectivity progress event received:', e.detail);
+      // Update the connectivity progress state from the event
+      if (e.detail && onConnectivityProgressUpdate) {
+        onConnectivityProgressUpdate(e.detail);
+      }
     };
-  
+
     const handleConnectivityComplete = () => {
       console.log('Connectivity complete event received');
+      // Clear connectivity calculation state
+      if (onConnectivityStateChange) {
+        onConnectivityStateChange(false);
+      }
+      if (onConnectivityProgressUpdate) {
+        onConnectivityProgressUpdate(null);
+      }
+      // Reload data
       loadDateRanges();
       if (selectedDateRange) {
         loadSummaryData();
       }
     };
-  
+
     window.addEventListener('connectivity-progress', handleConnectivityProgress);
     window.addEventListener('connectivity-complete', handleConnectivityComplete);
-  
+
     return () => {
       window.removeEventListener('connectivity-progress', handleConnectivityProgress);
       window.removeEventListener('connectivity-complete', handleConnectivityComplete);
     };
-  }, [selectedDateRange, loadDateRanges, loadSummaryData]);
+  }, [selectedDateRange, loadDateRanges, loadSummaryData, onConnectivityProgressUpdate, onConnectivityStateChange]);
 
   const handleSort = (key) => {
     let direction = 'asc';
