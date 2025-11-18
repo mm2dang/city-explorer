@@ -35,7 +35,6 @@ cityexplorer/
 │   │   ├── Header.css
 │   │   ├── IndicatorsSidebar.css
 │   │   ├── CalculateIndicatorsModal.css
-│   │   ├── leaflet.css
 │   │   ├── LayerModal.css
 │   │   ├── MapViewer.css
 │   │   └── Sidebar.css

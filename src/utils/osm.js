@@ -20,7 +20,17 @@ export const searchOSM = async (cityName, province, country) => {
       },
     });
     
-    return response.data;
+    // Filter to only include point, polygon, and multipolygon results
+    const filteredResults = response.data.filter(result => {
+      // If no geojson, exclude it
+      if (!result.geojson) {
+        return false;
+      }
+      // Only include Point and Polygon and MultiPolygon geometries
+      return result.geojson.type === 'Point' || result.geojson.type === 'Polygon' || result.geojson.type === 'MultiPolygon';
+    });
+    
+    return filteredResults;
   } catch (error) {
     throw new Error(`OSM search failed: ${error.message}`);
   }
@@ -148,93 +158,275 @@ export const fetchWikipediaData = async (cityName) => {
         params: {
           action: 'parse',
           page: title,
-          prop: 'wikitext',
+          prop: 'text',
           format: 'json',
           origin: '*',
         },
         headers: { 'User-Agent': USER_AGENT },
         timeout: 15000
       });
-
-      const wikitext = response.data.parse?.wikitext['*'];
-      if (!wikitext) return { population: null, size: null, url: null };
-
-      // Extract infobox with proper nested brace handling
-      const startIndex = wikitext.indexOf('{{Infobox');
-      if (startIndex === -1) return { population: null, size: null, url: null };
-
-      let braceCount = 0;
-      let i = startIndex;
-      let infobox = '';
-
-      while (i < wikitext.length && braceCount >= 0) {
-        const char = wikitext[i];
-        infobox += char;
-        if (char === '{' && wikitext[i + 1] === '{') {
-          braceCount++;
-          i++; // Skip the second brace
-        } else if (char === '}' && wikitext[i + 1] === '}') {
-          braceCount--;
-          i++; // Skip the second brace
-        }
-        if (braceCount === 0 && infobox.endsWith('}}')) break;
-        i++;
+  
+      const html = response.data.parse?.text?.['*'];
+      if (!html) {
+        return { population: null, size: null, url: null };
       }
-
-      // Extract population and area with better regex patterns
-      const popPatterns = [
-        /\|\s*population[^=]*=\s*([0-9,]+)/i,
-        /\|\s*pop[^=]*=\s*([0-9,]+)/i,
-        /\|\s*population_total\s*=\s*([0-9,]+)/i
-      ];
-      
-      const areaPatterns = [
-        /\|\s*area[^=]*=\s*([\d.]+)/i,
-        /\|\s*area_total[^=]*=\s*([\d.]+)/i,
-        /\|\s*area_km2\s*=\s*([\d.]+)/i
-      ];
-
+  
+      console.log(`Fetching Wikipedia data for: ${title}`);
+  
+      // Helper function to decode HTML entities
+      const decodeHtmlEntities = (text) => {
+        const textarea = document.createElement('textarea');
+        textarea.innerHTML = text;
+        return textarea.value;
+      };
+  
+      // Helper function to clean text
+      const cleanText = (text) => {
+        return decodeHtmlEntities(text)
+          .replace(/<[^>]+>/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim();
+      };
+  
+      // Extract table rows
+      const tableRowRegex = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
+      const rows = html.match(tableRowRegex) || [];
+  
       let population = null;
       let size = null;
-
-      // Try each population pattern
-      for (const pattern of popPatterns) {
-        const match = infobox.match(pattern);
-        if (match) {
-          const num = parseInt(match[1].replace(/,/g, ''));
-          if (num >= 1000) { // Only accept reasonable population numbers
-            population = num;
-            break;
+  
+      // Extract population - look for "Total" followed by a number in the same row
+      for (const row of rows) {
+        const cleanRow = cleanText(row);
+        
+        // Look for rows with "Total" and a population number
+        if (/•\s*total/i.test(cleanRow)) {
+          // Skip density rows
+          if (/density/i.test(cleanRow)) {
+            continue;
+          }
+          
+          // Extract number after "Total"
+          const numberMatches = cleanRow.match(/total\s+(\d{1,3}(?:,\d{3})+|\d{5,})/i);
+          
+          if (numberMatches) {
+            const num = parseInt(numberMatches[1].replace(/,/g, ''), 10);
+            
+            // Valid population range: 10,000 to 100,000,000
+            if (num >= 10000 && num < 100000000) {
+              population = num;
+              console.log(`Found population: ${num} from row: ${cleanRow.substring(0, 150)}`);
+              break;
+            }
           }
         }
       }
-
-      // Try each area pattern
-      for (const pattern of areaPatterns) {
-        const match = infobox.match(pattern);
-        if (match) {
-          const num = parseFloat(match[1]);
-          if (num > 0 && num < 1000000) { // Reasonable area range
+  
+      // Extract area - look specifically for "• Total" followed by area value
+      for (const row of rows) {
+        // Must contain "area" somewhere in the row
+        if (!/area/i.test(row)) continue;
+        
+        const cleanRow = cleanText(row);
+        
+        // Skip rows that aren't the main area row
+        if (/rank|code|government|article|postcode/i.test(cleanRow)) {
+          continue;
+        }
+        
+        // Look for "• Total" followed by a number and km or sq mi
+        // Patterns: "• Total 631.10 km2" or "• Total 45 sq mi (116 km2)"
+        const totalAreaMatch = cleanRow.match(/•\s*total\s+(\d{1,3}(?:,\d{3})*(?:\.\d+)?)\s*(?:km|sq)/i);
+        
+        if (totalAreaMatch) {
+          const num = parseFloat(totalAreaMatch[1].replace(/,/g, ''));
+          
+          // Check if it's in sq mi - if so, look for km2 in parentheses
+          if (/sq\s*mi/i.test(cleanRow)) {
+            const kmMatch = cleanRow.match(/\(\s*(\d{1,3}(?:,\d{3})*(?:\.\d+)?)\s*km/i);
+            if (kmMatch) {
+              const kmNum = parseFloat(kmMatch[1].replace(/,/g, ''));
+              if (kmNum >= 1 && kmNum < 100000) {
+                size = kmNum;
+                console.log(`Found area: ${kmNum} km² (converted from sq mi) from row: ${cleanRow.substring(0, 150)}`);
+                break;
+              }
+            }
+          } else if (num >= 1 && num < 100000) {
+            // Already in km
             size = num;
+            console.log(`Found area: ${num} km² from row: ${cleanRow.substring(0, 150)}`);
             break;
           }
         }
       }
-
-      // Create Wikipedia URL
+  
+      // If we still don't have area, search for any row with area indicators and units
+      // The area value is often in a separate row from the "Area" header
+      if (!size) {
+        console.log('Searching for area data in any row...');
+        
+        for (const row of rows) {
+          const cleanRow = cleanText(row);
+          
+          // Look for rows with area indicators (• Total, • City, • Capital City, • Metropolis, or just "Area")
+          // AND area units (km or sq mi)
+          const hasAreaIndicator = /•\s*(?:total|city|capital\s+city|metropolis|land|water|urban)\b/i.test(cleanRow) || /\barea\b/i.test(cleanRow);
+          const hasAreaUnits = /km/i.test(cleanRow) || /sq\s*mi/i.test(cleanRow);
+          
+          if (hasAreaIndicator && hasAreaUnits) {
+            console.log(`Found area candidate: ${cleanRow.substring(0, 150)}`);
+            
+            // Skip if this is clearly population or other non-area data
+            if (/census|population|density|rank|code/i.test(cleanRow) && !/km|sq\s*mi/i.test(cleanRow.substring(0, 100))) {
+              console.log('  -> Skipped: not area data');
+              continue;
+            }
+            
+            // Skip CMA, metro, urban area - we want city proper
+            if (/•\s*(?:cma|metro|urban)\b/i.test(cleanRow)) {
+              console.log('  -> Skipped: CMA/metro/urban area');
+              continue;
+            }
+            
+            // Pattern 1: "• Total 631.10 km2 (243.67 sq mi)" or "• City 100 km2" or "• Capital City 200 km2"
+            const kmFirstMatch = cleanRow.match(/•\s*(?:total|city|capital\s+city|metropolis|land|water)\s+(\d{1,3}(?:,\d{3})*(?:\.\d+)?)\s*km/i);
+            if (kmFirstMatch) {
+              const num = parseFloat(kmFirstMatch[1].replace(/,/g, ''));
+              if (num >= 1 && num < 100000) {
+                size = num;
+                console.log(`Found area: ${num} km² (pattern: km first)`);
+                break;
+              }
+            }
+            
+            // Pattern 2: "• Total 45 sq mi (116 km2)" - extract km from parentheses
+            const sqMiFirstMatch = cleanRow.match(/•\s*(?:total|city|capital\s+city|metropolis|land|water)\s+\d+(?:\.\d+)?\s*sq\s*mi\s*\(\s*(\d{1,3}(?:,\d{3})*(?:\.\d+)?)\s*km/i);
+            if (sqMiFirstMatch) {
+              const num = parseFloat(sqMiFirstMatch[1].replace(/,/g, ''));
+              if (num >= 1 && num < 100000) {
+                size = num;
+                console.log(`Found area: ${num} km² (pattern: converted from sq mi)`);
+                break;
+              }
+            }
+            
+            // Pattern 3: Just "Area" followed by a number and km (less common)
+            if (/\barea\b/i.test(cleanRow) && !/•/.test(cleanRow)) {
+              const areaMatch = cleanRow.match(/area\D*(\d{1,3}(?:,\d{3})*(?:\.\d+)?)\s*km/i);
+              if (areaMatch) {
+                const num = parseFloat(areaMatch[1].replace(/,/g, ''));
+                if (num >= 1 && num < 100000) {
+                  size = num;
+                  console.log(`Found area: ${num} km² (pattern: Area keyword)`);
+                  break;
+                }
+              }
+            }
+          }
+        }
+      }
+      
+      // Final fallback: look for any row with "Total" and area, extract from cells
+      if (!size) {
+        console.log('Final fallback: searching table cells...');
+        
+        for (const row of rows) {
+          const cleanRow = cleanText(row);
+          
+          // Must have "Total" in the row somewhere
+          if (!/•\s*total/i.test(cleanRow)) continue;
+          
+          // Extract ALL table cells from this row
+          const tdRegex = /<td[^>]*>([\s\S]*?)<\/td>/gi;
+          const cells = row.match(tdRegex) || [];
+          
+          console.log(`Checking ${cells.length} cells in row with "• Total"`);
+          
+          // Debug: log all cells
+          cells.forEach((cell, i) => {
+            const cellText = cleanText(cell);
+            if (cellText.length > 0) {
+              console.log(`  Cell ${i}: ${cellText.substring(0, 100)}`);
+            }
+          });
+          
+          // Look through cells for the number after we've seen "Total"
+          let foundTotal = false;
+          for (const cell of cells) {
+            const cleanCell = cleanText(cell);
+            
+            if (/•\s*total/i.test(cleanCell)) {
+              foundTotal = true;
+              // Check if number is in same cell
+              const match = cleanCell.match(/total\s+(\d{1,3}(?:,\d{3})*(?:\.\d+)?)\s*(?:km|sq)/i);
+              if (match) {
+                const num = parseFloat(match[1].replace(/,/g, ''));
+                
+                // Check for km in parentheses if it's sq mi
+                if (/sq\s*mi/i.test(cleanCell)) {
+                  const kmMatch = cleanCell.match(/\(\s*(\d{1,3}(?:,\d{3})*(?:\.\d+)?)\s*km/i);
+                  if (kmMatch) {
+                    const kmNum = parseFloat(kmMatch[1].replace(/,/g, ''));
+                    if (kmNum >= 1 && kmNum < 100000) {
+                      size = kmNum;
+                      console.log(`Found area (same cell): ${kmNum} km²`);
+                      break;
+                    }
+                  }
+                } else if (num >= 1 && num < 100000) {
+                  size = num;
+                  console.log(`Found area (same cell): ${num} km²`);
+                  break;
+                }
+              }
+              continue;
+            }
+            
+            // If we found "Total" in previous cell, this cell should have the number
+            if (foundTotal) {
+              // Look for number with km or sq mi
+              const kmMatch = cleanCell.match(/(\d{1,3}(?:,\d{3})*(?:\.\d+)?)\s*km/i);
+              const sqMiMatch = cleanCell.match(/(\d{1,3}(?:,\d{3})*(?:\.\d+)?)\s*sq\s*mi.*?\(\s*(\d{1,3}(?:,\d{3})*(?:\.\d+)?)\s*km/i);
+              
+              if (sqMiMatch) {
+                // Has both sq mi and km in parentheses - use km
+                const num = parseFloat(sqMiMatch[2].replace(/,/g, ''));
+                if (num >= 1 && num < 100000) {
+                  size = num;
+                  console.log(`Found area (next cell, converted): ${num} km²`);
+                  break;
+                }
+              } else if (kmMatch) {
+                const num = parseFloat(kmMatch[1].replace(/,/g, ''));
+                if (num >= 1 && num < 100000 && !/cma|metro|urban/i.test(cleanCell)) {
+                  size = num;
+                  console.log(`Found area (next cell): ${num} km²`);
+                  break;
+                }
+              }
+            }
+          }
+          
+          if (size) break;
+        }
+      }
+  
       const encodedTitle = encodeURIComponent(title.replace(/ /g, '_'));
       const url = `https://en.wikipedia.org/wiki/${encodedTitle}`;
-
+  
+      console.log(`Wikipedia extraction results for ${title}:`, { population, size, url });
       return { population, size, url };
+  
     } catch (error) {
       console.warn(`Error fetching Wikipedia data for ${title}:`, error);
       return { population: null, size: null, url: null };
     }
   };
 
-  // Try different variations of the city name
-  const variations = generateCityVariations(cityName);
-  
+// Try different variations of the city name
+const variations = generateCityVariations(cityName);
+
   for (const variation of variations) {
     try {
       if (await checkWikipediaPage(variation)) {

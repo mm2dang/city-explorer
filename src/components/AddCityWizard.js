@@ -38,6 +38,21 @@ const MapController = ({ center, boundary, onBoundaryLoad }) => {
       console.log('MapController: No boundary, using center');
       map.setView(center, 12);
     }
+
+    // Store boundary in map container for center control
+    const mapContainer = map.getContainer();
+    if (boundary) {
+      mapContainer.dataset.boundary = JSON.stringify(boundary);
+    } else {
+      delete mapContainer.dataset.boundary;
+    }
+    
+    // Add center map control if it doesn't exist
+    if (!map._centerControl) {
+      const centerControl = new CenterMapControl();
+      map.addControl(centerControl);
+      map._centerControl = centerControl;
+    }
   }, [center, boundary, map]);
 
   useEffect(() => {
@@ -117,9 +132,6 @@ const reprojectGeometry = (geometry, prjWkt, crsFromGeoJSON = null) => {
   return geometry;
 };
 
-/**
- * Merges multiple Polygon and MultiPolygon geometries into a single MultiPolygon
- */
 const mergeGeometries = (geometries) => {
   if (!geometries || geometries.length === 0) {
     throw new Error('No geometries to merge');
@@ -161,6 +173,71 @@ const mergeGeometries = (geometries) => {
   };
 };
 
+const CenterMapControl = L.Control.extend({
+  options: { position: 'topleft' },
+
+  onAdd: function(map) {
+    const container = L.DomUtil.create('div', 'leaflet-bar leaflet-control leaflet-control-custom');
+    container.style.background = 'rgba(255, 255, 255, 0.95)';
+    container.style.backdropFilter = 'blur(10px)';
+    container.style.border = '1px solid rgba(226, 232, 240, 0.8)';
+    container.style.color = '#374151';
+    container.style.fontSize = '18px';
+    container.style.width = '34px';
+    container.style.height = '34px';
+    container.style.lineHeight = '32px';
+    container.style.borderRadius = '8px';
+    container.style.margin = '2px';
+    container.style.display = 'flex';
+    container.style.alignItems = 'center';
+    container.style.justifyContent = 'center';
+    container.style.cursor = 'pointer';
+    container.style.transition = 'all 0.2s';
+    container.style.position = 'relative';
+    container.style.left = '10px';
+    container.innerHTML = '<i class="fas fa-expand-arrows-alt" style="font-size: 16px; color: #374151; transition: color 0.2s;"></i>';
+    
+    container.onmouseover = () => {
+      container.style.background = 'white';
+      container.style.color = '#0891b2';
+      container.style.transform = 'scale(1.05)';
+      container.querySelector('i').style.color = '#0891b2';
+    };
+    container.onmouseout = () => {
+      container.style.background = 'rgba(255, 255, 255, 0.95)';
+      container.style.color = '#374151';
+      container.style.transform = 'scale(1)';
+      container.querySelector('i').style.color = '#374151';
+    };
+
+    L.DomEvent.disableClickPropagation(container);
+
+    container.onclick = () => {
+      const mapContainer = map.getContainer();
+      const boundaryData = mapContainer.dataset.boundary;
+      
+      if (boundaryData) {
+        try {
+          const boundary = JSON.parse(boundaryData);
+          const geoJsonLayer = L.geoJSON(boundary);
+          const bounds = geoJsonLayer.getBounds();
+          if (bounds.isValid()) {
+            map.fitBounds(bounds, { padding: [50, 50], maxZoom: 15 });
+            return;
+          }
+        } catch (error) {
+          console.error('Error fitting to boundary:', error);
+        }
+      }
+      
+      // Fallback to world view if no boundary
+      map.setView([20, 0], 2);
+    };
+
+    return container;
+  }
+});
+
 const AddCityWizard = ({ editingCity, onComplete, onCancel, dataSource = 'city', processingProgress = {} }) => {
   const [step, setStep] = useState(1);
   const [cityName, setCityName] = useState('');
@@ -180,6 +257,8 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel, dataSource = 'city',
   const [hasExistingFeatures, setHasExistingFeatures] = useState(true);
   const drawRef = useRef(null);
   const mapRef = useRef(null);
+  const [manualLat, setManualLat] = useState('');
+  const [manualLon, setManualLon] = useState('');
 
   // Parse city name parts properly handling 4+ parts
   const parseCityName = (displayName) => {
@@ -294,40 +373,70 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel, dataSource = 'city',
     setProvince(parsed.province);
     setCountry(parsed.country);
   
-    // Only set boundary from OSM if no boundary exists yet
-    // This prevents overwriting uploaded/drawn boundaries
-    if (!boundary) {
-      let boundaryData = null;
-      if (city.geojson && ['Polygon', 'MultiPolygon'].includes(city.geojson.type)) {
-        boundaryData = city.geojson;
-      } else if (city.osm_type === 'relation' && city.osm_id) {
-        try {
-          boundaryData = await fetchOSMBoundary(city.osm_id);
-        } catch (error) {
-          console.error('Error fetching boundary:', error);
-        }
-      }
-  
-      if (boundaryData) {
-        setBoundary(boundaryData);
+    // Always fetch and set boundary from OSM when selecting a city
+    // This replaces any previously drawn/uploaded boundaries
+    let boundaryData = null;
+    if (city.geojson && ['Polygon', 'MultiPolygon'].includes(city.geojson.type)) {
+      boundaryData = city.geojson;
+    } else if (city.osm_type === 'relation' && city.osm_id) {
+      try {
+        boundaryData = await fetchOSMBoundary(city.osm_id);
+      } catch (error) {
+        console.error('Error fetching boundary:', error);
       }
     }
   
-    // Fetch Wikipedia data with URL
-    setWikiLoading(true);
-    try {
-      const wikiResult = await fetchWikipediaData(city.display_name);
-      setWikiData({
-        population: wikiResult.population,
-        size: wikiResult.size
-      });
-      setWikipediaUrl(wikiResult.url || null);
-    } catch (error) {
-      console.error('Error fetching Wikipedia data:', error);
-      setWikiData({ population: null, size: null });
-      setWikipediaUrl(null);
-    } finally {
-      setWikiLoading(false);
+    // Set the new boundary (or null if not available)
+    setBoundary(boundaryData);
+    
+    // Clear any drawn layers
+    if (drawRef.current) {
+      drawRef.current.clearLayers();
+    }
+  };
+
+  const handleCenterMap = () => {
+    if (!manualLat || !manualLon) {
+      alert('Please enter both latitude and longitude');
+      return;
+    }
+    
+    const lat = parseFloat(manualLat);
+    const lon = parseFloat(manualLon);
+    
+    if (isNaN(lat) || isNaN(lon)) {
+      alert('Please enter valid numeric coordinates');
+      return;
+    }
+    
+    if (lat < -90 || lat > 90 || lon < -180 || lon > 180) {
+      alert('Coordinates out of range. Latitude: -90 to 90, Longitude: -180 to 180');
+      return;
+    }
+    
+    if (mapRef.current) {
+      if (boundary) {
+        // If boundary exists, fit to boundary bounds
+        try {
+          const geoJsonLayer = L.geoJSON(boundary);
+          const bounds = geoJsonLayer.getBounds();
+          if (bounds.isValid()) {
+            mapRef.current.fitBounds(bounds, { 
+              padding: [50, 50],
+              maxZoom: 15
+            });
+          } else {
+            // Fallback to center if bounds invalid
+            mapRef.current.setView([lat, lon], 12);
+          }
+        } catch (error) {
+          console.error('Error fitting to boundary:', error);
+          mapRef.current.setView([lat, lon], 12);
+        }
+      } else {
+        // No boundary, just center at coordinates
+        mapRef.current.setView([lat, lon], 12);
+      }
     }
   };
 
@@ -972,6 +1081,20 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel, dataSource = 'city',
     }
   };
 
+  useEffect(() => {
+    if (step === 3 && boundary) {
+      const center = calculateBoundaryCenter(boundary);
+      if (center) {
+        setManualLat(center.lat);
+        setManualLon(center.lon);
+      }
+    } else if (step === 3 && selectedCity && !boundary) {
+      // If no boundary but city is selected, use city coordinates
+      setManualLat(selectedCity.lat);
+      setManualLon(selectedCity.lon);
+    }
+  }, [step, boundary, selectedCity]);
+
   const hasBoundaryChanged = () => {
     if (!editingCity || !originalBoundary || !boundary) {
       return true;
@@ -986,8 +1109,8 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel, dataSource = 'city',
   };
 
   const handleSubmit = async () => {
-    if (!cityName.trim() || !selectedCity || !boundary) {
-      alert('Please complete all required fields');
+    if (!cityName.trim() || !country.trim() || !boundary) {
+      alert('Please complete all required fields: City name, Country, and Boundary');
       return;
     }
   
@@ -1069,10 +1192,14 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel, dataSource = 'city',
       }
   
       // Calculate coordinates from the current boundary (uploaded/drawn)
-      // This ensures coordinates match the actual boundary being saved
       const center = calculateBoundaryCenter(boundary);
-      const finalLon = center ? parseFloat(center.lon) : parseFloat(selectedCity.lon);
-      const finalLat = center ? parseFloat(center.lat) : parseFloat(selectedCity.lat);
+      if (!center) {
+        alert('Could not calculate coordinates from boundary');
+        setIsProcessing(false);
+        return;
+      }
+      const finalLon = parseFloat(center.lon);
+      const finalLat = parseFloat(center.lat);
   
       const cityData = {
         name: fullName,
@@ -1181,10 +1308,41 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel, dataSource = 'city',
     }
   };
   
-  const nextStep = () => setStep(step + 1);
+  const nextStep = async () => {
+    // Fetch Wikipedia data when moving to step 2
+    if (step === 1) {
+      // Skip Wikipedia fetch if editing city and data already exists
+      if (editingCity && (wikiData.population || wikiData.size)) {
+        console.log('Editing city - keeping existing population/size data');
+        setStep(step + 1);
+        return;
+      }
+      
+      const searchQuery = [cityName, province, country].filter(Boolean).join(', ');
+      setWikiLoading(true);
+      
+      try {
+        const wikiResult = await fetchWikipediaData(searchQuery);
+        setWikiData({
+          population: wikiResult.population,
+          size: wikiResult.size
+        });
+        setWikipediaUrl(wikiResult.url || null);
+      } catch (error) {
+        console.error('Error fetching Wikipedia data:', error);
+        setWikiData({ population: null, size: null });
+        setWikipediaUrl(null);
+      } finally {
+        setWikiLoading(false);
+      }
+    }
+    
+    setStep(step + 1);
+  };
+
   const prevStep = () => setStep(step - 1);
 
-  const mapCenter = selectedCity ? [parseFloat(selectedCity.lat), parseFloat(selectedCity.lon)] : [51.505, -0.09];
+  const mapCenter = selectedCity ? [parseFloat(selectedCity.lat), parseFloat(selectedCity.lon)] : [20, 0];
 
   return (
     <motion.div
@@ -1215,7 +1373,42 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel, dataSource = 'city',
                 type="text"
                 placeholder="City name *"
                 value={cityName}
-                onChange={(e) => setCityName(e.target.value)}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  const cursorPosition = e.target.selectionStart;
+                  const prevValue = cityName;
+                  
+                  // Check if this is a deletion or manual edit
+                  if (value.length < prevValue.length) {
+                    // User is deleting, allow it
+                    setCityName(value);
+                    return;
+                  }
+                  
+                  // Check if user manually changed capitalization (by selecting and retyping)
+                  if (cursorPosition > 1 && value.length === prevValue.length) {
+                    // This is a replacement, not an addition - allow manual edit
+                    setCityName(value);
+                    return;
+                  }
+                  
+                  // Auto-capitalize first letter or letter after space
+                  if (cursorPosition === 1 || (cursorPosition > 1 && value[cursorPosition - 2] === ' ')) {
+                    const char = value[cursorPosition - 1];
+                    if (char && char === char.toLowerCase() && char !== char.toUpperCase()) {
+                      const capitalized = value.slice(0, cursorPosition - 1) + 
+                                        char.toUpperCase() + 
+                                        value.slice(cursorPosition);
+                      setCityName(capitalized);
+                      setTimeout(() => {
+                        e.target.setSelectionRange(cursorPosition, cursorPosition);
+                      }, 0);
+                      return;
+                    }
+                  }
+                  
+                  setCityName(value);
+                }}
                 className="form-input"
               />
             </div>
@@ -1224,16 +1417,86 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel, dataSource = 'city',
                 type="text"
                 placeholder="Province/State"
                 value={province}
-                onChange={(e) => setProvince(e.target.value)}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  const cursorPosition = e.target.selectionStart;
+                  const prevValue = province;
+                  
+                  // Check if this is a deletion or manual edit
+                  if (value.length < prevValue.length) {
+                    // User is deleting, allow it
+                    setProvince(value);
+                    return;
+                  }
+                  
+                  // Check if user manually changed capitalization (by selecting and retyping)
+                  if (cursorPosition > 1 && value.length === prevValue.length) {
+                    // This is a replacement, not an addition - allow manual edit
+                    setProvince(value);
+                    return;
+                  }
+                  
+                  // Auto-capitalize first letter or letter after space
+                  if (cursorPosition === 1 || (cursorPosition > 1 && value[cursorPosition - 2] === ' ')) {
+                    const char = value[cursorPosition - 1];
+                    if (char && char === char.toLowerCase() && char !== char.toUpperCase()) {
+                      const capitalized = value.slice(0, cursorPosition - 1) + 
+                                        char.toUpperCase() + 
+                                        value.slice(cursorPosition);
+                      setProvince(capitalized);
+                      setTimeout(() => {
+                        e.target.setSelectionRange(cursorPosition, cursorPosition);
+                      }, 0);
+                      return;
+                    }
+                  }
+                  
+                  setProvince(value);
+                }}
                 className="form-input"
               />
             </div>
             <div className="form-group">
               <input
                 type="text"
-                placeholder="Country"
+                placeholder="Country *"
                 value={country}
-                onChange={(e) => setCountry(e.target.value)}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  const cursorPosition = e.target.selectionStart;
+                  const prevValue = country;
+                  
+                  // Check if this is a deletion or manual edit
+                  if (value.length < prevValue.length) {
+                    // User is deleting, allow it
+                    setCountry(value);
+                    return;
+                  }
+                  
+                  // Check if user manually changed capitalization (by selecting and retyping)
+                  if (cursorPosition > 1 && value.length === prevValue.length) {
+                    // This is a replacement, not an addition - allow manual edit
+                    setCountry(value);
+                    return;
+                  }
+                  
+                  // Auto-capitalize first letter or letter after space
+                  if (cursorPosition === 1 || (cursorPosition > 1 && value[cursorPosition - 2] === ' ')) {
+                    const char = value[cursorPosition - 1];
+                    if (char && char === char.toLowerCase() && char !== char.toUpperCase()) {
+                      const capitalized = value.slice(0, cursorPosition - 1) + 
+                                        char.toUpperCase() + 
+                                        value.slice(cursorPosition);
+                      setCountry(capitalized);
+                      setTimeout(() => {
+                        e.target.setSelectionRange(cursorPosition, cursorPosition);
+                      }, 0);
+                      return;
+                    }
+                  }
+                  
+                  setCountry(value);
+                }}
                 className="form-input"
               />
             </div>
@@ -1258,63 +1521,165 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel, dataSource = 'city',
             </motion.button>
 
             {osmSuggestions.length > 0 && (
-              <div className="suggestions">
-                <h4>Select a city:</h4>
-                {osmSuggestions.map((city) => (
-                  <motion.div
-                    key={city.place_id}
-                    className={`suggestion ${selectedCity?.place_id === city.place_id ? 'selected' : ''}`}
-                    onClick={() => handleSelectCity(city)}
-                    whileHover={{ backgroundColor: '#f0f9ff' }}
+              <div className="suggestions" key={selectedCity?.place_id || 'no-selection'}>
+                <div className="suggestions-header">
+                  <h4>Select a city:</h4>
+                  <a
+                    href={`https://www.openstreetmap.org/search?query=${encodeURIComponent(
+                      [cityName, province, country].filter(Boolean).join(', ')
+                    )}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="osm-link"
+                    onClick={(e) => e.stopPropagation()}
                   >
-                    {city.display_name}
-                  </motion.div>
-                ))}
+                    <i className="fas fa-map-marked-alt"></i>
+                    View on OpenStreetMap
+                    <i className="fas fa-external-link-alt"></i>
+                  </a>
+                </div>
+                {osmSuggestions.map((city) => {
+                  let geometryType = 'point';
+                  let geometryIcon = 'fa-map-pin';
+                  let geometryColor = '#94a3b8';
+                  
+                  if (city.geojson) {
+                    if (city.geojson.type === 'Polygon') {
+                      geometryType = 'polygon';
+                      geometryIcon = 'fa-draw-polygon';
+                      geometryColor = '#10b981';
+                    } else if (city.geojson.type === 'MultiPolygon') {
+                      geometryType = 'multipolygon';
+                      geometryIcon = 'fa-layer-group';
+                      geometryColor = '#0891b2';
+                    }
+                  }
+                  
+                  return (
+                    <motion.div
+                      key={city.place_id}
+                      className={`suggestion ${selectedCity?.place_id === city.place_id ? 'selected' : ''}`}
+                      onClick={() => handleSelectCity(city)}
+                      whileHover={{ backgroundColor: '#f0f9ff' }}
+                    >
+                      <div className="suggestion-content">
+                        <span className="suggestion-name">{city.display_name}</span>
+                        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                          {city.type && (
+                            <span 
+                              className="type-badge"
+                              title={`Place type: ${city.type}`}
+                            >
+                              {city.type}
+                            </span>
+                          )}
+                          <span 
+                            className="geometry-badge"
+                            style={{ color: geometryColor, borderColor: geometryColor }}
+                            title={`Geometry type: ${geometryType}`}
+                          >
+                            <i className={`fas ${geometryIcon}`}></i>
+                            {geometryType}
+                          </span>
+                        </div>
+                      </div>
+                    </motion.div>
+                  );
+                })}
               </div>
             )}
           </div>
         )}
-
-        {step === 2 && selectedCity && (
+  
+        {step === 2 && (
           <div className="step-content">
             <h3>City Details</h3>
-            <div className="city-info">
-              <h4>{selectedCity.display_name}</h4>
-              <p>Lat: {selectedCity.lat}, Lon: {selectedCity.lon}</p>
-            </div>
             <div className="form-group">
               <label>Population</label>
               <input
-                type="number"
+                type="text"
                 placeholder="Population"
                 value={wikiData.population || ''}
                 onChange={(e) => setWikiData({ ...wikiData, population: e.target.value })}
+                onKeyDown={(e) => {
+                  // Allow: backspace, delete, tab, escape, enter, arrows
+                  if (['Backspace', 'Delete', 'Tab', 'Escape', 'Enter', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) {
+                    return;
+                  }
+                  // Allow: Ctrl+A, Ctrl+C, Ctrl+V, Ctrl+X (and Cmd on Mac)
+                  if ((e.ctrlKey || e.metaKey) && ['a', 'c', 'v', 'x', 'A', 'C', 'V', 'X'].includes(e.key)) {
+                    return;
+                  }
+                  // Ensure that it is a number and stop the keypress if not
+                  if (!/^[0-9]$/.test(e.key)) {
+                    e.preventDefault();
+                  }
+                }}
+                onPaste={(e) => {
+                  e.preventDefault();
+                  const pastedText = e.clipboardData.getData('text');
+                  const numbersOnly = pastedText.replace(/[^0-9]/g, '');
+                  setWikiData({ ...wikiData, population: numbersOnly });
+                }}
                 className="form-input"
               />
-              {wikiLoading && (
-                <div className="loading-indicator">
-                  <i className="fas fa-spinner fa-spin"></i>
-                  Fetching from Wikipedia...
-                </div>
-              )}
             </div>
             <div className="form-group">
               <label>Size (km²)</label>
               <input
-                type="number"
-                step="0.01"
+                type="text"
                 placeholder="Area in km²"
                 value={wikiData.size || ''}
                 onChange={(e) => setWikiData({ ...wikiData, size: e.target.value })}
+                onKeyDown={(e) => {
+                  // Allow: backspace, delete, tab, escape, enter, arrows
+                  if (['Backspace', 'Delete', 'Tab', 'Escape', 'Enter', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) {
+                    return;
+                  }
+                  // Allow: Ctrl+A, Ctrl+C, Ctrl+V, Ctrl+X (and Cmd on Mac)
+                  if ((e.ctrlKey || e.metaKey) && ['a', 'c', 'v', 'x', 'A', 'C', 'V', 'X'].includes(e.key)) {
+                    return;
+                  }
+                  // Allow decimal point (only one)
+                  if (e.key === '.' && !e.target.value.includes('.')) {
+                    return;
+                  }
+                  // Ensure that it is a number and stop the keypress if not
+                  if (!/^[0-9]$/.test(e.key)) {
+                    e.preventDefault();
+                  }
+                }}
+                onPaste={(e) => {
+                  e.preventDefault();
+                  const pastedText = e.clipboardData.getData('text');
+                  // Keep numbers and one decimal point
+                  let cleaned = pastedText.replace(/[^0-9.]/g, '');
+                  // Ensure only one decimal point
+                  const parts = cleaned.split('.');
+                  if (parts.length > 2) {
+                    cleaned = parts[0] + '.' + parts.slice(1).join('');
+                  }
+                  setWikiData({ ...wikiData, size: cleaned });
+                }}
                 className="form-input"
               />
             </div>
+
+            {wikiLoading && (
+              <div className="loading-indicator">
+                <i className="fas fa-spinner fa-spin"></i>
+                Fetching from Wikipedia...
+              </div>
+            )}
             
             {wikipediaUrl && (
               <div style={{ 
                 marginTop: '20px', 
                 paddingTop: '15px', 
-                borderTop: '1px solid #e5e7eb' 
+                borderTop: '1px solid #e5e7eb',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center'
               }}>
                 <a 
                   href={wikipediaUrl} 
@@ -1336,14 +1701,102 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel, dataSource = 'city',
                   View Wikipedia page
                   <i className="fas fa-external-link-alt" style={{ fontSize: '12px' }}></i>
                 </a>
+                
+                <button
+                  onClick={async () => {
+                    const searchQuery = [cityName, province, country].filter(Boolean).join(', ');
+                    setWikiLoading(true);
+                    try {
+                      const wikiResult = await fetchWikipediaData(searchQuery);
+                      setWikiData({
+                        population: wikiResult.population,
+                        size: wikiResult.size
+                      });
+                      setWikipediaUrl(wikiResult.url || null);
+                    } catch (error) {
+                      console.error('Error fetching Wikipedia data:', error);
+                    } finally {
+                      setWikiLoading(false);
+                    }
+                  }}
+                  disabled={wikiLoading}
+                  style={{
+                    background: wikiLoading ? '#e2e8f0' : 'linear-gradient(135deg, #0891b2 0%, #06b6d4 100%)',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '6px',
+                    padding: '8px 16px',
+                    cursor: wikiLoading ? 'not-allowed' : 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    fontSize: '13px',
+                    fontWeight: '600',
+                    transition: 'all 0.2s'
+                  }}
+                  onMouseOver={(e) => {
+                    if (!wikiLoading) {
+                      e.currentTarget.style.background = 'linear-gradient(135deg, #0e7490 0%, #0891b2 100%)';
+                      e.currentTarget.style.transform = 'translateY(-1px)';
+                    }
+                  }}
+                  onMouseOut={(e) => {
+                    if (!wikiLoading) {
+                      e.currentTarget.style.background = 'linear-gradient(135deg, #0891b2 0%, #06b6d4 100%)';
+                      e.currentTarget.style.transform = 'translateY(0)';
+                    }
+                  }}
+                >
+                  <i className={`fas ${wikiLoading ? 'fa-spinner fa-spin' : 'fa-sync-alt'}`}></i>
+                  {wikiLoading ? 'Refreshing...' : 'Refresh'}
+                </button>
               </div>
             )}
           </div>
         )}
 
-        {step === 3 && selectedCity && (
+        {step === 3 && (
           <div className="step-content">
             <h3>Define City Boundary</h3>
+            
+            {/* Manual coordinate input for centering map */}
+            <div className="coordinate-input-section">
+              <div className="coordinate-inputs">
+                <div className="form-group coordinate-field">
+                  <label>Latitude</label>
+                  <input
+                    type="number"
+                    step="0.000001"
+                    placeholder="e.g., 43.7177"
+                    value={manualLat}
+                    onChange={(e) => setManualLat(e.target.value)}
+                    className="form-input"
+                  />
+                </div>
+                <div className="form-group coordinate-field">
+                  <label>Longitude</label>
+                  <input
+                    type="number"
+                    step="0.000001"
+                    placeholder="e.g., -79.3763"
+                    value={manualLon}
+                    onChange={(e) => setManualLon(e.target.value)}
+                    className="form-input"
+                  />
+                </div>
+                <motion.button
+                  className="center-map-btn"
+                  onClick={handleCenterMap}
+                  disabled={!manualLat || !manualLon}
+                  whileHover={{ scale: (!manualLat || !manualLon) ? 1 : 1.02 }}
+                  whileTap={{ scale: (!manualLat || !manualLon) ? 1 : 0.98 }}
+                >
+                  <i className="fas fa-crosshairs"></i>
+                  Center Map
+                </motion.button>
+              </div>
+            </div>
+            
             {uploadError && (
               <div className="error-message" style={{ 
                 backgroundColor: '#fee', 
@@ -1380,7 +1833,7 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel, dataSource = 'city',
               <MapContainer
                 ref={mapRef}
                 center={mapCenter}
-                zoom={12}
+                zoom={selectedCity ? 12 : 2}
                 style={{ height: '400px', width: '100%' }}
               >
                 <TileLayer
@@ -1424,6 +1877,36 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel, dataSource = 'city',
               <p className="boundary-help">
                 Draw a polygon on the map or upload a GeoJSON file to define the city boundary.
               </p>
+            )}
+
+            {/* OpenStreetMap boundary link */}
+            {selectedCity && selectedCity.osm_type && selectedCity.osm_id && (
+              <div style={{ 
+                marginTop: '20px', 
+                paddingTop: '15px', 
+                borderTop: '1px solid #e5e7eb' 
+              }}>
+                <a 
+                  href={`https://www.openstreetmap.org/${selectedCity.osm_type}/${selectedCity.osm_id}`}
+                  target="_blank" 
+                  rel="noopener noreferrer"
+                  style={{
+                    color: '#0891b2',
+                    textDecoration: 'none',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    fontSize: '14px',
+                    fontWeight: '500'
+                  }}
+                  onMouseOver={(e) => e.currentTarget.style.textDecoration = 'underline'}
+                  onMouseOut={(e) => e.currentTarget.style.textDecoration = 'none'}
+                >
+                  <i className="fas fa-map-marked-alt"></i>
+                  View boundary on OpenStreetMap
+                  <i className="fas fa-external-link-alt" style={{ fontSize: '12px' }}></i>
+                </a>
+              </div>
             )}
             
             {/* Feature processing checkbox */}
@@ -1513,7 +1996,7 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel, dataSource = 'city',
 
       <div className="wizard-footer">
         <div className="footer-buttons">
-          {step > 1 && (
+          {step > 1 ? (
             <motion.button
               className="btn btn-secondary"
               onClick={prevStep}
@@ -1523,12 +2006,14 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel, dataSource = 'city',
               <i className="fas fa-arrow-left"></i>
               Previous
             </motion.button>
+          ) : (
+            <div></div>
           )}
           {step < 3 ? (
             <motion.button
               className="btn btn-primary"
               onClick={nextStep}
-              disabled={step === 1 && !selectedCity}
+              disabled={step === 1 && (!cityName.trim() || !country.trim())}
               whileHover={{ scale: 1.02 }}
               whileTap={{ scale: 0.98 }}
             >
