@@ -122,12 +122,28 @@ const Header = ({
       const population = city.population ? city.population.toString() : '';
       const size = city.size ? city.size.toString() : '';
 
+      // Determine status for search
+      const hasDataLayers = cityDataStatus ? cityDataStatus[city.name] : false;
+      const processingKey = `${city.name}@${dataSource}`;
+      const progress = processingProgress?.[processingKey];
+      const isProcessing = progress && 
+                          progress.status === 'processing' && 
+                          progress.dataSource === dataSource;
+      
+      let status = 'pending';
+      if (isProcessing) {
+        status = 'processing';
+      } else if (hasDataLayers) {
+        status = 'ready';
+      }
+
       return (
         cityName.includes(query) ||
         province.includes(query) ||
         country.includes(query) ||
         population.includes(query) ||
-        size.includes(query)
+        size.includes(query) ||
+        status.includes(query)
       );
     });
   };
@@ -135,7 +151,7 @@ const Header = ({
   const sortCities = (citiesToSort) => {
     return [...citiesToSort].sort((a, b) => {
       let compareA, compareB;
-
+  
       switch (sortBy) {
         case 'name':
           compareA = parseCityName(a.name).city.toLowerCase();
@@ -157,14 +173,44 @@ const Header = ({
           compareA = a.size || 0;
           compareB = b.size || 0;
           break;
+        case 'status':
+          // Determine status for each city
+          const getStatusOrder = (city) => {
+            const hasDataLayers = cityDataStatus ? cityDataStatus[city.name] : false;
+            const processingKey = `${city.name}@${dataSource}`;
+            const progress = processingProgress?.[processingKey];
+            const isProcessing = progress && 
+                                progress.status === 'processing' && 
+                                progress.dataSource === dataSource;
+            
+            if (isProcessing) return 1; // processing
+            if (hasDataLayers) return 0; // ready
+            return 2; // pending
+          };
+          
+          compareA = getStatusOrder(a);
+          compareB = getStatusOrder(b);
+          break;
         default:
           compareA = a.name.toLowerCase();
           compareB = b.name.toLowerCase();
       }
-
-      if (compareA < compareB) return sortOrder === 'asc' ? -1 : 1;
-      if (compareA > compareB) return sortOrder === 'asc' ? 1 : -1;
-      return 0;
+  
+      // Primary sort
+      let primaryCompare = 0;
+      if (compareA < compareB) primaryCompare = sortOrder === 'asc' ? -1 : 1;
+      else if (compareA > compareB) primaryCompare = sortOrder === 'asc' ? 1 : -1;
+      
+      // If primary sort values are equal, secondary sort by city name
+      if (primaryCompare === 0) {
+        const nameA = parseCityName(a.name).city.toLowerCase();
+        const nameB = parseCityName(b.name).city.toLowerCase();
+        if (nameA < nameB) return -1;
+        if (nameA > nameB) return 1;
+        return 0;
+      }
+      
+      return primaryCompare;
     });
   };
 
@@ -297,6 +343,12 @@ const Header = ({
                         onClick={() => handleSortChange('size')}
                       >
                         Size {sortBy === 'size' && <i className={`fas fa-chevron-${sortOrder === 'asc' ? 'up' : 'down'}`}></i>}
+                      </button>
+                      <button
+                        className={`sort-btn ${sortBy === 'status' ? 'active' : ''}`}
+                        onClick={() => handleSortChange('status')}
+                      >
+                        Status {sortBy === 'status' && <i className={`fas fa-chevron-${sortOrder === 'asc' ? 'up' : 'down'}`}></i>}
                       </button>
                     </div>
 

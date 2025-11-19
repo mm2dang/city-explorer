@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import './styles/App.css';
 import Header from './components/Header';
-import Sidebar from './components/Sidebar';
+import LayerSidebar from './components/LayerSidebar';
 import MapViewer from './components/MapViewer';
 import AddCityWizard from './components/AddCityWizard';
 import LayerModal from './components/LayerModal';
@@ -42,6 +42,16 @@ function App() {
   const [isCalculatingIndicators, setIsCalculatingIndicators] = useState(false);
   const [connectivityProgress, setConnectivityProgress] = useState(null);
   const [isCalculatingConnectivity, setIsCalculatingConnectivity] = useState(false);
+  const [windowWidth, setWindowWidth] = useState(window.innerWidth);
+
+  // Initialize sidebar states based on screen size
+  const [isLayerSidebarCollapsed, setIsLayerSidebarCollapsed] = useState(() => {
+    return window.innerWidth <= 1200;
+  });
+  
+  const [isIndicatorsSidebarCollapsed, setIsIndicatorsSidebarCollapsed] = useState(() => {
+    return window.innerWidth <= 1200;
+  });
 
   // Domain colors for consistent styling
   const domainColors = {
@@ -95,6 +105,53 @@ function App() {
     // Make cities available globally
     window.citiesData = cities;
   }, [cities]);
+
+  // Track window size
+  useEffect(() => {
+    const handleResize = () => setWindowWidth(window.innerWidth);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  // Auto-collapse both sidebars when screen becomes small
+  useEffect(() => {
+    const handleResize = () => {
+      const isSmallScreen = window.innerWidth <= 1200;
+      
+      // If transitioning to small screen and both sidebars are open, close both
+      if (isSmallScreen && !isLayerSidebarCollapsed && !isIndicatorsSidebarCollapsed) {
+        console.log('Screen became small with both sidebars open - closing both');
+        setIsLayerSidebarCollapsed(true);
+        setIsIndicatorsSidebarCollapsed(true);
+      }
+    };
+
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, [isLayerSidebarCollapsed, isIndicatorsSidebarCollapsed]);
+
+  // Handle sidebar toggle with mutual exclusion on small screens
+  const handleSidebarToggle = (sidebar) => {
+    const isSmallScreen = windowWidth <= 1200;
+    
+    if (sidebar === 'layer') {
+      const newCollapsed = !isLayerSidebarCollapsed;
+      setIsLayerSidebarCollapsed(newCollapsed);
+      
+      // On small screens, if expanding main sidebar, collapse indicators sidebar
+      if (isSmallScreen && !newCollapsed && !isIndicatorsSidebarCollapsed) {
+        setIsIndicatorsSidebarCollapsed(true);
+      }
+    } else if (sidebar === 'indicators') {
+      const newCollapsed = !isIndicatorsSidebarCollapsed;
+      setIsIndicatorsSidebarCollapsed(newCollapsed);
+      
+      // On small screens, if expanding indicators sidebar, collapse main sidebar
+      if (isSmallScreen && !newCollapsed && !isLayerSidebarCollapsed) {
+        setIsLayerSidebarCollapsed(true);
+      }
+    }
+  };
 
   const loadCities = async () => {
     setIsLoading(true);
@@ -1053,7 +1110,7 @@ function App() {
         onMapViewChange={handleMapViewChange}
       />
       <div className="main-content">
-      <Sidebar
+      <LayerSidebar
         selectedCity={selectedCity}
         cityBoundary={selectedCity?.boundary}
         activeLayers={activeLayers}
@@ -1149,6 +1206,8 @@ function App() {
         onCityStatusChange={handleCityStatusChange}
         dataSource={dataSource}
         onCitySelect={handleCitySelect}
+        isSidebarCollapsed={isLayerSidebarCollapsed}
+        onToggleCollapse={() => handleSidebarToggle('layer')}
       />
       <MapViewer
         selectedCity={selectedCity}
@@ -1172,6 +1231,8 @@ function App() {
         onCancelConnectivity={cancelConnectivityCalculation}
         onConnectivityProgressUpdate={setConnectivityProgress}
         onConnectivityStateChange={setIsCalculatingConnectivity}
+        isCollapsed={isIndicatorsSidebarCollapsed}
+        onToggleCollapse={() => handleSidebarToggle('indicators')}
       />
     </div>
 

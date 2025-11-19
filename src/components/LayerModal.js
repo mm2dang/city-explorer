@@ -77,6 +77,71 @@ const layerDefs = {
   ],
 };
 
+const CenterMapControl = L.Control.extend({
+  options: { position: 'topleft' },
+
+  onAdd: function(map) {
+    const container = L.DomUtil.create('div', 'leaflet-bar leaflet-control leaflet-control-custom');
+    container.style.background = 'rgba(255, 255, 255, 0.95)';
+    container.style.backdropFilter = 'blur(10px)';
+    container.style.border = '1px solid rgba(226, 232, 240, 0.8)';
+    container.style.color = '#374151';
+    container.style.fontSize = '18px';
+    container.style.width = '34px';
+    container.style.height = '34px';
+    container.style.lineHeight = '32px';
+    container.style.borderRadius = '8px';
+    container.style.margin = '2px';
+    container.style.display = 'flex';
+    container.style.alignItems = 'center';
+    container.style.justifyContent = 'center';
+    container.style.cursor = 'pointer';
+    container.style.transition = 'all 0.2s';
+    container.style.position = 'relative';
+    container.style.left = '10px';
+    container.innerHTML = '<i class="fas fa-expand-arrows-alt" style="font-size: 16px; color: #374151; transition: color 0.2s;"></i>';
+    
+    container.onmouseover = () => {
+      container.style.background = 'white';
+      container.style.color = '#0891b2';
+      container.style.transform = 'scale(1.05)';
+      container.querySelector('i').style.color = '#0891b2';
+    };
+    container.onmouseout = () => {
+      container.style.background = 'rgba(255, 255, 255, 0.95)';
+      container.style.color = '#374151';
+      container.style.transform = 'scale(1)';
+      container.querySelector('i').style.color = '#374151';
+    };
+
+    L.DomEvent.disableClickPropagation(container);
+
+    container.onclick = () => {
+      const mapContainer = map.getContainer();
+      const boundaryData = mapContainer.dataset.boundary;
+      
+      if (boundaryData) {
+        try {
+          const boundary = JSON.parse(boundaryData);
+          const geoJsonLayer = L.geoJSON(boundary);
+          const bounds = geoJsonLayer.getBounds();
+          if (bounds.isValid()) {
+            map.fitBounds(bounds, { padding: [50, 50], maxZoom: 15 });
+            return;
+          }
+        } catch (error) {
+          console.error('Error fitting to boundary:', error);
+        }
+      }
+      
+      // Fallback to world view if no boundary
+      map.setView([20, 0], 2);
+    };
+
+    return container;
+  }
+});
+
 const LayerModal = ({
   isOpen,
   onClose,
@@ -121,10 +186,38 @@ const LayerModal = ({
   const [osmTags, setOsmTags] = useState([{ key: '', value: '' }]);
   const [isFetchingOSM, setIsFetchingOSM] = useState(false);
   const [allCityFeatures, setAllCityFeatures] = useState([]);
+  const [showDomainDropdown, setShowDomainDropdown] = useState(false);
+  const [showLayerDropdown, setShowLayerDropdown] = useState(false);
+
+  // Scroll to top of modal when step changes
+  useEffect(() => {
+    const modalContent = document.querySelector('.layer-form');
+    if (modalContent) {
+      modalContent.scrollTo({
+        top: 0,
+        behavior: 'smooth'
+      });
+    }
+  }, [step]);
 
   useEffect(() => {
     console.log('LayerModal received mapView prop:', mapView);
   }, [mapView]);
+
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (showDomainDropdown && !event.target.closest('.domain-dropdown-wrapper')) {
+        setShowDomainDropdown(false);
+      }
+      if (showLayerDropdown && !event.target.closest('.layer-dropdown-wrapper')) {
+        setShowLayerDropdown(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [showDomainDropdown, showLayerDropdown]);
 
   useEffect(() => {
     const loadAllFeatures = async () => {
@@ -1026,6 +1119,7 @@ const LayerModal = ({
       map.addLayer(centroidGroup);
       centroidGroupRef.current = centroidGroup;
       const drawControl = new L.Control.Draw({
+        position: 'topright',
         edit: {
           featureGroup: drawnItems,
           remove: true
@@ -1062,6 +1156,23 @@ const LayerModal = ({
         }
       });
       map.addControl(drawControl);
+      
+      // Add center control
+      const centerControl = new CenterMapControl();
+      map.addControl(centerControl);
+      
+      // Store boundary in map container for center control
+      if (cityBoundary) {
+        try {
+          const boundaryGeojson = typeof cityBoundary === 'string'
+            ? JSON.parse(cityBoundary)
+            : cityBoundary;
+          map.getContainer().dataset.boundary = JSON.stringify(boundaryGeojson);
+        } catch (error) {
+          console.error('Error storing boundary for center control:', error);
+        }
+      }
+
       features.forEach((feature, index) => {
         if (validateFeature(feature, index)) {
           if (feature.geometry.type === 'Point') {
@@ -1431,6 +1542,7 @@ const LayerModal = ({
       map.addLayer(centroidGroup);
       reviewCentroidGroupRef.current = centroidGroup;
       const drawControl = new L.Control.Draw({
+        position: 'topright',
         edit: {
           featureGroup: drawnItems,
           remove: true
@@ -1467,6 +1579,23 @@ const LayerModal = ({
         }
       });
       map.addControl(drawControl);
+      
+      // Add center control
+      const centerControl = new CenterMapControl();
+      map.addControl(centerControl);
+      
+      // Store boundary in map container for center control
+      if (cityBoundary) {
+        try {
+          const boundaryGeojson = typeof cityBoundary === 'string'
+            ? JSON.parse(cityBoundary)
+            : cityBoundary;
+          map.getContainer().dataset.boundary = JSON.stringify(boundaryGeojson);
+        } catch (error) {
+          console.error('Error storing boundary for center control:', error);
+        }
+      }
+
       features.forEach((feature, index) => {
         if (validateFeature(feature, index)) {
           if (feature.geometry.type === 'Point') {
@@ -2297,6 +2426,16 @@ useEffect(() => {
     return splitFeatures;
   };
 
+  useEffect(() => {
+    // Auto-select custom layer mode when no predefined layers are available
+    if (selectedDomain && predefinedLayers.length === 0 && !editingLayer && !isCustomLayer) {
+      setIsCustomLayer(true);
+      setCustomLayerName('');
+      setCustomLayerIcon('fas fa-map-marker-alt');
+      setNameError('');
+    }
+  }, [selectedDomain, predefinedLayers.length, editingLayer, isCustomLayer]);
+
   const handleFileUpload = async (e) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
@@ -3005,6 +3144,20 @@ useEffect(() => {
               <i className="fas fa-times"></i>
             </button>
           </div>
+
+          {/* Add this steps section */}
+          <div className="modal-steps">
+            <div className={`step ${step >= 1 ? 'active' : ''}`}>
+              1. Layer Details
+            </div>
+            <div className={`step ${step >= 2 ? 'active' : ''}`}>
+              2. Data Source
+            </div>
+            <div className={`step ${step >= 3 ? 'active' : ''}`}>
+              3. Add & Review
+            </div>
+          </div>
+
           {editingFeatureName !== null && (
             <div className="feature-name-editor">
               <h4>Edit Feature Name</h4>
@@ -3016,15 +3169,6 @@ useEffect(() => {
                 autoFocus
               />
               <div className="form-actions">
-                <button
-                  className="btn-secondary"
-                  onClick={() => {
-                    setEditingFeatureName(null);
-                    setFeatureNameInput('');
-                  }}
-                >
-                  Cancel
-                </button>
                 <button
                   className="btn-primary"
                   onClick={updateFeatureName}
@@ -3045,25 +3189,67 @@ useEffect(() => {
               <>
                 <div className="form-group">
                   <label>Select Domain *</label>
-                  <select
-                    value={selectedDomain}
-                    onChange={(e) => {
-                      const newDomain = e.target.value;
-                      setSelectedDomain(newDomain);
-                      setLayerName('');
-                      setIsCustomLayer(false);
-                      setCustomLayerName('');
-                      setCustomLayerIcon('fas fa-map-marker-alt');
-                      setNameError('');
-                    }}
-                  >
-                    <option value="">Choose a domain...</option>
-                    {Object.keys(domainIcons).map(domainKey => (
-                      <option key={domainKey} value={domainKey}>
-                        {formatDomainName(domainKey)}
-                      </option>
-                    ))}
-                  </select>
+                    <div className="domain-dropdown-wrapper">
+                      <button
+                        className="domain-selector-btn"
+                        onClick={() => setShowDomainDropdown(!showDomainDropdown)}
+                        type="button"
+                      >
+                        <div className="domain-selector-content">
+                          {selectedDomain ? (
+                            <>
+                              <div
+                                className="domain-icon-small"
+                                style={{ backgroundColor: `${currentDomainColor}15` }}
+                              >
+                                <i
+                                  className={domainIcons[selectedDomain]}
+                                  style={{ color: currentDomainColor }}
+                                />
+                              </div>
+                              <span>{formatDomainName(selectedDomain)}</span>
+                            </>
+                          ) : (
+                            <span className="placeholder">Choose a domain...</span>
+                          )}
+                        </div>
+                        <i className={`fas fa-chevron-${showDomainDropdown ? 'up' : 'down'}`}></i>
+                      </button>
+                      
+                      {showDomainDropdown && (
+                        <div className="domain-dropdown">
+                          {Object.keys(domainIcons).map(domainKey => (
+                            <div
+                              key={domainKey}
+                              className={`domain-option ${selectedDomain === domainKey ? 'selected' : ''}`}
+                              onClick={() => {
+                                setSelectedDomain(domainKey);
+                                setLayerName('');
+                                setIsCustomLayer(false);
+                                setCustomLayerName('');
+                                setCustomLayerIcon('fas fa-map-marker-alt');
+                                setNameError('');
+                                setShowDomainDropdown(false);
+                              }}
+                            >
+                              <div
+                                className="domain-icon-small"
+                                style={{ backgroundColor: `${domainColors[domainKey]}15` }}
+                              >
+                                <i
+                                  className={domainIcons[domainKey]}
+                                  style={{ color: domainColors[domainKey] }}
+                                />
+                              </div>
+                              <span className="domain-text">{formatDomainName(domainKey)}</span>
+                              {selectedDomain === domainKey && (
+                                <i className="fas fa-check"></i>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   <small>Select the domain category for this layer</small>
                 </div>
                 {selectedDomain && (
@@ -3073,41 +3259,99 @@ useEffect(() => {
                       {predefinedLayers.length === 0 && !editingLayer ? (
                         <div style={{ 
                           padding: '16px', 
-                          background: '#fef3c7', 
-                          border: '1px solid #fbbf24',
+                          background: '#e0f2fe', 
+                          border: '1px solid #0891b2',
                           borderRadius: '8px',
                           marginBottom: '12px'
                         }}>
-                          <p style={{ margin: 0, color: '#92400e', fontSize: '14px' }}>
+                          <p style={{ margin: 0, color: '#075985', fontSize: '14px' }}>
                             <i className="fas fa-info-circle" style={{ marginRight: '8px' }}></i>
-                            All predefined layers for this domain have been added. You can create a custom layer instead.
+                            All predefined layers for this domain have been added. Creating a custom layer...
                           </p>
                         </div>
-                      ) : null}
-                      <select
-                        value={isCustomLayer ? 'custom' : layerName}
-                        onChange={handleLayerSelection}
-                        disabled={!!editingLayer || predefinedLayers.length === 0}
-                      >
-                        <option value="">
-                          {predefinedLayers.length === 0 && !editingLayer 
-                            ? 'No available layers - create custom' 
-                            : 'Choose a layer...'}
-                        </option>
-                        {predefinedLayers.map(layer => (
-                          <option key={layer.name} value={layer.name}>
-                            {layer.name.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
-                          </option>
-                        ))}
-                        <option value="custom">+ Add Custom Layer</option>
-                      </select>
-                      <small>
-                        {predefinedLayers.length === 0 && !editingLayer
-                          ? 'Create a custom layer with your own name and icon'
-                          : 'Select a predefined layer or create a custom one'}
-                      </small>
+                      ) : (
+                        <>
+                          <div className="layer-dropdown-wrapper">
+                            <button
+                              className="layer-selector-btn"
+                              onClick={() => !editingLayer && setShowLayerDropdown(!showLayerDropdown)}
+                              disabled={!!editingLayer}
+                              type="button"
+                            >
+                              <div className="layer-selector-content">
+                                {layerName || isCustomLayer ? (
+                                  <>
+                                    <div
+                                      className="layer-icon-small"
+                                      style={{ backgroundColor: `${currentDomainColor}15` }}
+                                    >
+                                      <i
+                                        className={isCustomLayer ? customLayerIcon : layerIcon}
+                                        style={{ color: currentDomainColor }}
+                                      />
+                                    </div>
+                                    <span>
+                                      {isCustomLayer 
+                                        ? 'Custom Layer'
+                                        : layerName.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())
+                                      }
+                                    </span>
+                                  </>
+                                ) : (
+                                  <span className="placeholder">Choose a layer...</span>
+                                )}
+                              </div>
+                              <i className={`fas fa-chevron-${showLayerDropdown ? 'up' : 'down'}`}></i>
+                            </button>
+                            
+                            {showLayerDropdown && (
+                              <div className="layer-dropdown">
+                                {predefinedLayers.map(layer => (
+                                  <div
+                                    key={layer.name}
+                                    className={`layer-option ${layerName === layer.name ? 'selected' : ''}`}
+                                    onClick={() => {
+                                      handleLayerSelection({ target: { value: layer.name } });
+                                      setShowLayerDropdown(false);
+                                    }}
+                                  >
+                                    <div
+                                      className="layer-icon-small"
+                                      style={{ backgroundColor: `${currentDomainColor}15` }}
+                                    >
+                                      <i
+                                        className={layer.icon}
+                                        style={{ color: currentDomainColor }}
+                                      />
+                                    </div>
+                                    <span className="layer-text">
+                                      {layer.name.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
+                                    </span>
+                                    {layerName === layer.name && (
+                                      <i className="fas fa-check"></i>
+                                    )}
+                                  </div>
+                                ))}
+                                <div
+                                  className="layer-option custom-option"
+                                  onClick={() => {
+                                    handleLayerSelection({ target: { value: 'custom' } });
+                                    setShowLayerDropdown(false);
+                                  }}
+                                >
+                                  <div className="layer-icon-small">
+                                    <i className="fas fa-plus" style={{ color: '#0891b2' }} />
+                                  </div>
+                                  <span className="layer-text">Add Custom Layer</span>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                          <small>Select a predefined layer or create a custom one</small>
+                        </>
+                      )}
                     </div>
-                    {isCustomLayer && (
+                    {(isCustomLayer || (predefinedLayers.length === 0 && !editingLayer)) && (
                       <>
                         <div className="form-group">
                           <label>Custom Layer Name *</label>
@@ -3138,21 +3382,9 @@ useEffect(() => {
                         </div>
                       </>
                     )}
-                    {!isCustomLayer && layerName && (
-                      <div className="form-group">
-                        <label>Selected Layer Icon</label>
-                        <div className="selected-icon-preview">
-                          <i className={layerIcon} style={{ fontSize: '24px', color: currentDomainColor }}></i>
-                          <span>{layerName.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}</span>
-                        </div>
-                      </div>
-                    )}
                   </>
                 )}
                 <div className="form-actions">
-                  <button className="btn-secondary" onClick={handleClose}>
-                    Cancel
-                  </button>
                   <button
                     className="btn-primary"
                     onClick={() => {
@@ -3204,7 +3436,7 @@ useEffect(() => {
                 </div>
                 <div className="form-actions">
                   <button className="btn-secondary" onClick={() => setStep(1)}>
-                    <i className="fas fa-arrow-left"></i> Back
+                    <i className="fas fa-arrow-left"></i> Previous
                   </button>
                   <button className="btn-primary" onClick={() => setStep(3)}>
                     Next <i className="fas fa-arrow-right"></i>
@@ -3357,7 +3589,7 @@ useEffect(() => {
                 )}
                 <div className="form-actions">
                   <button className="btn-secondary" onClick={() => setStep(2)}>
-                    <i className="fas fa-arrow-left"></i> Back
+                    <i className="fas fa-arrow-left"></i> Previous
                   </button>
                   {dataSource === 'draw' && (
                     <button
@@ -3365,7 +3597,7 @@ useEffect(() => {
                       onClick={handleSave}
                       disabled={features.length === 0}
                     >
-                      <i className="fas fa-save"></i> Save Layer
+                      <i className="fas fa-save"></i> Save
                     </button>
                   )}
                 </div>
@@ -3414,14 +3646,14 @@ useEffect(() => {
                       setStep(3);
                     }}
                   >
-                    <i className="fas fa-arrow-left"></i> Back
+                    <i className="fas fa-arrow-left"></i> Previous
                   </button>
                   <button
                     className="btn-primary"
                     onClick={handleSave}
                     disabled={features.length === 0}
                   >
-                    <i className="fas fa-save"></i> Save Layer
+                    <i className="fas fa-save"></i> Save
                   </button>
                 </div>
               </>

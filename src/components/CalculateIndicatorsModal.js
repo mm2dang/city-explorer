@@ -23,7 +23,7 @@ const CalculateIndicatorsModal = ({ cities, selectedCity, dataSource, onCancel, 
   const [cityStatusMap, setCityStatusMap] = useState(new Map());
   const [loadingStatus, setLoadingStatus] = useState(false);
 
-  const [sortBy, setSortBy] = useState('name');
+  const [sortBy, setSortBy] = useState('selected');
   const [sortOrder, setSortOrder] = useState('asc');
   const hasSetInitialCity = useRef(false);
 
@@ -123,7 +123,7 @@ const CalculateIndicatorsModal = ({ cities, selectedCity, dataSource, onCancel, 
     // Sort by selected field
     const sorted = [...citiesWithStatus].sort((a, b) => {
       let compareA, compareB;
-
+      
       switch (sortBy) {
         case 'name':
           compareA = parseCityName(a.name).city.toLowerCase();
@@ -148,17 +148,29 @@ const CalculateIndicatorsModal = ({ cities, selectedCity, dataSource, onCancel, 
           compareB = statusOrder[b.calculationStatus] || 0;
           break;
         case 'selected':
-          compareA = selectedCities.has(a.name) ? 1 : 0;
-          compareB = selectedCities.has(b.name) ? 1 : 0;
+          compareA = selectedCities.has(a.name) ? 0 : 1;
+          compareB = selectedCities.has(b.name) ? 0 : 1;
           break;
         default:
           compareA = a.name.toLowerCase();
           compareB = b.name.toLowerCase();
       }
-
-      if (compareA < compareB) return sortOrder === 'asc' ? -1 : 1;
-      if (compareA > compareB) return sortOrder === 'asc' ? 1 : -1;
-      return 0;
+      
+      // Primary sort
+      let primaryCompare = 0;
+      if (compareA < compareB) primaryCompare = sortOrder === 'asc' ? -1 : 1;
+      else if (compareA > compareB) primaryCompare = sortOrder === 'asc' ? 1 : -1;
+      
+      // If primary sort values are equal, secondary sort by city name
+      if (primaryCompare === 0) {
+        const nameA = parseCityName(a.name).city.toLowerCase();
+        const nameB = parseCityName(b.name).city.toLowerCase();
+        if (nameA < nameB) return -1;
+        if (nameA > nameB) return 1;
+        return 0;
+      }
+      
+      return primaryCompare;
     });
 
     return sorted;
@@ -400,7 +412,7 @@ const CalculateIndicatorsModal = ({ cities, selectedCity, dataSource, onCancel, 
             >
               {/* City Selection */}
               <div className="section">
-                <div className="section-header">
+                <div className="calculate-section-header">
                   <h3>Select Cities</h3>
                   <span className="city-count">
                     {selectedCities.size} of {filteredAndSortedCities.length} selected
@@ -428,34 +440,34 @@ const CalculateIndicatorsModal = ({ cities, selectedCity, dataSource, onCancel, 
                 </div>
 
                 {/* Sort Controls */}
-                <div className="sort-controls">
-                  <span className="sort-label">Sort by:</span>
+                <div className="modal-sort-controls">
+                  <span className="modal-sort-label">Sort by:</span>
                   <button
-                    className={`sort-btn ${sortBy === 'name' ? 'active' : ''}`}
+                    className={`modal-sort-btn ${sortBy === 'name' ? 'active' : ''}`}
                     onClick={() => handleSortChange('name')}
                   >
                     City {sortBy === 'name' && <i className={`fas fa-chevron-${sortOrder === 'asc' ? 'up' : 'down'}`}></i>}
                   </button>
                   <button
-                    className={`sort-btn ${sortBy === 'province' ? 'active' : ''}`}
+                    className={`modal-sort-btn ${sortBy === 'province' ? 'active' : ''}`}
                     onClick={() => handleSortChange('province')}
                   >
                     Province {sortBy === 'province' && <i className={`fas fa-chevron-${sortOrder === 'asc' ? 'up' : 'down'}`}></i>}
                   </button>
                   <button
-                    className={`sort-btn ${sortBy === 'country' ? 'active' : ''}`}
+                    className={`modal-sort-btn ${sortBy === 'country' ? 'active' : ''}`}
                     onClick={() => handleSortChange('country')}
                   >
                     Country {sortBy === 'country' && <i className={`fas fa-chevron-${sortOrder === 'asc' ? 'up' : 'down'}`}></i>}
                   </button>
                   <button
-                    className={`sort-btn ${sortBy === 'status' ? 'active' : ''}`}
+                    className={`modal-sort-btn ${sortBy === 'status' ? 'active' : ''}`}
                     onClick={() => handleSortChange('status')}
                   >
                     Status {sortBy === 'status' && <i className={`fas fa-chevron-${sortOrder === 'asc' ? 'up' : 'down'}`}></i>}
                   </button>
                   <button
-                    className={`sort-btn ${sortBy === 'selected' ? 'active' : ''}`}
+                    className={`modal-sort-btn ${sortBy === 'selected' ? 'active' : ''}`}
                     onClick={() => handleSortChange('selected')}
                   >
                     Selected {sortBy === 'selected' && <i className={`fas fa-chevron-${sortOrder === 'asc' ? 'up' : 'down'}`}></i>}
@@ -532,14 +544,6 @@ const CalculateIndicatorsModal = ({ cities, selectedCity, dataSource, onCancel, 
             </motion.button>
           )}
           <div className="footer-spacer"></div>
-          <motion.button
-            className="btn btn-secondary"
-            onClick={onCancel}
-            whileHover={{ scale: 1.02 }}
-            whileTap={{ scale: 0.98 }}
-          >
-            Cancel
-          </motion.button>
           {currentPage === 1 ? (
             <motion.button
               className="btn btn-primary"
@@ -567,7 +571,7 @@ const CalculateIndicatorsModal = ({ cities, selectedCity, dataSource, onCancel, 
               ) : (
                 <>
                   <i className="fas fa-calculator"></i>
-                  Calculate Indicators
+                  Calculate
                 </>
               )}
             </motion.button>

@@ -259,6 +259,16 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel, dataSource = 'city',
   const mapRef = useRef(null);
   const [manualLat, setManualLat] = useState('');
   const [manualLon, setManualLon] = useState('');
+  const wizardContentRef = useRef(null);
+
+  useEffect(() => {
+    if (wizardContentRef.current) {
+      wizardContentRef.current.scrollTo({
+        top: 0,
+        behavior: 'smooth'
+      });
+    }
+  }, [step]);
 
   // Parse city name parts properly handling 4+ parts
   const parseCityName = (displayName) => {
@@ -1364,7 +1374,7 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel, dataSource = 'city',
         <div className={`step ${step >= 3 ? 'active' : ''}`}>3. Boundary</div>
       </div>
 
-      <div className="wizard-content">
+      <div className="wizard-content" ref={wizardContentRef}>
         {step === 1 && (
           <div className="step-content">
             <h3>Search for a City</h3>
@@ -2031,12 +2041,12 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel, dataSource = 'city',
               {isProcessing ? (
                 <>
                   <i className="fas fa-spinner fa-spin"></i>
-                  {editingCity ? 'Updating...' : 'Adding...'}
+                  {editingCity ? 'Updating...' : 'Saving...'}
                 </>
               ) : (
                 <>
                   <i className="fas fa-check"></i>
-                  {editingCity ? 'Update City' : 'Add City'}
+                  {editingCity ? 'Update' : 'Save'}
                 </>
               )}
             </motion.button>

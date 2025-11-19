@@ -14,36 +14,37 @@ cityexplorer/
 │   ├── assets/
 │   │   └── confetti.js
 │   ├── components/
-│   │   ├── Header.js                        # City selector and status display
-│   │   ├── Sidebar.js                       # Domain and layer controls
-│   │   ├── IndicatorsSidebar.js             # Mobile ping indicator controls
-│   │   ├── CalculateIndicatorsModal.js      # Indicator parameter controls
-│   │   ├── MapViewer.js                     # Leaflet map with clustering
 │   │   ├── AddCityWizard.js                 # Multi-step city creation wizard
+│   │   ├── CalculateIndicatorsModal.js      # Indicator parameter controls
+│   │   ├── Header.js                        # City selector and status display
+│   │   ├── IndicatorsSidebar.js             # Mobile ping indicator controls
+│   │   ├── LayerModal.js                    # Add / edit layer wizard
+│   │   ├── LayerSidebar.js                  # Domain and layer controls
 │   │   ├── LayerToggle.js                   # Individual layer toggle component
-│   │   └── LayerModal.js                    # Add / edit layer wizard
+│   │   └── MapViewer.js                     # Leaflet map with clustering
 │   ├── utils/
-│   │   ├── s3.js                            # AWS S3 operations and data processing
-│   │   ├── indicators.js                    # AWS mobile ping data operations
 │   │   ├── connectivity.js                  # Calculate connectivity metrics
+│   │   ├── exportUtils.js                   # Export layers to local computer
+│   │   ├── indicators.js                    # AWS mobile ping data operations
 │   │   ├── osm.js                           # OpenStreetMap and Wikipedia API calls
 │   │   ├── regions.js                       # UN SDG region mapping
-│   │   └── exportUtils.js                   # Export layers to local computer
+│   │   └── s3.js                            # AWS S3 operations and data processing
 │   ├── styles/
 │   │   ├── AddCityWizard.css
 │   │   ├── App.css
+│   │   ├── CalculateIndicatorsModal.css
 │   │   ├── Header.css
 │   │   ├── IndicatorsSidebar.css
-│   │   ├── CalculateIndicatorsModal.css
+│   │   ├── LayerSidebar.css
 │   │   ├── LayerModal.css
-│   │   ├── MapViewer.css
-│   │   └── Sidebar.css
-│   ├── App.js                        # Main application component
-│   ├── proxy-server.js               # Proxy server for world bank
-│   └── index.js                      # React entry point
+│   │   └── MapViewer.css
+│   ├── App.js                               # Main application component
+│   ├── index.js                             # React entry point
+│   └── proxy-server.js                      # Proxy server for World Bank
+├── .env                                     # Environment variables
 ├── package.json
-├── .env                              # Environment variables
-└── README.md
+├── README.md
+└── webpack.config.js
 ```
 
 ## Features

@@ -4,9 +4,9 @@ import LayerToggle from './LayerToggle';
 import LayerModal from './LayerModal';
 import { exportLayer, exportAllLayers } from '../utils/exportUtils';
 import { loadLayerForEditing, processCityFeatures } from '../utils/s3';
-import '../styles/Sidebar.css';
+import '../styles/LayerSidebar.css';
 
-const Sidebar = ({
+const LayerSidebar = ({
   selectedCity,
   cityBoundary,
   availableLayers,
@@ -22,7 +22,9 @@ const Sidebar = ({
   onCitySelect,
   cities = [],
   cityDataStatus = {},
-  processingProgress = {}
+  processingProgress = {},
+  isSidebarCollapsed,
+  onToggleCollapse
 }) => {
   const [expandedDomains, setExpandedDomains] = useState(new Set());
   const [isAddLayerModalOpen, setIsAddLayerModalOpen] = useState(false);
@@ -32,7 +34,6 @@ const Sidebar = ({
   const [showExportAllMenu, setShowExportAllMenu] = useState(false);
   const [exportingDomain, setExportingDomain] = useState(null);
   const [showDomainExportMenu, setShowDomainExportMenu] = useState(null);
-  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [openLayerExport, setOpenLayerExport] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [importingCities, setImportingCities] = useState(new Set());
@@ -706,7 +707,7 @@ const Sidebar = ({
           </div>
           <motion.button
             className="collapse-toggle-btn"
-            onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
+            onClick={onToggleCollapse}
             whileHover={{ scale: 1.1 }}
             whileTap={{ scale: 0.95 }}
             title={isSidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
@@ -877,7 +878,7 @@ const Sidebar = ({
         </div>
         <motion.button
           className="collapse-toggle-btn"
-          onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
+          onClick={onToggleCollapse}
           whileHover={{ scale: 1.1 }}
           whileTap={{ scale: 0.95 }}
           title={isSidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
@@ -1285,4 +1286,4 @@ const Sidebar = ({
   );
 };
 
-export default Sidebar;
+export default LayerSidebar;

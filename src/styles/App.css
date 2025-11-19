@@ -7,7 +7,7 @@
 body {
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
   background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
-  color: #2d3748;
+  color: #ffffff;
   overflow: hidden;
 }
 
@@ -26,7 +26,6 @@ body {
   position: relative;
 }
 
-/* Ensure MapViewer takes remaining space between sidebars */
 .main-content > *:nth-child(2) {
   flex: 1;
   min-width: 0;
@@ -325,6 +324,7 @@ body {
 .footer-buttons {
   display: flex;
   justify-content: space-between;
+  gap: 12px;
 }
 
 .btn-secondary {
@@ -396,68 +396,204 @@ body {
   transition: all 0.2s ease;
 }
 
-/* Responsive design for two sidebars */
-@media (max-width: 1600px) {
-  /* Allow sidebars to collapse more easily on smaller screens */
-}
-
-@media (max-width: 1200px) {
-  /* Consider stacking or hiding one sidebar */
-  .indicators-sidebar {
-    width: 320px;
+/* Responsive design */
+@media (max-width: 768px) {
+  .main-content {
+    height: calc(100vh - 64px);
   }
   
-  .indicators-sidebar.collapsed {
-    width: 60px;
+  .wizard-overlay {
+    padding: 10px;
   }
-}
-
-@media (max-width: 768px) {
+  
   .wizard-container {
-    margin: 10px;
+    margin: 0;
     max-height: 95vh;
+    border-radius: 16px;
   }
   
   .wizard-header {
     padding: 20px;
   }
   
+  .wizard-header h2 {
+    font-size: 20px;
+  }
+  
+  .close-btn {
+    width: 36px;
+    height: 36px;
+  }
+  
   .wizard-content {
     padding: 20px;
   }
   
+  .step-content h3 {
+    font-size: 18px;
+    margin-bottom: 20px;
+  }
+  
+  .form-input {
+    padding: 10px 14px;
+    font-size: 14px;
+  }
+  
   .wizard-footer {
-    padding: 20px;
+    padding: 16px 20px;
+  }
+  
+  .footer-buttons {
+    gap: 8px;
+  }
+  
+  .btn, .search-btn {
+    padding: 10px 20px;
+    font-size: 14px;
   }
   
   .wizard-steps {
-    padding: 15px 20px;
+    padding: 12px 20px;
   }
   
   .step {
+    font-size: 13px;
+    padding: 8px 6px;
+  }
+  
+  .boundary-controls {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+  
+  .upload-btn {
+    justify-content: center;
+  }
+  
+  .or-text {
+    text-align: center;
+  }
+  
+  .processing-status-bar {
+    bottom: 10px;
+    right: 10px;
+    left: 10px;
+  }
+  
+  .active-processing-indicator {
+    padding: 10px 16px;
+    font-size: 13px;
+    border-radius: 20px;
+  }
+  
+  .active-processing-indicator i {
     font-size: 14px;
-    padding: 8px;
-  }
-  
-  /* On mobile, consider hiding one sidebar by default */
-  .indicators-sidebar {
-    position: absolute;
-    right: 0;
-    top: 0;
-    bottom: 0;
-    z-index: 50;
-    box-shadow: -4px 0 12px rgba(0, 0, 0, 0.1);
-  }
-  
-  .indicators-sidebar.collapsed {
-    width: 50px;
   }
 }
 
 @media (max-width: 480px) {
   .main-content {
-    flex-direction: column;
+    height: calc(100vh - 56px);
   }
   
-  /* Stack sidebars vertically on very small screens if needed */
+  .wizard-container {
+    border-radius: 12px;
+    max-height: 98vh;
+  }
+  
+  .wizard-header {
+    padding: 16px;
+  }
+  
+  .wizard-header h2 {
+    font-size: 18px;
+  }
+  
+  .close-btn {
+    width: 32px;
+    height: 32px;
+  }
+  
+  .wizard-content {
+    padding: 16px;
+  }
+  
+  .step-content h3 {
+    font-size: 16px;
+    margin-bottom: 16px;
+  }
+  
+  .form-group {
+    margin-bottom: 16px;
+  }
+  
+  .form-input {
+    padding: 9px 12px;
+    font-size: 14px;
+    border-radius: 10px;
+  }
+  
+  .wizard-footer {
+    padding: 12px 16px;
+  }
+  
+  .footer-buttons {
+    flex-direction: column-reverse;
+    gap: 8px;
+  }
+  
+  .btn, .search-btn {
+    width: 100%;
+    padding: 10px 16px;
+    font-size: 14px;
+    justify-content: center;
+  }
+  
+  .wizard-steps {
+    padding: 10px 16px;
+    overflow-x: auto;
+  }
+  
+  .step {
+    font-size: 11px;
+    padding: 6px 4px;
+    min-width: 60px;
+  }
+  
+  .step:not(:last-child)::after {
+    display: none;
+  }
+  
+  .city-info {
+    padding: 16px;
+  }
+  
+  .city-info h4 {
+    font-size: 16px;
+  }
+  
+  .city-info p {
+    font-size: 13px;
+  }
+  
+  .suggestions {
+    max-height: 200px;
+  }
+  
+  .suggestion {
+    padding: 12px;
+  }
+  
+  .processing-status-bar {
+    bottom: 8px;
+    right: 8px;
+    left: 8px;
+  }
+  
+  .active-processing-indicator {
+    padding: 8px 12px;
+    font-size: 12px;
+    border-radius: 16px;
+  }
 }
