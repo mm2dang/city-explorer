@@ -27,6 +27,13 @@ const CalculateIndicatorsModal = ({ cities, selectedCity, dataSource, onCancel, 
   const [sortOrder, setSortOrder] = useState('asc');
   const hasSetInitialCity = useRef(false);
 
+  useEffect(() => {
+    const modalContent = document.querySelector('.modal-content');
+    if (modalContent) {
+      modalContent.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  }, [currentPage]);
+
   // Load calculation status
   useEffect(() => {
     const loadCalculationStatus = async () => {

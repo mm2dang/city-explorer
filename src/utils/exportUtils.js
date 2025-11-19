@@ -450,6 +450,126 @@ export const exportAllLayers = async (cityName, availableLayersByDomain, format 
     
     // Use city name as folder name
     const cityFolder = cityName;
+
+    // Export city boundary if available
+    if (cityName && availableLayersByDomain) {
+      try {
+        // Find the city object to get boundary
+        const city = window.citiesData?.find(c => c.name === cityName);
+        
+        if (city && city.boundary) {
+          console.log('Adding city boundary to export...');
+          
+          // Parse boundary (it's stored as WKT string)
+          const boundaryGeometry = JSON.parse(city.boundary);
+          
+          // Format city name for folder
+          const cityFolder = cityName;
+          
+          // Export based on selected format(s)
+          const formatsToExport = format === 'all' 
+            ? ['parquet', 'csv', 'geojson', 'shapefile'] 
+            : [format];
+          
+          for (const exportFormat of formatsToExport) {
+            if (exportFormat === 'geojson') {
+              // Create GeoJSON for boundary
+              const boundaryGeoJSON = {
+                type: 'FeatureCollection',
+                features: [{
+                  type: 'Feature',
+                  geometry: boundaryGeometry,
+                  properties: {
+                    name: cityName,
+                    feature_type: 'city_boundary'
+                  }
+                }]
+              };
+              
+              const jsonContent = JSON.stringify(boundaryGeoJSON, null, 2);
+              mainZip.file(`${cityFolder}/city_boundary.geojson`, jsonContent);
+              console.log('Added boundary as GeoJSON');
+            }
+            
+            if (exportFormat === 'shapefile') {
+              // Create shapefile for boundary
+              try {
+                const boundaryFeature = {
+                  type: 'FeatureCollection',
+                  features: [{
+                    type: 'Feature',
+                    geometry: boundaryGeometry,
+                    properties: {
+                      name: cityName,
+                      type: 'boundary'
+                    }
+                  }]
+                };
+                
+                const shpData = shpwrite.zip(boundaryFeature, {
+                  outputType: 'blob',
+                  compression: 'DEFLATE'
+                });
+                
+                mainZip.file(`${cityFolder}/city_boundary.zip`, shpData);
+                console.log('Added boundary as Shapefile');
+              } catch (shpError) {
+                console.warn('Could not create boundary shapefile:', shpError);
+              }
+            }
+            
+            if (exportFormat === 'csv') {
+              // Create CSV with WKT representation
+              const wktString = JSON.stringify(boundaryGeometry);
+              const csvContent = `name,geometry_type,geometry_wkt\n"${cityName}","${boundaryGeometry.type}","${wktString.replace(/"/g, '""')}"`;
+              mainZip.file(`${cityFolder}/city_boundary.csv`, csvContent);
+              console.log('Added boundary as CSV');
+            }
+            
+            if (exportFormat === 'parquet') {
+              // Create Parquet with boundary data
+              try {
+                const { default: init } = await import('parquet-wasm');
+                await init();
+                
+                const boundaryData = [{
+                  name: cityName,
+                  geometry_type: boundaryGeometry.type,
+                  geometry_coordinates: JSON.stringify(boundaryGeometry)
+                }];
+                
+                const columns = {};
+                Object.keys(boundaryData[0]).forEach(key => {
+                  columns[key] = boundaryData.map(row => row[key]);
+                });
+                
+                const { tableFromArrays, tableToIPC } = await import('apache-arrow');
+                const arrowTable = tableFromArrays(columns);
+                const ipcBuffer = tableToIPC(arrowTable, 'stream');
+                
+                const { Table } = await import('parquet-wasm');
+                const wasmTable = Table.fromIPCStream(ipcBuffer);
+                
+                const writerProperties = new WriterPropertiesBuilder()
+                  .setCompression(Compression.SNAPPY)
+                  .build();
+                const buffer = writeParquet(wasmTable, writerProperties);
+                
+                mainZip.file(`${cityFolder}/city_boundary.snappy.parquet`, buffer);
+                console.log('Added boundary as Parquet');
+              } catch (parquetError) {
+                console.warn('Could not create boundary parquet:', parquetError);
+              }
+            }
+          }
+        } else {
+          console.warn('No boundary available for city:', cityName);
+        }
+      } catch (boundaryError) {
+        console.error('Error exporting city boundary:', boundaryError);
+        // Continue with layer export even if boundary export fails
+      }
+    }
     
     // Process each domain
     for (const [domain, layers] of Object.entries(availableLayersByDomain)) {
