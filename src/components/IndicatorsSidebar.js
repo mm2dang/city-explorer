@@ -624,15 +624,20 @@ const IndicatorsSidebar = ({
                   className="copy-value-btn"
                   onClick={(e) => {
                     e.stopPropagation();
+                    if (!hasValue) return;
+                    
                     navigator.clipboard.writeText(Number(value).toFixed(2));
                     const btn = e.currentTarget;
-                    const originalIcon = btn.querySelector('i').className;
-                    btn.querySelector('i').className = 'fas fa-check';
+                    const icon = btn.querySelector('i');
+                    const originalClass = icon.className;
+                    
+                    icon.className = 'fas fa-check';
                     setTimeout(() => {
-                      btn.querySelector('i').className = originalIcon;
+                      icon.className = originalClass;
                     }, 1500);
                   }}
                   title="Copy value"
+                  disabled={!hasValue}
                 >
                   <i className="fas fa-copy"></i>
                 </button>
