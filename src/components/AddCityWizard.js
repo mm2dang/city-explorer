@@ -275,25 +275,25 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel, dataSource = 'city',
     const parts = displayName.split(',').map(part => part.trim());
     if (parts.length >= 4) {
       return {
-        city: parts[0],
-        province: parts[parts.length - 2],
-        country: parts[parts.length - 1]
+        city: parts[0].trim(),
+        province: parts[parts.length - 2].trim(),
+        country: parts[parts.length - 1].trim()
       };
     } else if (parts.length === 3) {
       return {
-        city: parts[0],
-        province: parts[1],
-        country: parts[2]
+        city: parts[0].trim(),
+        province: parts[1].trim(),
+        country: parts[2].trim()
       };
     } else if (parts.length === 2) {
       return {
-        city: parts[0],
+        city: parts[0].trim(),
         province: '',
-        country: parts[1]
+        country: parts[1].trim()
       };
     } else {
       return {
-        city: parts[0] || '',
+        city: (parts[0] || '').trim(),
         province: '',
         country: ''
       };
@@ -1151,10 +1151,11 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel, dataSource = 'city',
     try {
       console.log('Submitting city with data source:', targetDataSource);
       
-      const fullName = [cityName, province, country].filter(Boolean).join(', ');
-      
-      const isRename = editingCity && editingCity.name !== fullName;
-      
+      const fullName = [cityName.trim(), province.trim(), country.trim()].filter(Boolean).join(', ');
+      const normalizedOldName = editingCity ? editingCity.name.split(',').map(p => p.trim()).join(', ') : '';
+      const normalizedNewName = fullName.split(',').map(p => p.trim()).join(', ');
+      const isRename = editingCity && normalizedOldName !== normalizedNewName;
+
       // Check if new name already exists (only if renaming)
       if (isRename) {
         const existingCity = await checkCityExists(country, province, cityName);

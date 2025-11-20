@@ -268,13 +268,17 @@ function App() {
       console.log('Processing key:', processingKey);
       const parts = cityData.name.split(',').map(p => p.trim());
       let city, province, country;
-      
+
       if (parts.length === 2) {
         [city, country] = parts;
         province = '';
       } else {
         [city, province, country] = parts;
       }
+      
+      city = city.trim();
+      province = province.trim();
+      country = country.trim();
   
       // Explicitly set data source before saving
       setDataSource(targetDataSource);
@@ -764,10 +768,19 @@ function App() {
   };
 
   const handleCalculateIndicators = async (calculationParams) => {
-    // Set loading state IMMEDIATELY before any async operations
+    // Validate FIRST before setting any state
+    const shouldCalculateConnectivity = calculationParams.calculateConnectivity;
+    const shouldCalculateMobilePing = calculationParams.calculateMobilePing;
+    
+    if (!shouldCalculateConnectivity && !shouldCalculateMobilePing) {
+      alert('Please select at least one calculation type');
+      return;
+    }
+    
+    // NOW set loading state after validation passes
     setIsCalculatingIndicators(true);
     
-    // Close modal IMMEDIATELY after setting loading state
+    // Close modal AFTER setting loading state
     setShowCalculateIndicatorsModal(false);
     
     try {

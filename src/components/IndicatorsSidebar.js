@@ -120,19 +120,42 @@ const IndicatorsSidebar = ({
           return cityNames.has(fullName);
         });
         
-        // Count statuses
+        // Count statuses - Check for actual values, not just null
         let calculated = 0;
         let notCalculated = 0;
         let connectivityOnly = 0;
         let mobilePingOnly = 0;
         
         filteredData.forEach(row => {
-          const hasMobilePing = row.out_at_night != null || row.leisure_dwell_time != null || row.cultural_visits != null;
-          const hasConnectivity = row.coverage != null || row.speed != null || row.latency != null;
+          // Check for actual non-null, non-zero values
+          const hasMobilePing = (
+            (row.out_at_night != null && !isNaN(row.out_at_night)) || 
+            (row.leisure_dwell_time != null && !isNaN(row.leisure_dwell_time)) || 
+            (row.cultural_visits != null && !isNaN(row.cultural_visits))
+          );
           
-          if (hasMobilePing && hasConnectivity) {
+          // For connectivity, check if speed OR latency exist (not coverage, as it might be 0)
+          const hasConnectivity = (
+            (row.speed != null && !isNaN(row.speed)) || 
+            (row.latency != null && !isNaN(row.latency))
+          );
+          
+          // Also include coverage if it exists and is not null
+          const hasCoverage = row.coverage != null && !isNaN(row.coverage);
+          const hasAnyConnectivity = hasConnectivity || hasCoverage;
+          
+          console.log(`[Stats] ${row.city}: mobilePing=${hasMobilePing}, connectivity=${hasAnyConnectivity}`, {
+            out_at_night: row.out_at_night,
+            leisure_dwell_time: row.leisure_dwell_time,
+            cultural_visits: row.cultural_visits,
+            speed: row.speed,
+            latency: row.latency,
+            coverage: row.coverage
+          });
+          
+          if (hasMobilePing && hasAnyConnectivity) {
             calculated++;
-          } else if (hasConnectivity) {
+          } else if (hasAnyConnectivity) {
             connectivityOnly++;
           } else if (hasMobilePing) {
             mobilePingOnly++;
@@ -148,6 +171,8 @@ const IndicatorsSidebar = ({
           mobilePingOnly,
           total: filteredData.length
         };
+        
+        console.log(`[Stats] Range ${range}:`, stats[range]);
       } catch (error) {
         console.error(`Error loading stats for ${range}:`, error);
         stats[range] = {
