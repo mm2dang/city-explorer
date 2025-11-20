@@ -1083,6 +1083,9 @@ function App() {
     setIsCalculatingConnectivity(false);
     setConnectivityProgress(null);
     
+    // Also clear the main calculating state if only connectivity was running
+    setIsCalculatingIndicators(false);
+    
     // Dispatch complete event so IndicatorsSidebar also clears its state
     window.dispatchEvent(new CustomEvent('connectivity-complete'));
     
@@ -1282,7 +1285,7 @@ function App() {
             dataSource={dataSource}
             onCancel={() => setShowCalculateIndicatorsModal(false)}
             onCalculate={handleCalculateIndicators}
-            isLoading={isCalculatingIndicators}
+            isLoading={isCalculatingIndicators || isCalculatingConnectivity}
             processingProgress={processingProgress}
           />
         </div>
