@@ -324,9 +324,7 @@ const CalculateIndicatorsModal = ({ cities, selectedCity, dataSource, onCancel, 
   };
 
   return (
-    <div className="modal-overlay-indicators" onClick={(e) => {
-      if (e.target.className === 'modal-overlay-indicators') onCancel();
-    }}>
+    <div className="modal-overlay-indicators">
       <motion.div
         className="modal-container calculate-indicators-modal"
         initial={{ opacity: 0, scale: 0.9, y: 20 }}

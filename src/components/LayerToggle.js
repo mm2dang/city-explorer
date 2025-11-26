@@ -117,7 +117,7 @@ const LayerToggle = ({
         
         <div className="export-menu-inline" ref={exportMenuRef}>
           <button
-            className="inline-action-btn"
+            className="inline-action-btn export"
             onClick={handleExportButtonClick}
             title="Export"
             disabled={isExporting}

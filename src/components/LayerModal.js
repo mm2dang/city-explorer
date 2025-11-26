@@ -188,6 +188,11 @@ const LayerModal = ({
   const [allCityFeatures, setAllCityFeatures] = useState([]);
   const [showDomainDropdown, setShowDomainDropdown] = useState(false);
   const [showLayerDropdown, setShowLayerDropdown] = useState(false);
+  const [domainSearchQuery, setDomainSearchQuery] = useState('');
+  const [layerSearchQuery, setLayerSearchQuery] = useState('');
+  const [originalLayerName, setOriginalLayerName] = useState('');
+  const [originalDomain, setOriginalDomain] = useState('');
+  const [isDomainChanged, setIsDomainChanged] = useState(false);
 
   // Scroll to top of modal when step changes
   useEffect(() => {
@@ -238,21 +243,7 @@ const LayerModal = ({
     loadAllFeatures();
   }, [getAllFeatures, selectedCity]);
 
-  const predefinedLayers = useMemo(() => {
-    const allLayers = layerDefs[selectedDomain] || [];
-    const currentExistingLayers = selectedDomain && domainColors
-      ? (availableLayersByDomain?.[selectedDomain] || [])
-      : existingLayers;
-    
-    return allLayers.filter(layer => {
-      const layerExists = currentExistingLayers.some(existing => 
-        existing.name === layer.name && (!editingLayer || editingLayer.name !== layer.name)
-      );
-      return !layerExists;
-    });
-  }, [selectedDomain, existingLayers, editingLayer, domainColors, availableLayersByDomain]);
-
-  const availableIcons = [
+  const availableIcons = useMemo(() => [
     'fas fa-map-marker-alt', 'fas fa-heart', 'fas fa-star', 'fas fa-traffic-light', 'fas fa-wifi',
     'fas fa-wheelchair', 'fas fa-baby', 'fas fa-toilet', 'fas fa-ban',
     'fas fa-trash', 'fas fa-recycle', 'fas fa-helmet-safety', 'fas fa-taxi', 'fas fa-truck',
@@ -261,9 +252,9 @@ const LayerModal = ({
     'fas fa-plug', 'fas fa-syringe', 'fas fa-monument', 'fas fa-landmark-dome',
     'fas fa-tractor', 'fas fa-spa', 'fas fa-binoculars', 'fas fa-kiwi-bird', 'fas fa-fish',
     'fas fa-umbrella-beach', 'fas fa-volcano', 'fas fa-tornado', 'fas fa-tents'
-  ];
+  ], []);
 
-  const domainIcons = {
+  const domainIcons = useMemo(() => ({
     mobility: 'fas fa-car',
     governance: 'fas fa-landmark',
     health: 'fas fa-heartbeat',
@@ -273,15 +264,55 @@ const LayerModal = ({
     education: 'fas fa-graduation-cap',
     housing: 'fas fa-home',
     social: 'fas fa-users',
-  };
+  }), []);
 
   const formatDomainName = (domainName) => {
+    if (!domainName) return '';
     return domainName.charAt(0).toUpperCase() + domainName.slice(1);
   };
 
   const currentDomainColor = useMemo(() => {
     return selectedDomain && domainColors ? domainColors[selectedDomain] : (domainColor || '#666666');
   }, [selectedDomain, domainColors, domainColor]);
+
+  const predefinedLayers = useMemo(() => {
+    const allLayers = layerDefs[selectedDomain] || [];
+    const currentExistingLayers = selectedDomain && domainColors
+      ? (availableLayersByDomain?.[selectedDomain] || [])
+      : existingLayers;
+    
+    const availableLayers = allLayers.filter(layer => {
+      const layerExists = currentExistingLayers.some(existing => 
+        existing.name === layer.name && (!editingLayer || editingLayer.name !== layer.name)
+      );
+      return !layerExists;
+    });
+    
+    // Sort alphabetically by name
+    return availableLayers.sort((a, b) => a.name.localeCompare(b.name));
+  }, [selectedDomain, existingLayers, editingLayer, domainColors, availableLayersByDomain]);
+
+  const filteredAndSortedDomains = useMemo(() => {
+    const domains = Object.keys(domainIcons);
+    
+    // Filter by search query
+    const filtered = domainSearchQuery
+      ? domains.filter(domainKey =>
+          formatDomainName(domainKey).toLowerCase().includes(domainSearchQuery.toLowerCase())
+        )
+      : domains;
+    
+    // Sort alphabetically
+    return filtered.sort((a, b) => formatDomainName(a).localeCompare(formatDomainName(b)));
+  }, [domainSearchQuery, domainIcons]);
+
+  const filteredLayers = useMemo(() => {
+    if (!layerSearchQuery) return predefinedLayers;
+    
+    return predefinedLayers.filter(layer =>
+      layer.name.replace(/_/g, ' ').toLowerCase().includes(layerSearchQuery.toLowerCase())
+    );
+  }, [predefinedLayers, layerSearchQuery]);
 
   const validateFeature = (feature, index) => {
     if (!feature || !feature.type || feature.type !== 'Feature') {
@@ -908,20 +939,62 @@ const LayerModal = ({
     if (!name.match(/^[a-z_]+$/)) {
       return 'Layer name must contain only lowercase letters and underscores';
     }
+  
     const currentExistingLayers = selectedDomain && domainColors
       ? (availableLayersByDomain?.[selectedDomain] || [])
       : existingLayers;
-    
-    const layerExists = currentExistingLayers.some(layer => 
-      layer.name === name && (!editingLayer || editingLayer.name !== name)
-    );
-    
-    if (layerExists) {
+  
+    // 1. Check if name already exists in the current domain (from saved layers)
+    const layerExistsInDomain = currentExistingLayers.some(layer => {
+      if (editingLayer) {
+        // Allow current layer's name during edit
+        return layer.name === name && editingLayer.name !== name;
+      }
+      return layer.name === name;
+    });
+  
+    if (layerExistsInDomain) {
       return `A layer named "${name}" already exists in this domain`;
     }
-    return '';
-  }, [selectedDomain, existingLayers, editingLayer, domainColors, availableLayersByDomain]);
   
+    // 2. Check predefined layer conflicts — BUT ALLOW if using the official one
+    const predefinedInCurrentDomain = (layerDefs[selectedDomain] || []).find(l => l.name === name);
+  
+    if (predefinedInCurrentDomain) {
+      // This is a predefined layer in the selected domain
+      if (isCustomLayer) {
+        // You're in custom mode → BLOCK using predefined name
+        return `Layer name "${name}" is reserved for the predefined "${predefinedInCurrentDomain.name.replace(/_/g, ' ')}" layer in ${formatDomainName(selectedDomain)}`;
+      }
+  
+      // You're using the predefined selector
+      const expectedIcon = predefinedInCurrentDomain.icon;
+      const actualIcon = layerIcon;
+  
+      if (actualIcon !== expectedIcon) {
+        // Wrong icon → treat as custom → BLOCK
+        return `Layer name "${name}" is reserved for the official "${predefinedInCurrentDomain.name.replace(/_/g, ' ')}" layer`;
+      }
+  
+      // Correct domain + correct icon + not custom → ALLOW
+      return '';
+    }
+  
+    // 3. Name is not a predefined layer in current domain → check globally
+    const isPredefinedAnywhere = Object.values(layerDefs).some(domainLayers =>
+      domainLayers.some(l => l.name === name)
+    );
+  
+    if (isPredefinedAnywhere) {
+      const conflictingDomain = Object.entries(layerDefs).find(([_, layers]) =>
+        layers.some(l => l.name === name)
+      )?.[0];
+  
+      return `Layer name "${name}" conflicts with a predefined layer in the ${formatDomainName(conflictingDomain)} domain`;
+    }
+    return '';
+  }, [selectedDomain, existingLayers, editingLayer, domainColors, availableLayersByDomain, isCustomLayer, layerIcon]);
+
   const handleLayerNameChange = (e) => {
     const name = e.target.value;
     setCustomLayerName(name);
@@ -933,17 +1006,20 @@ const LayerModal = ({
     if (value === 'custom') {
       setIsCustomLayer(true);
       setLayerName('');
-      setLayerIcon('fas fa-map-marker-alt');
+      
+      // Always clear the custom layer name when switching to custom mode
       setCustomLayerName('');
-      setCustomLayerIcon('fas fa-map-marker-alt');
+      // Always select first icon for custom layer
+      setCustomLayerIcon(availableIcons[0]);
       setNameError('');
     } else {
       const currentExistingLayers = selectedDomain && domainColors
         ? (availableLayersByDomain?.[selectedDomain] || [])
         : existingLayers;
       
+      // When editing, allow selecting the current layer or checking against others
       const layerExists = currentExistingLayers.some(layer => 
-        layer.name === value && (!editingLayer || editingLayer.name !== value)
+        layer.name === value && editingLayer && editingLayer.name !== value
       );
       
       if (layerExists) {
@@ -1006,17 +1082,35 @@ const LayerModal = ({
       }
       if (editingLayer) {
         setIsLoadingExisting(true);
+        
+        // Store original layer info for reference
+        setOriginalLayerName(editingLayer.name);
+        setOriginalDomain(domain || '');
+        
+        // Set initial domain
         setSelectedDomain(domain || '');
-        setLayerName(editingLayer.name);
-        setLayerIcon(editingLayer.icon);
-        setIsCustomLayer(false);
+  
         const currentPredefinedLayers = domain ? (layerDefs[domain] || []) : [];
-        const isPredefined = currentPredefinedLayers.some(l => l.name === editingLayer.name);
-        if (!isPredefined) {
+        const predefinedLayer = currentPredefinedLayers.find(l => l.name === editingLayer.name);
+  
+        if (predefinedLayer) {
+          // It's a predefined layer - select it in the dropdown
+          console.log('Editing predefined layer:', editingLayer.name);
+          setIsCustomLayer(false);
+          setLayerName(editingLayer.name);
+          setLayerIcon(predefinedLayer.icon); // Use icon from definition
+          setCustomLayerName('');
+          setCustomLayerIcon('fas fa-map-marker-alt');
+        } else {
+          // It's a custom layer
+          console.log('Editing custom layer:', editingLayer.name);
           setIsCustomLayer(true);
           setCustomLayerName(editingLayer.name);
           setCustomLayerIcon(editingLayer.icon);
+          setLayerName('');
+          setLayerIcon('fas fa-map-marker-alt');
         }
+        
         try {
           const loadedFeatures = await loadLayerForEditing(
             cityName,
@@ -1025,7 +1119,7 @@ const LayerModal = ({
           );
           const validFeatures = (loadedFeatures || []).filter((f, i) => validateFeature(f, i));
           setFeatures(validFeatures);
-          setStep(2);
+          setStep(1);
           setDataSource('draw');
         } catch (error) {
           console.error('Error loading layer for editing:', error);
@@ -1035,6 +1129,7 @@ const LayerModal = ({
           setIsLoadingExisting(false);
         }
       } else {
+        // Reset for new layer
         setStep(1);
         setLayerName('');
         setLayerIcon('fas fa-map-marker-alt');
@@ -1046,6 +1141,8 @@ const LayerModal = ({
         setCustomLayerIcon('fas fa-map-marker-alt');
         setSelectedDomain(domain || '');
         setNameError('');
+        setOriginalLayerName('');
+        setOriginalDomain('');
       }
     };
     if (isOpen) {
@@ -2427,14 +2524,14 @@ useEffect(() => {
   };
 
   useEffect(() => {
-    // Auto-select custom layer mode when no predefined layers are available
-    if (selectedDomain && predefinedLayers.length === 0 && !editingLayer && !isCustomLayer) {
+    // Only auto-select custom layer mode when NOT editing and no predefined layers are available
+    if (selectedDomain && predefinedLayers.length === 0 && !isCustomLayer && !editingLayer) {
       setIsCustomLayer(true);
       setCustomLayerName('');
-      setCustomLayerIcon('fas fa-map-marker-alt');
+      setCustomLayerIcon(availableIcons[0]);
       setNameError('');
     }
-  }, [selectedDomain, predefinedLayers.length, editingLayer, isCustomLayer]);
+  }, [selectedDomain, predefinedLayers, editingLayer, isCustomLayer, availableIcons]);
 
   const handleFileUpload = async (e) => {
     const files = e.target.files;
@@ -2976,124 +3073,149 @@ useEffect(() => {
       return;
     }
     
-    // Load all features across ALL domains for duplicate checking
-    console.log('Loading ALL features across ALL domains for final duplicate check...');
-    let allFeaturesForCheck = [];
+    setIsProcessing(true);
     
-    if (getAllFeatures && selectedCity) {
-      try {
-        allFeaturesForCheck = await getAllFeatures();
-        console.log(`Loaded ${allFeaturesForCheck.length} features across ALL domains for duplicate check`);
-      } catch (error) {
-        console.error('Error loading all features for duplicate check:', error);
-      }
-    }
-    
-    // Now check for duplicates
-    const getCoordinateKey = (feature) => {
-      if (!feature.geometry || !feature.geometry.coordinates) {
-        return null;
-      }
+    try {
+      // Load all features across ALL domains for duplicate checking
+      console.log('Loading ALL features across ALL domains for final duplicate check...');
+      let allFeaturesForCheck = [];
       
-      let lat, lon;
-      
-      if (feature.geometry.type === 'Point') {
-        [lon, lat] = feature.geometry.coordinates;
-      } else if (feature.geometry.type === 'LineString' && feature.geometry.coordinates.length > 0) {
-        [lon, lat] = feature.geometry.coordinates[0];
-      } else if (feature.geometry.type === 'Polygon' && feature.geometry.coordinates.length > 0 && feature.geometry.coordinates[0].length > 0) {
-        [lon, lat] = feature.geometry.coordinates[0][0];
-      } else if (feature.geometry.type === 'MultiLineString' && feature.geometry.coordinates.length > 0 && feature.geometry.coordinates[0].length > 0) {
-        [lon, lat] = feature.geometry.coordinates[0][0];
-      } else if (feature.geometry.type === 'MultiPolygon' && feature.geometry.coordinates.length > 0 && feature.geometry.coordinates[0].length > 0 && feature.geometry.coordinates[0][0].length > 0) {
-        [lon, lat] = feature.geometry.coordinates[0][0][0];
-      } else {
+      if (getAllFeatures && selectedCity) {
         try {
-          const turfFeature = { type: 'Feature', geometry: feature.geometry, properties: {} };
-          const centroid = turf.centroid(turfFeature);
-          [lon, lat] = centroid.geometry.coordinates;
+          allFeaturesForCheck = await getAllFeatures();
+          console.log(`Loaded ${allFeaturesForCheck.length} features across ALL domains for duplicate check`);
         } catch (error) {
-          return null;
+          console.error('Error loading all features for duplicate check:', error);
         }
       }
       
-      if (lon === undefined || lat === undefined || isNaN(lon) || isNaN(lat)) {
-        return null;
-      }
+      // Now check for duplicates
+      const getCoordinateKey = (feature) => {
+        if (!feature.geometry || !feature.geometry.coordinates) {
+          return null;
+        }
+        
+        let lat, lon;
+        
+        if (feature.geometry.type === 'Point') {
+          [lon, lat] = feature.geometry.coordinates;
+        } else if (feature.geometry.type === 'LineString' && feature.geometry.coordinates.length > 0) {
+          [lon, lat] = feature.geometry.coordinates[0];
+        } else if (feature.geometry.type === 'Polygon' && feature.geometry.coordinates.length > 0 && feature.geometry.coordinates[0].length > 0) {
+          [lon, lat] = feature.geometry.coordinates[0][0];
+        } else if (feature.geometry.type === 'MultiLineString' && feature.geometry.coordinates.length > 0 && feature.geometry.coordinates[0].length > 0) {
+          [lon, lat] = feature.geometry.coordinates[0][0];
+        } else if (feature.geometry.type === 'MultiPolygon' && feature.geometry.coordinates.length > 0 && feature.geometry.coordinates[0].length > 0 && feature.geometry.coordinates[0][0].length > 0) {
+          [lon, lat] = feature.geometry.coordinates[0][0][0];
+        } else {
+          try {
+            const turfFeature = { type: 'Feature', geometry: feature.geometry, properties: {} };
+            const centroid = turf.centroid(turfFeature);
+            [lon, lat] = centroid.geometry.coordinates;
+          } catch (error) {
+            return null;
+          }
+        }
+        
+        if (lon === undefined || lat === undefined || isNaN(lon) || isNaN(lat)) {
+          return null;
+        }
+        
+        return `${lat.toFixed(6)},${lon.toFixed(6)}`;
+      };
       
-      return `${lat.toFixed(6)},${lon.toFixed(6)}`;
-    };
-    
-    // Build set of existing coordinates (excluding current layer if editing)
-    const seenCoordinates = new Set();
-  allFeaturesForCheck.forEach(feature => {
-    if (!editingLayer || feature.properties?.layer_name !== finalLayerName) {
-      const coordKey = getCoordinateKey(feature);
-      if (coordKey) {
+      // Build set of existing coordinates (excluding current layer if editing)
+      const seenCoordinates = new Set();
+      allFeaturesForCheck.forEach(feature => {
+        // Exclude features from BOTH the current name AND the original name
+        const isFromCurrentLayer = editingLayer && (
+          feature.properties?.layer_name === finalLayerName ||
+          feature.properties?.layer_name === originalLayerName
+        );
+        
+        if (!isFromCurrentLayer) {
+          const coordKey = getCoordinateKey(feature);
+          if (coordKey) {
+            seenCoordinates.add(coordKey);
+          }
+        }
+      });
+      
+      console.log(`Found ${seenCoordinates.size} existing coordinates across ALL domains`);
+      
+      // Filter out duplicates
+      const uniqueFeatures = [];
+      let duplicatesFound = 0;
+      
+      features.forEach((feature, index) => {
+        const coordKey = getCoordinateKey(feature);
+        
+        if (!coordKey) {
+          console.warn(`Could not extract coordinates from feature at index ${index}`);
+          uniqueFeatures.push(feature);
+          return;
+        }
+        
+        if (seenCoordinates.has(coordKey)) {
+          duplicatesFound++;
+          console.log(`Duplicate found at index ${index}: coordinate ${coordKey} already exists in domain`);
+          return;
+        }
+        
         seenCoordinates.add(coordKey);
-      }
-    }
-  });
-  
-  console.log(`Found ${seenCoordinates.size} existing coordinates across ALL domains`);
-    
-    // Filter out duplicates
-    const uniqueFeatures = [];
-    let duplicatesFound = 0;
-    
-    features.forEach((feature, index) => {
-      const coordKey = getCoordinateKey(feature);
-      
-      if (!coordKey) {
-        console.warn(`Could not extract coordinates from feature at index ${index}`);
         uniqueFeatures.push(feature);
+      });
+      
+      console.log(`Duplicate check complete: ${uniqueFeatures.length} unique out of ${features.length} total`);
+      
+      if (duplicatesFound > 0) {
+        const proceed = window.confirm(
+          `${duplicatesFound} duplicate feature${duplicatesFound > 1 ? 's were' : ' was'} found.\n` +
+          `These features have the same latitude/longitude as features already in OTHER layers across ALL domains.\n\n` +
+          `Do you want to save only the ${uniqueFeatures.length} unique features?`
+        );
+        
+        if (!proceed) {
+          setIsProcessing(false);
+          return;
+        }
+      }
+      
+      if (uniqueFeatures.length === 0) {
+        alert('No unique features to save. All features are duplicates.');
+        setIsProcessing(false);
         return;
       }
       
-      if (seenCoordinates.has(coordKey)) {
-        duplicatesFound++;
-        console.log(`Duplicate found at index ${index}: coordinate ${coordKey} already exists in domain`);
-        return;
-      }
+      // Check if layer name or domain changed
+      const layerNameChanged = editingLayer && finalLayerName !== originalLayerName;
+      const domainChanged = editingLayer && selectedDomain !== originalDomain;
       
-      // Also check within the current batch
-      if (seenCoordinates.has(coordKey)) {
-        duplicatesFound++;
-        return;
-      }
+      // Save with unique features only
+      await onSave({
+        name: finalLayerName,
+        icon: finalLayerIcon,
+        domain: selectedDomain,
+        features: uniqueFeatures,
+        isEdit: !!editingLayer,
+        layerNameChanged,
+        domainChanged,
+        originalName: originalLayerName,
+        originalDomain: originalDomain
+      });
       
-      seenCoordinates.add(coordKey);
-      uniqueFeatures.push(feature);
-    });
-    
-    console.log(`Duplicate check complete: ${uniqueFeatures.length} unique out of ${features.length} total`);
-    
-    if (duplicatesFound > 0) {
-      const proceed = window.confirm(
-        `${duplicatesFound} duplicate feature${duplicatesFound > 1 ? 's were' : ' was'} found.\n` +
-        `These features have the same latitude/longitude as features already in OTHER layers across ALL domains.\n\n` +
-        `Do you want to save only the ${uniqueFeatures.length} unique features?`
-      );
-      
-      if (!proceed) {
-        return;
-      }
+      console.log('Layer saved:', { 
+        name: finalLayerName, 
+        icon: finalLayerIcon, 
+        domain: selectedDomain, 
+        features: uniqueFeatures,
+        changes: { layerNameChanged, domainChanged }
+      });
+    } catch (error) {
+      console.error('Error saving layer:', error);
+      alert(`Error saving layer: ${error.message}`);
+      setIsProcessing(false);  // Only reset on error
     }
-    
-    if (uniqueFeatures.length === 0) {
-      alert('No unique features to save. All features are duplicates.');
-      return;
-    }
-    
-    // Save with unique features only
-    onSave({
-      name: finalLayerName,
-      icon: finalLayerIcon,
-      domain: selectedDomain,
-      features: uniqueFeatures
-    });
-    
-    console.log('Layer saved:', { name: finalLayerName, icon: finalLayerIcon, domain: selectedDomain, features: uniqueFeatures });
   };
 
   const handleClose = () => {
@@ -3128,9 +3250,7 @@ useEffect(() => {
 
   return (
     <AnimatePresence>
-      <div className="modal-overlay" onClick={(e) => {
-        if (e.target.className === 'modal-overlay') handleClose();
-      }}>
+      <div className="modal-overlay">
         <motion.div
           className={`modal-content ${step === 3 && dataSource === 'draw' ? 'map-mode' : ''}`}
           initial={{ scale: 0.9, opacity: 0, y: 20 }}
@@ -3192,7 +3312,10 @@ useEffect(() => {
                     <div className="domain-dropdown-wrapper">
                       <button
                         className="domain-selector-btn"
-                        onClick={() => setShowDomainDropdown(!showDomainDropdown)}
+                        onClick={() => {
+                          setShowDomainDropdown(!showDomainDropdown);
+                          if (!showDomainDropdown) setDomainSearchQuery('');
+                        }}
                         type="button"
                       >
                         <div className="domain-selector-content">
@@ -3218,18 +3341,66 @@ useEffect(() => {
                       
                       {showDomainDropdown && (
                         <div className="domain-dropdown">
-                          {Object.keys(domainIcons).map(domainKey => (
+                          <div className="dropdown-search" style={{ padding: '8px', borderBottom: '1px solid #e2e8f0' }}>
+                            <input
+                              type="text"
+                              placeholder="Search domains..."
+                              value={domainSearchQuery}
+                              onChange={(e) => setDomainSearchQuery(e.target.value)}
+                              onClick={(e) => e.stopPropagation()}
+                              style={{
+                                width: '100%',
+                                padding: '8px 12px',
+                                border: '1px solid #e2e8f0',
+                                borderRadius: '6px',
+                                fontSize: '14px'
+                              }}
+                              autoFocus
+                            />
+                          </div>
+                          {filteredAndSortedDomains.map(domainKey => (
                             <div
                               key={domainKey}
                               className={`domain-option ${selectedDomain === domainKey ? 'selected' : ''}`}
                               onClick={() => {
+                                const oldDomain = selectedDomain;
+                                const oldLayerName = isCustomLayer ? customLayerName : layerName;
+                                
                                 setSelectedDomain(domainKey);
-                                setLayerName('');
-                                setIsCustomLayer(false);
-                                setCustomLayerName('');
-                                setCustomLayerIcon('fas fa-map-marker-alt');
+                                setIsDomainChanged(editingLayer && oldDomain !== domainKey);
+                                
+                                // If editing and changing domain
+                                if (editingLayer && oldDomain !== domainKey) {
+                                  const newDomainLayers = layerDefs[domainKey] || [];
+                                  const layerExistsInNewDomain = newDomainLayers.some(l => l.name === oldLayerName);
+                                  
+                                  if (layerExistsInNewDomain) {
+                                    // Layer exists in new domain as predefined
+                                    const foundLayer = newDomainLayers.find(l => l.name === oldLayerName);
+                                    setIsCustomLayer(false);
+                                    setLayerName(foundLayer.name);
+                                    setLayerIcon(foundLayer.icon);
+                                    setCustomLayerName('');
+                                    setCustomLayerIcon('fas fa-map-marker-alt');
+                                  } else {
+                                    // Layer doesn't exist in new domain, keep as custom with same name and icon
+                                    setIsCustomLayer(true);
+                                    setCustomLayerName(oldLayerName);
+                                    setCustomLayerIcon(isCustomLayer ? customLayerIcon : layerIcon);
+                                    setLayerName('');
+                                    setLayerIcon('fas fa-map-marker-alt');
+                                  }
+                                } else if (!editingLayer) {
+                                  // If not editing, reset layer selection
+                                  setLayerName('');
+                                  setIsCustomLayer(false);
+                                  setCustomLayerName('');
+                                  setCustomLayerIcon('fas fa-map-marker-alt');
+                                }
+                                
                                 setNameError('');
                                 setShowDomainDropdown(false);
+                                setDomainSearchQuery('');
                               }}
                             >
                               <div
@@ -3252,6 +3423,20 @@ useEffect(() => {
                     </div>
                   <small>Select the domain category for this layer</small>
                 </div>
+                {editingLayer && isDomainChanged && (
+                  <div style={{ 
+                    padding: '12px', 
+                    background: '#fef3c7', 
+                    border: '1px solid #fbbf24',
+                    borderRadius: '8px',
+                    marginTop: '12px'
+                  }}>
+                    <p style={{ margin: 0, color: '#92400e', fontSize: '14px' }}>
+                      <i className="fas fa-info-circle" style={{ marginRight: '8px' }}></i>
+                      Changing domain will move all features from <strong>{formatDomainName(originalDomain)}</strong> to <strong>{formatDomainName(selectedDomain)}</strong>
+                    </p>
+                  </div>
+                )}
                 {selectedDomain && (
                   <>
                     <div className="form-group">
@@ -3274,8 +3459,10 @@ useEffect(() => {
                           <div className="layer-dropdown-wrapper">
                             <button
                               className="layer-selector-btn"
-                              onClick={() => !editingLayer && setShowLayerDropdown(!showLayerDropdown)}
-                              disabled={!!editingLayer}
+                              onClick={() => {
+                                setShowLayerDropdown(!showLayerDropdown);
+                                if (!showLayerDropdown) setLayerSearchQuery('');
+                              }}
                               type="button"
                             >
                               <div className="layer-selector-content">
@@ -3306,13 +3493,31 @@ useEffect(() => {
                             
                             {showLayerDropdown && (
                               <div className="layer-dropdown">
-                                {predefinedLayers.map(layer => (
+                                <div className="dropdown-search" style={{ padding: '8px', borderBottom: '1px solid #e2e8f0' }}>
+                                  <input
+                                    type="text"
+                                    placeholder="Search layers..."
+                                    value={layerSearchQuery}
+                                    onChange={(e) => setLayerSearchQuery(e.target.value)}
+                                    onClick={(e) => e.stopPropagation()}
+                                    style={{
+                                      width: '100%',
+                                      padding: '8px 12px',
+                                      border: '1px solid #e2e8f0',
+                                      borderRadius: '6px',
+                                      fontSize: '14px'
+                                    }}
+                                    autoFocus
+                                  />
+                                </div>
+                                {filteredLayers.map(layer => (
                                   <div
                                     key={layer.name}
                                     className={`layer-option ${layerName === layer.name ? 'selected' : ''}`}
                                     onClick={() => {
                                       handleLayerSelection({ target: { value: layer.name } });
                                       setShowLayerDropdown(false);
+                                      setLayerSearchQuery('');
                                     }}
                                   >
                                     <div
@@ -3337,6 +3542,7 @@ useEffect(() => {
                                   onClick={() => {
                                     handleLayerSelection({ target: { value: 'custom' } });
                                     setShowLayerDropdown(false);
+                                    setLayerSearchQuery('');
                                   }}
                                 >
                                   <div className="layer-icon-small">
@@ -3365,6 +3571,20 @@ useEffect(() => {
                           <small>Use lowercase letters and underscores only</small>
                           {nameError && <small className="error">{nameError}</small>}
                         </div>
+                        {editingLayer && customLayerName !== originalLayerName && customLayerName && (
+                          <div style={{ 
+                            padding: '8px 12px', 
+                            background: '#dbeafe', 
+                            border: '1px solid #3b82f6',
+                            borderRadius: '6px',
+                            marginBottom: '12px'
+                          }}>
+                            <small style={{ color: '#1e40af', margin: 0 }}>
+                              <i className="fas fa-arrow-right" style={{ marginRight: '8px' }}></i>
+                              Layer will be renamed from "<strong>{originalLayerName}</strong>" to "<strong>{customLayerName}</strong>"
+                            </small>
+                          </div>
+                        )}
                         <div className="form-group">
                           <label>Icon</label>
                           <div className="icon-selector">
@@ -3385,24 +3605,36 @@ useEffect(() => {
                   </>
                 )}
                 <div className="form-actions">
-                  <button
-                    className="btn-primary"
-                    onClick={() => {
-                      // Double-check before proceeding
-                      const finalLayerName = isCustomLayer ? customLayerName : layerName;
-                      const validationError = validateLayerName(finalLayerName);
-                      
-                      if (validationError) {
-                        alert(validationError);
-                        return;
-                      }
-                      
-                      setStep(2);
-                    }}
-                    disabled={!selectedDomain || (isCustomLayer ? (!customLayerName || !!nameError) : !layerName)}
-                  >
-                    Next <i className="fas fa-arrow-right"></i>
-                  </button>
+                <button
+                  className="btn-primary"
+                  onClick={() => {
+                    // Double-check before proceeding
+                    const finalLayerName = isCustomLayer ? customLayerName : layerName;
+                    const finalLayerIcon = isCustomLayer ? customLayerIcon : layerIcon;
+                    const validationError = validateLayerName(finalLayerName);
+                    
+                    if (validationError) {
+                      setNameError(validationError);
+                      alert(validationError);
+                      return;
+                    }
+                    
+                    // Validate icon is selected
+                    if (!finalLayerIcon) {
+                      alert('Please select an icon for the layer');
+                      return;
+                    }
+                    
+                    // Always go to step 2 (data source selection)
+                    setStep(2);
+                  }}
+                  disabled={
+                    !selectedDomain || 
+                    (isCustomLayer ? (!customLayerName || !!nameError || !customLayerIcon) : !layerName)
+                  }
+                >
+                  Next <i className="fas fa-arrow-right"></i>
+                </button>
                 </div>
               </>
             )}
@@ -3595,9 +3827,19 @@ useEffect(() => {
                     <button
                       className="btn-primary"
                       onClick={handleSave}
-                      disabled={features.length === 0}
+                      disabled={features.length === 0 || isProcessing}
                     >
-                      <i className="fas fa-save"></i> Save
+                      {isProcessing ? (
+                        <>
+                          <i className="fas fa-spinner fa-spin"></i>
+                          {editingLayer ? 'Updating...' : 'Saving...'}
+                        </>
+                      ) : (
+                        <>
+                          <i className="fas fa-check"></i>
+                          {editingLayer ? 'Update' : 'Save'}
+                        </>
+                      )}
                     </button>
                   )}
                 </div>

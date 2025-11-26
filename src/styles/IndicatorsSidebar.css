@@ -204,10 +204,10 @@
   z-index: 1;
 }
 
-.calculate-btn:hover:not(:disabled),
-.export-btn:hover:not(:disabled) {
+.calculate-btn:hover:not(:disabled) {
   background: #f9fafb;
-  border-color: #cbd5e1;
+  color: #06b6d4;
+  border-color: #06b6d4;
 }
 
 .calculate-btn:disabled,
@@ -217,8 +217,9 @@
 }
 
 .export-btn:hover:not(:disabled) {
-  color: #10b981;
-  border-color: #10b981;
+  background: #f9fafb;
+  color: #0891b2;
+  border-color: #0891b2;
 }
 
 .export-menu-wrapper {
@@ -392,7 +393,7 @@
 
 .status-fill {
   height: 100%;
-  background: linear-gradient(90deg, #0891b2, #10b981);
+  background: linear-gradient(90deg, #0891b2, #06b6d4);
   transition: width 0.3s ease;
 }
 
@@ -509,7 +510,7 @@
 }
 
 .date-range-option i {
-  color: #10b981;
+  color: #06b6d4;
   font-size: 14px;
 }
 
@@ -873,7 +874,7 @@
 }
 
 .copy-value-btn i.fa-check {
-  color: #10b981;
+  color: #0891b2;
 }
 
 /* Summary table */

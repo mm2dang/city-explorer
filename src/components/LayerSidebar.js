@@ -398,14 +398,29 @@ const LayerSidebar = ({
   
   const handleModalSave = async (layerData) => {
     try {
-      // Save the layer (adds it to availableLayers, etc.)
+      // Check if this is an edit with changes
+      if (layerData.isEdit && (layerData.layerNameChanged || layerData.domainChanged)) {
+        console.log('Layer edited with changes:', {
+          layerNameChanged: layerData.layerNameChanged,
+          domainChanged: layerData.domainChanged,
+          originalName: layerData.originalName,
+          originalDomain: layerData.originalDomain,
+          newName: layerData.name,
+          newDomain: layerData.domain
+        });
+        
+        // Delete the old layer
+        await onLayerDelete(layerData.originalDomain, layerData.originalName, { silent: true });
+        console.log(`Deleted old layer: ${layerData.originalDomain}/${layerData.originalName}`);
+      }
+      
+      // Save the layer (either new or with new name/domain)
       await onLayerSave(layerData);
       
-      // Automatically toggle the new layer ON
-      // Use setTimeout to ensure state has updated after save (e.g., if onLayerSave is async and updates parent state)
+      // Automatically toggle the layer ON
       setTimeout(() => {
         onLayerToggle(layerData.name, true);
-        console.log(`Automatically enabled new layer: ${layerData.name}`);
+        console.log(`Automatically enabled layer: ${layerData.name}`);
       }, 0);
       
       // Close modal and reset

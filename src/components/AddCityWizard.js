@@ -1835,7 +1835,7 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel, dataSource = 'city',
               <span className="or-text">or draw on map</span>
             </div>
             <div className="boundary-controls">
-              <div style={{ fontSize: '12px', color: '#666', marginTop: '8px' }}>
+              <div style={{ fontSize: '12px', color: '#0891b2', marginTop: '8px' }}>
                 <i className="fas fa-info-circle"></i> Upload GeoJSON (.geojson, .json), Shapefile (.shp + optional .dbf, .shx, .prj), or ZIP file containing all shapefile components. 
                 For separate shapefiles, select all files at once. If no .prj file is provided, assumes WGS 1984 UTM Zone 19S (EPSG:32719).
               </div>

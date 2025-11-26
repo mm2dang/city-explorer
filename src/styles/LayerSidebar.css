@@ -282,7 +282,8 @@
 
 .bulk-action-btn:hover:not(:disabled) {
   background: #f9fafb;
-  border-color: #cbd5e1;
+  color: #06b6d4;
+  border-color: #06b6d4;
 }
 
 .bulk-action-btn:disabled {
@@ -291,8 +292,8 @@
 }
 
 .bulk-action-btn.export:hover:not(:disabled) {
-  color: #10b981;
-  border-color: #10b981;
+  color: #0891b2;
+  border-color: #0891b2;
 }
 
 .bulk-action-btn.delete:hover {
@@ -572,13 +573,13 @@
 }
 
 .domain-action-icon-btn:hover {
-  background: #f3f4f6;
-  color: #6b7280;
+  background: rgba(8, 145, 178, 0.1);
+  color: #0891b2;
 }
 
 .domain-action-icon-btn.add:hover {
   background: rgba(8, 145, 178, 0.1);
-  color: #0891b2;
+  color: #06b6d4;
 }
 
 .domain-action-icon-btn.delete:hover {
@@ -705,13 +706,18 @@
 
 .inline-action-btn:hover:not(:disabled) {
   background: #f9fafb;
-  color: #374151;
-  border-color: #cbd5e1;
+  color: #06b6d4;
+  border-color: #06b6d4;
 }
 
 .inline-action-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.inline-action-btn.export:hover {
+  color: #0891b2;
+  border-color: #0891b2;
 }
 
 .inline-action-btn.delete:hover {

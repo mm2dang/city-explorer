@@ -211,7 +211,7 @@
 .form-actions {
   display: flex;
   gap: 12px;
-  justify-content: space-between;
+  justify-content: flex-end;
   margin-top: 24px;
   padding-top: 24px;
   border-top: 2px solid #e2e8f0;
@@ -352,7 +352,7 @@
 .uploaded-file {
   margin-top: 12px;
   font-weight: 600;
-  color: #10b981;
+  color: #0891b2;
 }
 
 .processing-indicator {
@@ -396,7 +396,7 @@
 .review-summary i {
   margin-bottom: 16px;
   font-size: 48px;
-  color: #10b981;
+  color: #0891b2;
 }
 
 .review-summary h4 {
@@ -704,7 +704,7 @@
 
 .domain-option i.fa-check,
 .layer-option i.fa-check {
-  color: #10b981;
+  color: #0891b2;
   font-size: 14px;
 }
 

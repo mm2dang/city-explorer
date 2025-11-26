@@ -937,9 +937,6 @@ export const loadCityFeatures = async (cityName, activeLayers) => {
                 try {
                   // Parse the stored GeoJSON geometry
                   const geoJsonGeometry = JSON.parse(row.geometry_coordinates);
-
-                  console.log(`=== RAW geometry_coordinates from S3 (first 200 chars) ===`, 
-                    row.geometry_coordinates.substring(0, 200));
                   
                   if (geoJsonGeometry && geoJsonGeometry.type && geoJsonGeometry.coordinates) {
                     // Use the geometry directly - it's already valid GeoJSON
@@ -1005,32 +1002,6 @@ export const loadCityFeatures = async (cityName, activeLayers) => {
                     },
                   });
                   validFeatureCount++;
-                  
-                  if (validFeatureCount <= 3) {
-                    console.log(`=== S3: Valid feature ${validFeatureCount} DETAILED ===`, {
-                      type: geometry.type,
-                      coordinateCount: geometry.type === 'Point' 
-                        ? 1
-                        : geometry.type === 'LineString'
-                        ? geometry.coordinates.length
-                        : geometry.type === 'MultiLineString'
-                        ? geometry.coordinates.reduce((sum, line) => sum + line.length, 0)
-                        : 'other',
-                      firstCoordinate: geometry.type === 'Point'
-                        ? geometry.coordinates
-                        : geometry.type === 'LineString'
-                        ? geometry.coordinates[0]
-                        : geometry.type === 'MultiLineString'
-                        ? geometry.coordinates[0][0]
-                        : null,
-                      lastCoordinate: geometry.type === 'LineString'
-                        ? geometry.coordinates[geometry.coordinates.length - 1]
-                        : geometry.type === 'MultiLineString'
-                        ? geometry.coordinates[geometry.coordinates.length - 1][geometry.coordinates[geometry.coordinates.length - 1].length - 1]
-                        : null,
-                      properties: { feature_name: row.feature_name, layer_name: row.layer_name }
-                    });
-                  }
                 } else {
                   console.warn(`S3: Invalid geometry validation in row ${i}:`, geometry.type);
                   invalidGeometryCount++;
@@ -2172,8 +2143,7 @@ export const saveLayerFeatures = async (features, country, province, city, domai
 // Save custom layer
 export const saveCustomLayer = async (cityName, layerData, boundary = null) => {
   try {
-    await initializeWasm();
-    
+    await initializeWasm();    
     const parts = cityName.split(',').map(p => p.trim());
     if (parts.length < 2) {
       throw new Error('Invalid city name format');

@@ -690,22 +690,26 @@ function App() {
   };
 
   const handleSaveLayer = async (layerData) => {
-    try {
+    try {      
       console.log('Saving custom layer:', layerData);
       if (!selectedCity) {
         throw new Error('No city selected');
       }
   
+      // If editing with changes, the old layer was already deleted in LayerSidebar
+      // Just save the new layer
       await saveCustomLayer(selectedCity.name, layerData, selectedCity.boundary);
   
+      // Refresh available layers
       const layers = await getAvailableLayersForCity(selectedCity.name);
       setAvailableLayers(layers);
   
+      // Update city status
       setCityDataStatus(prev => ({
         ...prev,
         [selectedCity.name]: true
       }));
-
+  
       await loadCities();
   
       setShowLayerModal(false);
