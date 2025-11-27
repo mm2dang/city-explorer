@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import 'leaflet.markercluster/dist/MarkerCluster.css';
@@ -132,6 +132,11 @@ const MapViewer = ({
   const abortControllerRef = useRef(null);
   const isLoadingRef = useRef(false);
   const displayedGeometriesRef = useRef(new Map());
+  const previousActiveLayersRef = useRef(new Set());
+  const activeLayerNames = useMemo(() => {
+    return Object.keys(activeLayers).filter(layer => activeLayers[layer]);
+  }, [activeLayers]);
+  const loadedLayersRef = useRef(new Set());
 
   // Initialize map
   useEffect(() => {
@@ -353,6 +358,10 @@ const MapViewer = ({
     }, 200);
   }, [mapView]);
 
+  const markLayerAsLoaded = useCallback((layerName) => {
+    loadedLayersRef.current = new Set([...loadedLayersRef.current, layerName]);
+  }, []);
+
   const displayCityMarkers = useCallback(() => {
     if (!mapInstanceRef.current) return;
   
@@ -551,44 +560,571 @@ const MapViewer = ({
     }
   
     setFeatureCount(0);
+    loadedLayersRef.current = new Set();
   }, []);
+
+  const loadLayerIncremental = useCallback(async (layerName) => {
+    if (!selectedCity || loadedLayersRef.current.has(layerName) || !loadCityFeatures) {
+      return;
+    }
+    
+    console.log(`Incrementally loading layer: ${layerName}`);
+    
+    try {
+      const singleLayerActive = { [layerName]: true };
+      const features = await loadCityFeatures(selectedCity.name, singleLayerActive);
+      
+      if (features.length === 0) {
+        console.log(`No features for layer ${layerName}`);
+        markLayerAsLoaded(layerName);
+        return;
+      }
+      
+      // Create global cluster group if it doesn't exist
+      if (!clusterGroupsRef.current['__global__']) {
+        console.log('Creating global cluster group in loadLayerIncremental');
+        
+        const globalClusterGroup = L.markerClusterGroup({
+          maxClusterRadius: 80,
+          spiderfyOnMaxZoom: true,
+          showCoverageOnHover: false,
+          zoomToBoundsOnClick: true,
+          spiderfyDistanceMultiplier: 1.5,
+          iconCreateFunction: function(cluster) {
+            const count = cluster.getChildCount();
+            const markers = cluster.getAllChildMarkers();
+            
+            // Count domains in this cluster
+            const domainCounts = {};
+            markers.forEach(marker => {
+              const domain = marker.options.domainName;
+              if (domain) {
+                domainCounts[domain] = (domainCounts[domain] || 0) + 1;
+              }
+            });
+            
+            const domains = Object.keys(domainCounts);
+            
+            // If single domain, use solid color
+            if (domains.length === 1) {
+              const domainColor = domainColors[domains[0]] || '#666666';
+              return L.divIcon({
+                html: `<div style="background-color: ${domainColor}; width: 40px; height: 40px; border-radius: 50%; border: 3px solid white; box-shadow: 0 2px 6px rgba(0,0,0,0.3); display: flex; align-items: center; justify-content: center; color: white; font-weight: bold; font-size: 14px; box-sizing: border-box;">${count}</div>`,
+                className: 'custom-cluster-icon',
+                iconSize: L.point(40, 40),
+                iconAnchor: L.point(20, 20)
+              });
+            }
+            
+            // Multiple domains - create pie chart
+            const total = count;
+            let currentAngle = 0;
+            const slices = [];
+            
+            domains.forEach(domain => {
+              const domainCount = domainCounts[domain];
+              const percentage = domainCount / total;
+              const angle = percentage * 360;
+              const color = domainColors[domain] || '#666666';
+              
+              slices.push({
+                color,
+                startAngle: currentAngle,
+                endAngle: currentAngle + angle,
+                percentage
+              });
+              
+              currentAngle += angle;
+            });
+            
+            // Generate conic-gradient for pie chart
+            const gradientStops = [];
+            slices.forEach((slice, index) => {
+              gradientStops.push(`${slice.color} ${slice.startAngle}deg ${slice.endAngle}deg`);
+            });
+            
+            const gradient = `conic-gradient(${gradientStops.join(', ')})`;
+            
+            return L.divIcon({
+              html: `<div style="background: ${gradient}; width: 40px; height: 40px; border-radius: 50%; border: 3px solid white; box-shadow: 0 2px 6px rgba(0,0,0,0.3); display: flex; align-items: center; justify-content: center; box-sizing: border-box;">
+                <div style="background: white; width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #374151; font-weight: bold; font-size: 12px;">${count}</div>
+              </div>`,
+              className: 'custom-cluster-icon',
+              iconSize: L.point(40, 40),
+              iconAnchor: L.point(20, 20)
+            });
+          },
+          chunkedLoading: true,
+          chunkInterval: 200,
+          chunkDelay: 50
+        });
+        
+        // Add event handlers for spiderfied state
+        globalClusterGroup.on('spiderfied', function(e) {
+          const cluster = e.cluster;
+          const markers = e.markers;
+          
+          markers.forEach((marker, index) => {
+            if (marker._icon) {
+              marker._icon.style.zIndex = 10000 + index;
+            }
+          });
+          
+          if (cluster._icon) {
+            cluster._icon.style.opacity = '0.3';
+            cluster._icon.style.transition = 'opacity 0.3s';
+          }
+        });
+  
+        globalClusterGroup.on('unspiderfied', function(e) {
+          const cluster = e.cluster;
+          if (cluster._icon) {
+            cluster._icon.style.opacity = '1';
+          }
+        });
+  
+        globalClusterGroup.on('clustermouseover', function(e) {
+          const cluster = e.layer;
+          const markers = cluster.getAllChildMarkers();
+          
+          const domainCounts = {};
+          markers.forEach(marker => {
+            const domain = marker.options.domainName;
+            if (domain) {
+              domainCounts[domain] = (domainCounts[domain] || 0) + 1;
+            }
+          });
+          
+          let tooltipContent = `<strong>${markers.length} features</strong>`;
+          
+          if (Object.keys(domainCounts).length > 1) {
+            tooltipContent += '<div class="domain-breakdown">';
+            Object.entries(domainCounts)
+              .sort((a, b) => b[1] - a[1])
+              .forEach(([domain, count]) => {
+                const color = domainColors[domain] || '#666666';
+                const domainName = domain.charAt(0).toUpperCase() + domain.slice(1);
+                tooltipContent += `
+                  <div class="domain-item">
+                    <div class="domain-color" style="background-color: ${color}"></div>
+                    <span>${domainName}: ${count}</span>
+                  </div>
+                `;
+              });
+            tooltipContent += '</div>';
+          }
+          
+          cluster.bindTooltip(tooltipContent, {
+            permanent: false,
+            direction: 'top',
+            offset: [0, -20],
+            opacity: 0.95,
+            className: 'cluster-tooltip'
+          }).openTooltip();
+        });
+  
+        globalClusterGroup.on('clustermouseout', function(e) {
+          e.layer.closeTooltip();
+        });
+        
+        clusterGroupsRef.current['__global__'] = globalClusterGroup;
+        globalClusterGroup.addTo(mapInstanceRef.current);
+      }
+      
+      const globalClusterGroup = clusterGroupsRef.current['__global__'];
+      
+      if (!globalClusterGroup) {
+        console.warn('No global cluster group available');
+        return;
+      }
+      
+      const safeAvailableLayers = availableLayers || {};
+      let addedCount = 0;
+      
+      // Process features in chunks to keep UI responsive
+      const CHUNK_SIZE = 50; // Process 50 features at a time
+      const markersToAdd = [];
+      
+      for (const feature of features) {
+        try {
+          if (!feature.geometry || !feature.geometry.type || !feature.geometry.coordinates) {
+            continue;
+          }
+          
+          const { feature_name, domain_name } = feature.properties;
+          const domainColor = domainColors[domain_name] || '#666666';
+          const iconClass = safeAvailableLayers[layerName]?.icon || layerIcons[layerName] || 'fas fa-map-marker-alt';
+          
+          if (feature.geometry.type === 'Point') {
+            const [lon, lat] = feature.geometry.coordinates;
+            
+            if (isNaN(lon) || isNaN(lat) || lon < -180 || lon > 180 || lat < -90 || lat > 90) {
+              continue;
+            }
+            
+            const customIcon = L.divIcon({
+              className: 'custom-marker-icon',
+              html: `
+                <div style="
+                  background-color: ${domainColor};
+                  width: 28px;
+                  height: 28px;
+                  border-radius: 50%;
+                  border: 2px solid white;
+                  box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+                  display: flex;
+                  align-items: center;
+                  justify-content: center;
+                  color: white;
+                  font-size: 12px;
+                  z-index: 1000;
+                ">
+                  <i class="${iconClass}"></i>
+                </div>
+              `,
+              iconSize: [28, 28],
+              popupAnchor: [0, -14],
+              domainColor: domainColor
+            });
+            
+            const marker = L.marker([lat, lon], {
+              icon: customIcon,
+              zIndexOffset: 1000,
+              domainName: domain_name,
+              layerName: layerName
+            });
+            
+            marker.bindTooltip(`
+              <div style="font-family: Inter, sans-serif;">
+                <h4 style="margin: 0 0 8px 0; color: #1a202c; font-size: 14px;">
+                  ${feature_name || 'Unnamed Feature'}
+                </h4>
+                <p style="margin: 0; color: #64748b; font-size: 12px;">
+                  <strong>Layer:</strong> ${layerName}<br>
+                  <strong>Domain:</strong> ${domain_name}
+                </p>
+              </div>
+            `, {
+              permanent: false,
+              direction: 'top',
+              offset: [0, -20],
+              opacity: 0.95,
+              className: 'feature-marker-tooltip'
+            });
+            
+            markersToAdd.push(marker);
+          } else {
+            // Handle non-point geometries
+            try {
+              const centroid = calculateCentroid(feature.geometry);
+              
+              const centroidMarker = L.marker([centroid.lat, centroid.lng], {
+                icon: L.divIcon({
+                  className: 'custom-marker-icon',
+                  html: `
+                    <div style="
+                      background-color: ${domainColor};
+                      width: 28px;
+                      height: 28px;
+                      border-radius: 50%;
+                      border: 2px solid white;
+                      box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+                      display: flex;
+                      align-items: center;
+                      justify-content: center;
+                      color: white;
+                      font-size: 12px;
+                      z-index: 1000;
+                    ">
+                      <i class="${iconClass}"></i>
+                    </div>
+                  `,
+                  iconSize: [28, 28],
+                  popupAnchor: [0, -14],
+                  domainColor: domainColor
+                }),
+                zIndexOffset: 1000,
+                domainName: domain_name,
+                layerName: layerName
+              });
+              
+              centroidMarker.featureGeometry = feature.geometry;
+              centroidMarker.featureColor = domainColor;
+              centroidMarker.geometryLayer = null;
+              
+              centroidMarker.on('click', function(e) {
+                const markerId = L.stamp(this);
+                
+                if (this.geometryLayer && mapInstanceRef.current.hasLayer(this.geometryLayer)) {
+                  mapInstanceRef.current.removeLayer(this.geometryLayer);
+                  this.geometryLayer = null;
+                  displayedGeometriesRef.current.delete(markerId);
+                } else {
+                  this.geometryLayer = L.geoJSON(this.featureGeometry, {
+                    style: {
+                      color: this.featureColor,
+                      weight: 3,
+                      opacity: 0.9,
+                      fillColor: this.featureColor,
+                      fillOpacity: 0.3
+                    }
+                  }).addTo(mapInstanceRef.current);
+              
+                  this.geometryLayer.bringToFront();
+                  
+                  if (tileLayerRef.current) {
+                    tileLayerRef.current.bringToBack();
+                  }
+                  
+                  displayedGeometriesRef.current.set(markerId, {
+                    layer: this.geometryLayer,
+                    marker: this,
+                    layerName: layerName
+                  });
+                }
+              });
+              
+              centroidMarker.bindTooltip(`
+                <div style="font-family: Inter, sans-serif;">
+                  <h4 style="margin: 0 0 8px 0; color: #1a202c; font-size: 14px;">
+                    ${feature_name || 'Unnamed Feature'}
+                  </h4>
+                  <p style="margin: 0; color: #64748b; font-size: 12px;">
+                    <strong>Layer:</strong> ${layerName}<br>
+                    <strong>Domain:</strong> ${domain_name}<br>
+                    <strong>Type:</strong> ${feature.geometry.type}<br>
+                    <em style="color: #0891b2; font-size: 11px;">Click marker to view geometry</em>
+                  </p>
+                </div>
+              `, {
+                permanent: false,
+                direction: 'top',
+                offset: [0, -20],
+                opacity: 0.95,
+                className: 'feature-marker-tooltip'
+              });
+              
+              markersToAdd.push(centroidMarker);
+            } catch (error) {
+              console.warn(`Error adding centroid for feature in layer ${layerName}:`, error);
+            }
+          }
+        } catch (error) {
+          console.warn(`Error processing feature in layer ${layerName}:`, error);
+        }
+      }
+      
+      // Add markers in chunks with delays to keep UI responsive
+      for (let i = 0; i < markersToAdd.length; i += CHUNK_SIZE) {
+        const chunk = markersToAdd.slice(i, i + CHUNK_SIZE);
+        
+        // Add chunk to cluster
+        chunk.forEach(marker => {
+          globalClusterGroup.addLayer(marker);
+        });
+        
+        // Update counts
+        addedCount += chunk.length;
+        setFeatureCount(prev => prev + chunk.length);
+        
+        // Yield to browser for rendering between chunks
+        if (i + CHUNK_SIZE < markersToAdd.length) {
+          await new Promise(resolve => setTimeout(resolve, 0));
+        }
+      }
+      
+      if (addedCount > 0) {
+        globalClusterGroup.refreshClusters();
+        console.log(`Added ${addedCount} features for layer ${layerName}`);
+      }
+      
+      markLayerAsLoaded(layerName);
+      
+    } catch (error) {
+      console.error(`Error loading layer ${layerName}:`, error);
+    }
+  }, [selectedCity, loadCityFeatures, domainColors, availableLayers, markLayerAsLoaded]);
+
+  const removeLayerIncremental = useCallback((layerName) => {
+    const globalClusterGroup = clusterGroupsRef.current['__global__'];
+    
+    if (!globalClusterGroup) return;
+    
+    console.log(`Incrementally removing layer: ${layerName}`);
+    
+    const layers = globalClusterGroup.getLayers();
+    let removedCount = 0;
+    
+    layers.forEach(layer => {
+      if (layer.options?.layerName === layerName) {
+        // Also remove any displayed geometry for this marker
+        const markerId = L.stamp(layer);
+        const geomInfo = displayedGeometriesRef.current.get(markerId);
+        if (geomInfo && geomInfo.layer && mapInstanceRef.current.hasLayer(geomInfo.layer)) {
+          mapInstanceRef.current.removeLayer(geomInfo.layer);
+          displayedGeometriesRef.current.delete(markerId);
+        }
+        
+        globalClusterGroup.removeLayer(layer);
+        removedCount++;
+      }
+    });
+    
+    if (removedCount > 0) {
+      globalClusterGroup.refreshClusters();
+      setFeatureCount(prev => Math.max(0, prev - removedCount));
+      
+      // Update ref only
+      const newSet = new Set(loadedLayersRef.current);
+      newSet.delete(layerName);
+      loadedLayersRef.current = newSet;
+      
+      console.log(`Removed ${removedCount} features for layer ${layerName}`);
+    }
+  }, []);
+
+  // Load all active layers when city is selected
+  useEffect(() => {
+    if (!selectedCity || !mapInstanceRef.current) return;
+    
+    // Clear previous layers
+    loadedLayersRef.current = new Set();
+    previousActiveLayersRef.current = new Set();
+    
+    if (activeLayerNames.length > 0) {
+      console.log('Loading initial layers for new city:', activeLayerNames);
+      setIsLoadingData(true);
+      
+      previousActiveLayersRef.current = new Set(activeLayerNames);
+      
+      const timeoutId = setTimeout(async () => {
+        try {
+          // Stagger the layer loading to prevent overwhelming the browser
+          const loadPromises = activeLayerNames.map((layerName, index) => {
+            return new Promise(resolve => {
+              setTimeout(async () => {
+                await loadLayerIncremental(layerName);
+                resolve();
+              }, index * 50); // 50ms delay between starting each layer
+            });
+          });
+          
+          await Promise.all(loadPromises);
+        } finally {
+          setIsLoadingData(false);
+        }
+      }, 100);
+      
+      return () => {
+        clearTimeout(timeoutId);
+        setIsLoadingData(false);
+      };
+    } else {
+      previousActiveLayersRef.current = new Set();
+    }
+  }, [selectedCity, activeLayerNames, loadLayerIncremental]);
+
+  // Monitor layer changes and load/remove incrementally
+  useEffect(() => {
+    if (!selectedCity || !mapInstanceRef.current) return;
+    
+    const currentActive = new Set(activeLayerNames);
+    const previousActive = previousActiveLayersRef.current;
+    
+    const addedLayers = [...currentActive].filter(layer => !previousActive.has(layer));
+    const removedLayers = [...previousActive].filter(layer => !currentActive.has(layer));
+    
+    console.log('Layer changes detected:', { addedLayers, removedLayers });
+    
+    // Remove layers that were turned off
+    removedLayers.forEach(layerName => {
+      removeLayerIncremental(layerName);
+    });
+    
+    // Load layers that were turned on in parallel
+    if (addedLayers.length > 0) {
+      setIsLoadingData(true);
+      
+      const timeoutId = setTimeout(async () => {
+        try {
+          // Load all added layers in parallel
+          await Promise.all(
+            addedLayers.map(layerName => loadLayerIncremental(layerName))
+          );
+        } finally {
+          setIsLoadingData(false);
+        }
+      }, 100);
+      
+      return () => {
+        clearTimeout(timeoutId);
+        setIsLoadingData(false);
+      };
+    }
+    
+    previousActiveLayersRef.current = currentActive;
+    
+  }, [activeLayerNames, selectedCity, loadLayerIncremental, removeLayerIncremental]);
 
   // Update map when city is selected
   useEffect(() => {
     if (!mapInstanceRef.current) return;
-
-    clearAllLayers();
-
+  
     if (!selectedCity) {
-      // Show world view when no city selected
+      clearAllLayers();
+      loadedLayersRef.current = new Set();
+      previousActiveLayersRef.current = new Set();
+      
+      // Clear the global cluster group completely
+      if (clusterGroupsRef.current['__global__']) {
+        const globalCluster = clusterGroupsRef.current['__global__'];
+        globalCluster.clearLayers();
+        if (mapInstanceRef.current.hasLayer(globalCluster)) {
+          mapInstanceRef.current.removeLayer(globalCluster);
+        }
+        clusterGroupsRef.current['__global__'] = null;
+      }
+      
       mapInstanceRef.current.setView([20, 0], 2);
       
-      // Clear stored city data
       const mapContainer = mapInstanceRef.current.getContainer();
       delete mapContainer.dataset.cityLat;
       delete mapContainer.dataset.cityLng;
       
-      // Display city markers after clearing layers
       setTimeout(() => {
         displayCityMarkers();
       }, 100);
       
       return;
     }
-
+  
     try {
       console.log('MapViewer: Updating map for city:', selectedCity.name);
-
+      
+      // Clear existing cluster group when switching cities
+      if (clusterGroupsRef.current['__global__']) {
+        const globalCluster = clusterGroupsRef.current['__global__'];
+        globalCluster.clearLayers();
+        if (mapInstanceRef.current.hasLayer(globalCluster)) {
+          mapInstanceRef.current.removeLayer(globalCluster);
+        }
+        clusterGroupsRef.current['__global__'] = null;
+      }
+      
+      // Clear loaded layers tracking
+      loadedLayersRef.current = new Set();
+      setFeatureCount(0);
+  
       // Store city coordinates in map container for recenter button
       const mapContainer = mapInstanceRef.current.getContainer();
       if (selectedCity.latitude && selectedCity.longitude) {
         mapContainer.dataset.cityLat = selectedCity.latitude;
         mapContainer.dataset.cityLng = selectedCity.longitude;
       }
-
+  
       if (selectedCity.boundary) {
         const boundary = JSON.parse(selectedCity.boundary);
-
+  
         const boundaryLayer = L.geoJSON(boundary, {
           style: {
             color: '#0891b2',
@@ -597,10 +1133,10 @@ const MapViewer = ({
             fillOpacity: 0.1
           }
         });
-
+  
         boundaryLayer.addTo(mapInstanceRef.current);
         boundaryLayerRef.current = boundaryLayer;
-
+  
         const bounds = boundaryLayer.getBounds();
         if (bounds.isValid()) {
           mapInstanceRef.current.fitBounds(bounds, { padding: [50, 50] });
@@ -615,535 +1151,6 @@ const MapViewer = ({
       }
     }
   }, [selectedCity, clearAllLayers, displayCityMarkers]);
-
-  // Load and display features
-  const loadAndDisplayFeatures = useCallback(async () => {
-    if (!selectedCity || !mapInstanceRef.current || !loadCityFeatures) {
-      console.log('MapViewer: Skipping feature load due to missing dependencies', {
-        selectedCity: !!selectedCity,
-        mapInstance: !!mapInstanceRef.current,
-        loadCityFeatures: !!loadCityFeatures
-      });
-      return;
-    }
-
-    if (!mapInstanceRef.current || !mapInstanceRef.current.getContainer()) {
-      console.log('MapViewer: Map instance is no longer valid');
-      return;
-    }
-  
-    const safeActiveLayers = activeLayers || {};
-    const activeLayerNames = Object.keys(safeActiveLayers).filter(layer => safeActiveLayers[layer]);
-    
-    console.log('MapViewer: Loading features for layers:', activeLayerNames);
-  
-    if (activeLayerNames.length === 0) {
-      Object.entries(clusterGroupsRef.current).forEach(([layerName, clusterGroup]) => {
-        if (clusterGroup && mapInstanceRef.current.hasLayer(clusterGroup)) {
-          mapInstanceRef.current.removeLayer(clusterGroup);
-        }
-      });
-      clusterGroupsRef.current = {};
-  
-      if (nonPointLayerRef.current && mapInstanceRef.current.hasLayer(nonPointLayerRef.current)) {
-        mapInstanceRef.current.removeLayer(nonPointLayerRef.current);
-        nonPointLayerRef.current = null;
-      }
-  
-      setFeatureCount(0);
-      return;
-    }
-  
-    // Abort any existing loading operation
-    if (abortControllerRef.current) {
-      console.log('MapViewer: Aborting previous loading operation');
-      abortControllerRef.current.abort();
-    }
-  
-    // Create new abort controller for this operation
-    abortControllerRef.current = new AbortController();
-    const currentAbortController = abortControllerRef.current;
-  
-    try {
-      setIsLoadingData(true);
-      isLoadingRef.current = true;
-  
-      console.log('MapViewer: Calling loadCityFeatures with active layers:', activeLayerNames);
-      const features = await loadCityFeatures(selectedCity.name, safeActiveLayers);
-      
-      // Check if this operation was aborted
-      if (currentAbortController.signal.aborted) {
-        console.log('MapViewer: Loading was aborted, skipping feature display');
-        return;
-      }
-      
-      console.log('MapViewer: Loaded features:', features.length);
-  
-      // Clear existing cluster groups and non-point layers
-      Object.entries(clusterGroupsRef.current).forEach(([layerName, clusterGroup]) => {
-        if (clusterGroup && mapInstanceRef.current.hasLayer(clusterGroup)) {
-          mapInstanceRef.current.removeLayer(clusterGroup);
-        }
-      });
-      clusterGroupsRef.current = {};
-  
-      if (nonPointLayerRef.current && mapInstanceRef.current.hasLayer(nonPointLayerRef.current)) {
-        mapInstanceRef.current.removeLayer(nonPointLayerRef.current);
-        nonPointLayerRef.current = null;
-      }
-  
-      // Check abort signal again before processing features
-      if (currentAbortController.signal.aborted) {
-        console.log('MapViewer: Loading was aborted before processing features');
-        return;
-      }
-  
-      // Group features by layer and domain
-      const groupedFeatures = {};
-      features.forEach(feature => {
-        const layerName = feature.properties.layer_name;
-        const domainName = feature.properties.domain_name;
-        if (!groupedFeatures[layerName]) {
-          groupedFeatures[layerName] = [];
-        }
-        groupedFeatures[layerName].push({
-          ...feature,
-          domainName
-        });
-      });
-  
-      console.log('MapViewer: Grouped features by layer:', Object.keys(groupedFeatures));
-  
-      let totalFeatures = 0;
-      const safeAvailableLayers = availableLayers || {};
-  
-      // Create a single cluster group for all layers
-      const globalClusterGroup = L.markerClusterGroup({
-        maxClusterRadius: 80,
-        spiderfyOnMaxZoom: true,
-        showCoverageOnHover: false,
-        zoomToBoundsOnClick: true,
-        spiderfyDistanceMultiplier: 1.5,
-        iconCreateFunction: function(cluster) {
-          const count = cluster.getChildCount();
-          const markers = cluster.getAllChildMarkers();
-          
-          // Count domains in this cluster
-          const domainCounts = {};
-          markers.forEach(marker => {
-            const domain = marker.options.domainName;
-            if (domain) {
-              domainCounts[domain] = (domainCounts[domain] || 0) + 1;
-            }
-          });
-          
-          const domains = Object.keys(domainCounts);
-          
-          // If single domain, use solid color
-          if (domains.length === 1) {
-            const domainColor = domainColors[domains[0]] || '#666666';
-            return L.divIcon({
-              html: `<div style="background-color: ${domainColor}; width: 40px; height: 40px; border-radius: 50%; border: 3px solid white; box-shadow: 0 2px 6px rgba(0,0,0,0.3); display: flex; align-items: center; justify-content: center; color: white; font-weight: bold; font-size: 14px; box-sizing: border-box;">${count}</div>`,
-              className: 'custom-cluster-icon',
-              iconSize: L.point(40, 40),
-              iconAnchor: L.point(20, 20)
-            });
-          }
-          
-          // Multiple domains - create pie chart
-          const total = count;
-          let currentAngle = 0;
-          const slices = [];
-          
-          domains.forEach(domain => {
-            const domainCount = domainCounts[domain];
-            const percentage = domainCount / total;
-            const angle = percentage * 360;
-            const color = domainColors[domain] || '#666666';
-            
-            slices.push({
-              color,
-              startAngle: currentAngle,
-              endAngle: currentAngle + angle,
-              percentage
-            });
-            
-            currentAngle += angle;
-          });
-          
-          // Generate conic-gradient for pie chart
-          const gradientStops = [];
-          slices.forEach((slice, index) => {
-            gradientStops.push(`${slice.color} ${slice.startAngle}deg ${slice.endAngle}deg`);
-          });
-          
-          const gradient = `conic-gradient(${gradientStops.join(', ')})`;
-          
-          return L.divIcon({
-            html: `<div style="background: ${gradient}; width: 40px; height: 40px; border-radius: 50%; border: 3px solid white; box-shadow: 0 2px 6px rgba(0,0,0,0.3); display: flex; align-items: center; justify-content: center; box-sizing: border-box;">
-              <div style="background: white; width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #374151; font-weight: bold; font-size: 12px;">${count}</div>
-            </div>`,
-            className: 'custom-cluster-icon',
-            iconSize: L.point(40, 40),
-            iconAnchor: L.point(20, 20)
-          });
-        },
-        chunkedLoading: true,
-        chunkInterval: 200,
-        chunkDelay: 50
-      });
-
-      if (!mapInstanceRef.current || !mapInstanceRef.current.getContainer()) {
-        console.log('MapViewer: Map instance became invalid, aborting');
-        return;
-      }
-      
-      // Process all layers and add to single cluster group
-      for (const [layerName, layerFeatures] of Object.entries(groupedFeatures)) {
-        // Check abort signal periodically during processing
-        if (currentAbortController.signal.aborted) {
-          console.log('MapViewer: Loading was aborted during feature processing');
-          return;
-        }
-  
-        if (!safeActiveLayers[layerName]) continue;
-
-        let markerCount = 0;
-  
-        for (const feature of layerFeatures) {
-          // Check abort signal for every batch of features
-          if (markerCount % 100 === 0 && currentAbortController.signal.aborted) {
-            console.log('MapViewer: Loading was aborted during marker creation');
-            return;
-          }
-  
-          try {
-            if (!feature.geometry || !feature.geometry.type || !feature.geometry.coordinates) {
-              console.warn(`MapViewer: Invalid geometry for feature in layer ${layerName}`, feature);
-              continue;
-            }
-  
-            const { feature_name, domain_name } = feature.properties;
-            const domainColor = domainColors[domain_name] || '#666666';
-            const iconClass = safeAvailableLayers[layerName]?.icon || layerIcons[layerName] || 'fas fa-map-marker-alt';
-  
-            if (feature.geometry.type === 'Point') {
-              const { coordinates } = feature.geometry;
-              if (!Array.isArray(coordinates) || coordinates.length < 2) {
-                console.warn(`MapViewer: Invalid point coordinates in layer ${layerName}`, coordinates);
-                continue;
-              }
-  
-              const [lon, lat] = coordinates;
-  
-              if (isNaN(lon) || isNaN(lat) || lon < -180 || lon > 180 || lat < -90 || lat > 90) {
-                console.warn(`MapViewer: Invalid coordinates in layer ${layerName}`, { lon, lat });
-                continue;
-              }
-  
-              const customIcon = L.divIcon({
-                className: 'custom-marker-icon',
-                html: `
-                  <div style="
-                    background-color: ${domainColor};
-                    width: 28px;
-                    height: 28px;
-                    border-radius: 50%;
-                    border: 2px solid white;
-                    box-shadow: 0 2px 4px rgba(0,0,0,0.3);
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    color: white;
-                    font-size: 12px;
-                    z-index: 1000;
-                  ">
-                    <i class="${iconClass}"></i>
-                  </div>
-                `,
-                iconSize: [28, 28],
-                popupAnchor: [0, -14],
-                domainColor: domainColor
-              });
-  
-              const marker = L.marker([lat, lon], {
-                icon: customIcon,
-                zIndexOffset: 1000,
-                domainName: domain_name
-              });
-  
-              marker.bindTooltip(`
-                <div style="font-family: Inter, sans-serif;">
-                  <h4 style="margin: 0 0 8px 0; color: #1a202c; font-size: 14px;">
-                    ${feature_name || 'Unnamed Feature'}
-                  </h4>
-                  <p style="margin: 0; color: #64748b; font-size: 12px;">
-                    <strong>Layer:</strong> ${layerName}<br>
-                    <strong>Domain:</strong> ${domain_name}
-                  </p>
-                </div>
-              `, {
-                permanent: false,
-                direction: 'top',
-                offset: [0, -20],
-                opacity: 0.95,
-                className: 'feature-marker-tooltip'
-              });
-  
-              globalClusterGroup.addLayer(marker);
-              markerCount++;
-            } else {
-              // Handle non-point geometries
-              try {
-                const centroid = calculateCentroid(feature.geometry);
-  
-                const centroidMarker = L.marker([centroid.lat, centroid.lng], {
-                  icon: L.divIcon({
-                    className: 'custom-marker-icon',
-                    html: `
-                      <div style="
-                        background-color: ${domainColor};
-                        width: 28px;
-                        height: 28px;
-                        border-radius: 50%;
-                        border: 2px solid white;
-                        box-shadow: 0 2px 4px rgba(0,0,0,0.3);
-                        display: flex;
-                        align-items: center;
-                        justify-content: center;
-                        color: white;
-                        font-size: 12px;
-                        z-index: 1000;
-                      ">
-                        <i class="${iconClass}"></i>
-                      </div>
-                    `,
-                    iconSize: [28, 28],
-                    popupAnchor: [0, -14],
-                    domainColor: domainColor
-                  }),
-                  zIndexOffset: 1000,
-                  domainName: domain_name
-                });
-  
-                centroidMarker.featureGeometry = feature.geometry;
-                centroidMarker.featureColor = domainColor;
-                centroidMarker.geometryLayer = null;
-  
-                centroidMarker.on('click', function(e) {
-                  const markerId = L.stamp(this); // Get unique ID for this marker
-                  
-                  if (this.geometryLayer && mapInstanceRef.current.hasLayer(this.geometryLayer)) {
-                    // Hide geometry
-                    mapInstanceRef.current.removeLayer(this.geometryLayer);
-                    this.geometryLayer = null;
-                    displayedGeometriesRef.current.delete(markerId);
-                  } else {
-                    // Show geometry
-                    this.geometryLayer = L.geoJSON(this.featureGeometry, {
-                      style: {
-                        color: this.featureColor,
-                        weight: 3,
-                        opacity: 0.9,
-                        fillColor: this.featureColor,
-                        fillOpacity: 0.3
-                      }
-                    }).addTo(mapInstanceRef.current);
-                
-                    this.geometryLayer.bringToFront();
-                    
-                    if (tileLayerRef.current) {
-                      tileLayerRef.current.bringToBack();
-                    }
-                    
-                    // Track this geometry
-                    displayedGeometriesRef.current.set(markerId, {
-                      layer: this.geometryLayer,
-                      marker: this,
-                      layerName: layerName
-                    });
-                  }
-                });
-  
-                centroidMarker.bindTooltip(`
-                  <div style="font-family: Inter, sans-serif;">
-                    <h4 style="margin: 0 0 8px 0; color: #1a202c; font-size: 14px;">
-                      ${feature_name || 'Unnamed Feature'}
-                    </h4>
-                    <p style="margin: 0; color: #64748b; font-size: 12px;">
-                      <strong>Layer:</strong> ${layerName}<br>
-                      <strong>Domain:</strong> ${domain_name}<br>
-                      <strong>Type:</strong> ${feature.geometry.type}<br>
-                      <em style="color: #0891b2; font-size: 11px;">Click marker to view geometry</em>
-                    </p>
-                  </div>
-                `, {
-                  permanent: false,
-                  direction: 'top',
-                  offset: [0, -20],
-                  opacity: 0.95,
-                  className: 'feature-marker-tooltip'
-                });
-  
-                globalClusterGroup.addLayer(centroidMarker);
-                markerCount++;
-              } catch (error) {
-                console.warn(`MapViewer: Error adding centroid for feature in layer ${layerName}:`, error);
-              }
-            }
-          } catch (error) {
-            console.warn(`MapViewer: Error processing feature in layer ${layerName}:`, error);
-          }
-        }
-  
-        console.log(`MapViewer: Processed ${markerCount} features for layer ${layerName}`);
-        totalFeatures += markerCount;
-      }
-      
-      // Add event handlers for spiderfied state to global cluster
-      globalClusterGroup.on('spiderfied', function(e) {
-        const cluster = e.cluster;
-        const markers = e.markers;
-        
-        markers.forEach((marker, index) => {
-          if (marker._icon) {
-            marker._icon.style.zIndex = 10000 + index;
-          }
-        });
-        
-        if (cluster._icon) {
-          cluster._icon.style.opacity = '0.3';
-          cluster._icon.style.transition = 'opacity 0.3s';
-        }
-      });
-
-      globalClusterGroup.on('unspiderfied', function(e) {
-        const cluster = e.cluster;
-        if (cluster._icon) {
-          cluster._icon.style.opacity = '1';
-        }
-      });
-
-      // Add cluster hover tooltips showing domain breakdown
-      globalClusterGroup.on('clustermouseover', function(e) {
-        const cluster = e.layer;
-        const markers = cluster.getAllChildMarkers();
-        
-        // Count domains
-        const domainCounts = {};
-        markers.forEach(marker => {
-          const domain = marker.options.domainName;
-          if (domain) {
-            domainCounts[domain] = (domainCounts[domain] || 0) + 1;
-          }
-        });
-        
-        // Build tooltip content
-        let tooltipContent = `<strong>${markers.length} features</strong>`;
-        
-        if (Object.keys(domainCounts).length > 1) {
-          tooltipContent += '<div class="domain-breakdown">';
-          Object.entries(domainCounts)
-            .sort((a, b) => b[1] - a[1]) // Sort by count descending
-            .forEach(([domain, count]) => {
-              const color = domainColors[domain] || '#666666';
-              const domainName = domain.charAt(0).toUpperCase() + domain.slice(1);
-              tooltipContent += `
-                <div class="domain-item">
-                  <div class="domain-color" style="background-color: ${color}"></div>
-                  <span>${domainName}: ${count}</span>
-                </div>
-              `;
-            });
-          tooltipContent += '</div>';
-        }
-        
-        cluster.bindTooltip(tooltipContent, {
-          permanent: false,
-          direction: 'top',
-          offset: [0, -20],
-          opacity: 0.95,
-          className: 'cluster-tooltip'
-        }).openTooltip();
-      });
-
-      globalClusterGroup.on('clustermouseout', function(e) {
-        e.layer.closeTooltip();
-      });
-  
-      // Final abort check before adding to map
-      if (currentAbortController.signal.aborted) {
-        console.log('MapViewer: Loading was aborted before adding cluster groups to map');
-        return;
-      }
-  
-      if (globalClusterGroup.getLayers().length > 0) {
-        if (!mapInstanceRef.current || !mapInstanceRef.current.getContainer()) {
-          console.log('MapViewer: Map instance invalid, cannot add cluster group');
-          return;
-        }
-        
-        try {
-          globalClusterGroup.addTo(mapInstanceRef.current);
-          clusterGroupsRef.current['__global__'] = globalClusterGroup;
-          console.log(`MapViewer: Added global cluster group with ${globalClusterGroup.getLayers().length} markers from all layers`);
-        } catch (error) {
-          console.error('MapViewer: Error adding cluster group to map:', error);
-          return;
-        }
-      }
-  
-      setFeatureCount(totalFeatures);
-      console.log(`MapViewer: Total features displayed: ${totalFeatures}`);
-  
-      setTimeout(() => {
-        // Check one more time before final map operations
-        if (currentAbortController.signal.aborted) {
-          console.log('MapViewer: Loading was aborted before final map refresh');
-          return;
-        }
-  
-        if (mapInstanceRef.current) {
-          mapInstanceRef.current.invalidateSize();
-          Object.values(clusterGroupsRef.current).forEach(group => {
-            if (group && typeof group.refreshClusters === 'function') {
-              group.refreshClusters();
-            }
-          });
-        }
-      }, 100);
-    } catch (error) {
-      // Check if error is due to abort
-      if (error.name === 'AbortError' || currentAbortController.signal.aborted) {
-        console.log('MapViewer: Loading was aborted');
-        return;
-      }
-      console.error('MapViewer: Error loading and displaying features:', error);
-    } finally {
-      // Only clear loading state if this operation wasn't aborted
-      if (!currentAbortController.signal.aborted) {
-        setIsLoadingData(false);
-        isLoadingRef.current = false;
-      }
-    }
-  }, [selectedCity, activeLayers, domainColors, loadCityFeatures, availableLayers]);  
-
-  // Effect to load features when activeLayers change
-  useEffect(() => {
-    if (loadFeaturesTimeoutRef.current) {
-      clearTimeout(loadFeaturesTimeoutRef.current);
-    }
-
-    loadFeaturesTimeoutRef.current = setTimeout(() => {
-      loadAndDisplayFeatures();
-    }, 100);
-
-    return () => {
-      if (loadFeaturesTimeoutRef.current) {
-        clearTimeout(loadFeaturesTimeoutRef.current);
-      }
-    };
-  }, [loadAndDisplayFeatures]);
 
   // Cleanup effect when selectedCity changes to null
   useEffect(() => {
@@ -1247,7 +1254,10 @@ const MapViewer = ({
         <div className="map-loading-overlay">
           <div className="loading-spinner">
             <i className="fas fa-spinner fa-spin"></i>
-            <span>Loading map data...</span>
+            <span>Loading map...</span>
+            <div style={{ fontSize: '12px', marginTop: '8px', color: '#64748b' }}>
+              {loadedLayersRef.current.size} / {activeLayerNames.length} layers complete
+            </div>
           </div>
         </div>
       )}

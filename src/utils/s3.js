@@ -3,6 +3,84 @@ import { readParquet, writeParquet, Table, WriterPropertiesBuilder, Compression 
 import { tableFromArrays, tableToIPC, tableFromIPC } from 'apache-arrow';
 import * as turf from '@turf/turf';
 
+const featureCache = new Map();
+const metadataCache = new Map();
+const FEATURE_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+const METADATA_CACHE_TTL = 15 * 60 * 1000; // 15 minutes
+
+const getCacheKey = (cityName, layerName, dataSource) => {
+  return `${dataSource}:${cityName}:${layerName}`;
+};
+
+const getMetadataCacheKey = (cityName, dataSource) => {
+  return `${dataSource}:meta:${cityName}`;
+};
+
+const cleanupCache = () => {
+  const now = Date.now();
+  
+  for (const [key, value] of featureCache.entries()) {
+    if (now - value.timestamp > FEATURE_CACHE_TTL) {
+      featureCache.delete(key);
+    }
+  }
+  
+  for (const [key, value] of metadataCache.entries()) {
+    if (now - value.timestamp > METADATA_CACHE_TTL) {
+      metadataCache.delete(key);
+    }
+  }
+};
+
+setInterval(cleanupCache, 2 * 60 * 1000);
+
+export const clearCacheForDataSource = (dataSource) => {
+  const prefix = `${dataSource}:`;
+  
+  for (const key of featureCache.keys()) {
+    if (key.startsWith(prefix)) {
+      featureCache.delete(key);
+    }
+  }
+  
+  for (const key of metadataCache.keys()) {
+    if (key.startsWith(prefix)) {
+      metadataCache.delete(key);
+    }
+  }
+  
+  console.log(`Cleared cache for data source: ${dataSource}`);
+};
+
+export const invalidateCityCache = (cityName) => {
+  let deletedCount = 0;
+  
+  for (const key of featureCache.keys()) {
+    if (key.includes(cityName)) {
+      featureCache.delete(key);
+      deletedCount++;
+    }
+  }
+  
+  for (const key of metadataCache.keys()) {
+    if (key.includes(cityName)) {
+      metadataCache.delete(key);
+      deletedCount++;
+    }
+  }
+  
+  console.log(`Invalidated ${deletedCount} cache entries for: ${cityName}`);
+};
+
+export const getCacheStats = () => {
+  return {
+    featureCacheSize: featureCache.size,
+    metadataCacheSize: metadataCache.size,
+    featureCacheKeys: Array.from(featureCache.keys()),
+    metadataCacheKeys: Array.from(metadataCache.keys())
+  };
+};
+
 // Helper function to convert stream to ArrayBuffer - used throughout the module
 const streamToArrayBuffer = async (stream) => {
   const reader = stream.getReader();
@@ -410,6 +488,17 @@ export const getAllCities = async () => {
 const getCityData = async (country, province, city) => {
   try {
     await initializeWasm();
+    
+    const cityName = province ? `${city}, ${province}, ${country}` : `${city}, ${country}`;
+    const cacheKey = getMetadataCacheKey(cityName, DATA_SOURCE_PREFIX);
+    const cached = metadataCache.get(cacheKey);
+    
+    if (cached && Date.now() - cached.timestamp < METADATA_CACHE_TTL) {
+      console.log(`Metadata cache HIT: ${cityName}`);
+      return cached.data;
+    }
+    
+    console.log(`Metadata cache MISS: ${cityName} - fetching from S3`);
     console.log(`=== Loading city data for: ${country}/${province}/${city} (source: ${DATA_SOURCE_PREFIX}) ===`);
     
     // Load city metadata from population bucket
@@ -459,6 +548,13 @@ const getCityData = async (country, province, city) => {
           size: row.size ? parseFloat(row.size) : null,
           sdg_region: row.sdg_region,
         };
+        
+        if (cityData) {
+          metadataCache.set(cacheKey, {
+            data: cityData,
+            timestamp: Date.now()
+          });
+        }
         
         console.log(`Successfully loaded city data for: ${cityData.name}`);
         return cityData;
@@ -559,6 +655,10 @@ export const saveCityData = async (cityData, country, province, city) => {
       population: populationValue,
       coordinates: [longitude, latitude]
     });
+    
+    // Invalidate cache after successful save
+    const cityName = cityData.name;
+    invalidateCityCache(cityName);
   } catch (error) {
     console.error('Error saving city data to population bucket:', error);
     throw error;
@@ -588,7 +688,7 @@ export const moveCityData = async (oldCountry, oldProvince, oldCity, newCountry,
     const objectsToCopy = [];
     const objectsToDelete = [];
     
-    // Find all data layer files - USE FULL PATH WITH PREFIX
+    // Find all data layer files
     const dataPrefix = `${DATA_SOURCE_PREFIX}/data/country=${oldNormalizedCountry}/province=${oldNormalizedProvince}/city=${oldNormalizedCity}/`;
     console.log(`Scanning data prefix: ${dataPrefix}`);
     
@@ -608,7 +708,6 @@ export const moveCityData = async (oldCountry, oldProvince, oldCity, newCountry,
           const match = obj.Key.match(/domain=([^/]+)\/(.+)$/);
           if (match) {
             const [, domain, fileName] = match;
-            // BUILD NEW KEY WITH FULL PREFIX
             const newKey = `${DATA_SOURCE_PREFIX}/data/country=${newNormalizedCountry}/province=${newNormalizedProvince}/city=${newNormalizedCity}/domain=${domain}/${fileName}`;
             
             objectsToCopy.push({
@@ -627,7 +726,7 @@ export const moveCityData = async (oldCountry, oldProvince, oldCity, newCountry,
     
     console.log(`Found ${objectsToCopy.length} data files to move`);
     
-    // Copy all files to new location - use GetObject/PutObject instead of CopyObject
+    // Copy all files to new location
     for (const { oldKey, newKey } of objectsToCopy) {
       try {
         console.log(`Attempting to copy via read/write: ${oldKey} -> ${newKey}`);
@@ -681,6 +780,12 @@ export const moveCityData = async (oldCountry, oldProvince, oldCity, newCountry,
         console.log(`Deleted batch of ${batch.length} old files`);
       }
     }
+
+    // Invalidate cache after successful move
+    const oldCityName = oldProvince ? `${oldCity}, ${oldProvince}, ${oldCountry}` : `${oldCity}, ${oldCountry}`;
+    invalidateCityCache(oldCityName);
+    const newCityName = newProvince ? `${newCity}, ${newProvince}, ${newCountry}` : `${newCity}, ${newCountry}`;
+    invalidateCityCache(newCityName);
     
     console.log(`Successfully moved all data for city`);
   } catch (error) {
@@ -797,7 +902,126 @@ export const getAvailableLayersForCity = async (cityName) => {
   }
 };
 
+const loadSingleLayerCached = async (cityName, country, province, city, domain, layerName) => {
+  const cacheKey = getCacheKey(cityName, layerName, DATA_SOURCE_PREFIX);
+  const cached = featureCache.get(cacheKey);
+  
+  if (cached && Date.now() - cached.timestamp < FEATURE_CACHE_TTL) {
+    console.log(`Cache HIT: ${layerName} for ${cityName}`);
+    return cached.features;
+  }
+  
+  console.log(`Cache MISS: ${layerName} for ${cityName} - fetching from S3`);
+  
+  try {
+    const key = buildPath('data', country, province, city, domain, layerName);
+    
+    const listCommand = new ListObjectsV2Command({
+      Bucket: BUCKET_NAME,
+      Prefix: key,
+      MaxKeys: 1,
+    });
+    
+    const listResponse = await s3Client.send(listCommand);
+    
+    if (!listResponse.Contents || listResponse.Contents.length === 0) {
+      console.log(`=== S3: Layer file does not exist: ${key} ===`);
+      return [];
+    }
+    
+    const command = new GetObjectCommand({
+      Bucket: BUCKET_NAME,
+      Key: key,
+    });
+    
+    const response = await s3Client.send(command);
+    
+    if (!response.Body) {
+      console.error(`=== S3: No body in response for ${key} ===`);
+      return [];
+    }
+    
+    const arrayBuffer = await streamToArrayBuffer(response.Body);
+    const uint8Array = new Uint8Array(arrayBuffer);
+    
+    if (uint8Array.length === 0) {
+      console.error(`=== S3: Empty buffer for ${key} ===`);
+      return [];
+    }
+    
+    const wasmTable = readParquet(uint8Array);
+    const ipcBytes = wasmTable.intoIPCStream();
+    const arrowTable = tableFromIPC(ipcBytes);
+    
+    const features = [];
+    for (let i = 0; i < arrowTable.numRows; i++) {
+      const row = {};
+      for (const field of arrowTable.schema.fields) {
+        const column = arrowTable.getChild(field.name);
+        row[field.name] = column.get(i);
+      }
+      
+      let geometry = null;
+      if (row.geometry_coordinates) {
+        try {
+          const geoJsonGeometry = JSON.parse(row.geometry_coordinates);
+          
+          if (geoJsonGeometry && geoJsonGeometry.type && geoJsonGeometry.coordinates) {
+            geometry = geoJsonGeometry;
+            console.log(`Parsed ${geoJsonGeometry.type} geometry`);
+          } else {
+            console.warn('Invalid geometry structure:', geoJsonGeometry);
+          }
+        } catch (parseError) {
+          console.warn(`Error parsing stored GeoJSON geometry:`, parseError.message);
+          console.warn('Raw geometry_coordinates:', row.geometry_coordinates);
+        }
+      }
+      
+      if (!geometry && row.longitude != null && row.latitude != null) {
+        const lon = parseFloat(row.longitude);
+        const lat = parseFloat(row.latitude);
+        
+        if (!isNaN(lon) && !isNaN(lat) && lon >= -180 && lon <= 180 && lat >= -90 && lat <= 90) {
+          geometry = {
+            type: 'Point',
+            coordinates: [lon, lat],
+          };
+        }
+      }
+      
+      if (geometry && geometry.type && geometry.coordinates) {
+        features.push({
+          type: 'Feature',
+          geometry,
+          properties: {
+            feature_name: row.feature_name || 'Unnamed',
+            layer_name: row.layer_name || layerName,
+            domain_name: row.domain_name || domain,
+            icon: row.icon || null
+          },
+        });
+      }
+    }
+    
+    // Cache the result
+    featureCache.set(cacheKey, {
+      features,
+      timestamp: Date.now()
+    });
+    
+    console.log(`Loaded and cached ${features.length} features for ${layerName}`);
+    return features;
+    
+  } catch (error) {
+    console.error(`Error loading layer ${layerName}:`, error);
+    return [];
+  }
+};
+
 // Load city features for display
+const CONCURRENT_S3_REQUESTS = 6;
+
 export const loadCityFeatures = async (cityName, activeLayers) => {
   try {
     await initializeWasm();
@@ -809,7 +1033,6 @@ export const loadCityFeatures = async (cityName, activeLayers) => {
       return [];
     }
     
-    // Handle different city name formats
     let city, province, country;
     if (parts.length === 2) {
       [city, country] = parts;
@@ -822,9 +1045,6 @@ export const loadCityFeatures = async (cityName, activeLayers) => {
     const normalizedProvince = normalizeName(province);
     const normalizedCountry = normalizeName(country);
     
-    console.log('=== S3: Normalized names ===', { normalizedCity, normalizedProvince, normalizedCountry });
-    
-    const features = [];
     const activeLayerNames = Object.keys(activeLayers).filter(layer => activeLayers[layer]);
     console.log('=== S3: Active layer names ===', activeLayerNames);
     
@@ -833,206 +1053,25 @@ export const loadCityFeatures = async (cityName, activeLayers) => {
       return [];
     }
     
-    // Load features from individual layer files in data bucket
+    // Build list of layers to load with their domains
+    const layersToLoad = [];
+    
+    // Check predefined layers
     for (const [domain, layers] of Object.entries(layerDefinitions)) {
       for (const layer of layers) {
         if (activeLayerNames.includes(layer.filename)) {
-          const key = buildPath('data', country, province, city, domain, layer.filename);
-          
-          try {
-            console.log(`=== S3: Attempting to load layer ${layer.filename} from ${key} ===`);
-            
-            // First, check if the object exists
-            const listCommand = new ListObjectsV2Command({
-              Bucket: BUCKET_NAME,
-              Prefix: key,
-              MaxKeys: 1,
-            });
-            
-            const listResponse = await s3Client.send(listCommand);
-            
-            if (!listResponse.Contents || listResponse.Contents.length === 0) {
-              console.log(`=== S3: Layer file does not exist: ${key} ===`);
-              continue;
-            }
-            
-            console.log(`=== S3: File exists, size: ${listResponse.Contents[0].Size} bytes ===`);
-            
-            // Now fetch the object
-            const command = new GetObjectCommand({
-              Bucket: BUCKET_NAME,
-              Key: key,
-            });
-            
-            const response = await s3Client.send(command);
-            
-            if (!response.Body) {
-              console.error(`=== S3: No body in response for ${key} ===`);
-              continue;
-            }
-            
-            // Convert stream to ArrayBuffer
-            console.log(`=== S3: Converting stream to buffer for ${layer.filename} ===`);
-            const arrayBuffer = await streamToArrayBuffer(response.Body);
-            const uint8Array = new Uint8Array(arrayBuffer);
-            
-            console.log(`=== S3: Buffer size: ${uint8Array.length} bytes ===`);
-            
-            if (uint8Array.length === 0) {
-              console.error(`=== S3: Empty buffer for ${key} ===`);
-              continue;
-            }
-            
-            // Read parquet file
-            console.log(`=== S3: Parsing parquet data for ${layer.filename} ===`);
-            const wasmTable = readParquet(uint8Array);
-            
-            // Convert WASM Table to IPC Stream, then to Arrow Table
-            console.log(`=== S3: Converting WASM Table to Arrow Table ===`);
-            const ipcBytes = wasmTable.intoIPCStream();
-            const arrowTable = tableFromIPC(ipcBytes);
-            
-            console.log(`=== S3: Arrow Table info ===`, {
-              numRows: arrowTable.numRows,
-              numCols: arrowTable.numCols,
-              columnNames: arrowTable.schema.fields.map(f => f.name)
-            });
-            
-            if (arrowTable.numRows === 0) {
-              console.log(`=== S3: No rows in Arrow table for ${layer.filename} ===`);
-              continue;
-            }
-            
-            // Convert Arrow Table to JavaScript objects
-            const data = [];
-            for (let i = 0; i < arrowTable.numRows; i++) {
-              const row = {};
-              for (const field of arrowTable.schema.fields) {
-                const column = arrowTable.getChild(field.name);
-                row[field.name] = column.get(i);
-              }
-              data.push(row);
-            }
-            
-            console.log(`=== S3: Loaded ${data.length} rows for layer ${layer.filename} ===`);
-            
-            if (data.length === 0) {
-              console.log(`=== S3: No data rows in ${layer.filename} ===`);
-              continue;
-            }
-            
-            // Log first row structure for debugging
-            console.log(`=== S3: First row structure for ${layer.filename} ===`, Object.keys(data[0]));
-            
-            let validFeatureCount = 0;
-            let invalidGeometryCount = 0;
-            let parseErrorCount = 0;
-            
-            for (let i = 0; i < data.length; i++) {
-              const row = data[i];
-              let geometry = null;
-              
-              // Handle different geometry types with proper GeoJSON parsing
-              if (row.geometry_coordinates) {
-                try {
-                  // Parse the stored GeoJSON geometry
-                  const geoJsonGeometry = JSON.parse(row.geometry_coordinates);
-                  
-                  if (geoJsonGeometry && geoJsonGeometry.type && geoJsonGeometry.coordinates) {
-                    // Use the geometry directly - it's already valid GeoJSON
-                    geometry = geoJsonGeometry;
-                  } else {
-                    console.warn(`S3: Invalid GeoJSON structure in row ${i}`);
-                    invalidGeometryCount++;
-                  }
-                } catch (parseError) {
-                  console.warn(`S3: Error parsing stored GeoJSON geometry in row ${i}:`, parseError.message);
-                  parseErrorCount++;
-                }
-              }
-              
-              // Fallback to stored longitude/latitude if no geometry
-              if (!geometry && row.longitude != null && row.latitude != null) {
-                const lon = parseFloat(row.longitude);
-                const lat = parseFloat(row.latitude);
-                
-                if (!isNaN(lon) && !isNaN(lat) && lon >= -180 && lon <= 180 && lat >= -90 && lat <= 90) {
-                  geometry = {
-                    type: 'Point',
-                    coordinates: [lon, lat],
-                  };
-                } else {
-                  console.warn(`S3: Invalid fallback coordinates in row ${i}: [${lon}, ${lat}]`);
-                  invalidGeometryCount++;
-                }
-              }
-              
-              // Add feature if we have valid geometry with proper coordinates
-              if (geometry && geometry.type && geometry.coordinates) {
-                // Validate coordinates based on geometry type
-                let isValid = false;
-                
-                if (geometry.type === 'Point') {
-                  const [lon, lat] = geometry.coordinates;
-                  isValid = !isNaN(lon) && !isNaN(lat) && 
-                           lon >= -180 && lon <= 180 && 
-                           lat >= -90 && lat <= 90;
-                } else if (geometry.type === 'LineString' || geometry.type === 'MultiPoint') {
-                  isValid = Array.isArray(geometry.coordinates) && geometry.coordinates.length > 0;
-                } else if (geometry.type === 'Polygon' || geometry.type === 'MultiLineString') {
-                  isValid = Array.isArray(geometry.coordinates) && 
-                           geometry.coordinates.length > 0 &&
-                           Array.isArray(geometry.coordinates[0]);
-                } else if (geometry.type === 'MultiPolygon') {
-                  isValid = Array.isArray(geometry.coordinates) && 
-                           geometry.coordinates.length > 0 &&
-                           Array.isArray(geometry.coordinates[0]) &&
-                           Array.isArray(geometry.coordinates[0][0]);
-                }
-                
-                if (isValid) {
-                  features.push({
-                    type: 'Feature',
-                    geometry,
-                    properties: {
-                      feature_name: row.feature_name || 'Unnamed',
-                      layer_name: row.layer_name || layer.filename,
-                      domain_name: row.domain_name || domain,
-                      icon: row.icon || null
-                    },
-                  });
-                  validFeatureCount++;
-                } else {
-                  console.warn(`S3: Invalid geometry validation in row ${i}:`, geometry.type);
-                  invalidGeometryCount++;
-                }
-              } else {
-                invalidGeometryCount++;
-              }
-            }
-            
-            console.log(`=== S3: Layer ${layer.filename} summary ===`, {
-              totalRows: data.length,
-              validFeatures: validFeatureCount,
-              invalidGeometry: invalidGeometryCount,
-              parseErrors: parseErrorCount
-            });
-            
-          } catch (error) {
-            console.error(`=== S3: Error loading layer ${layer.filename} ===`, {
-              error: error.message,
-              stack: error.stack,
-              key: key
-            });
-          }
+          layersToLoad.push({
+            domain,
+            layerName: layer.filename
+          });
         }
       }
     }
     
-    // Also check for custom layers that might not be in layerDefinitions
+    // Check for custom layers
+    const customLayersPrefix = `${DATA_SOURCE_PREFIX}/data/country=${normalizedCountry}/province=${normalizedProvince}/city=${normalizedCity}/`;
+    
     try {
-      const customLayersPrefix = `${DATA_SOURCE_PREFIX}/data/country=${normalizedCountry}/province=${normalizedProvince}/city=${normalizedCity}/`;
-      
       let continuationToken = null;
       do {
         const listCommand = new ListObjectsV2Command({
@@ -1045,103 +1084,18 @@ export const loadCityFeatures = async (cityName, activeLayers) => {
         
         if (response.Contents) {
           for (const obj of response.Contents) {
-            // Parse: data/country=X/province=Y/city=Z/domain=DOMAIN/LAYER_NAME.snappy.parquet
             const match = obj.Key.match(/domain=([^/]+)\/([^/]+)\.snappy\.parquet$/);
             if (match) {
               const [, domain, layerName] = match;
               
-              // Check if this layer is active and not already processed
               if (activeLayerNames.includes(layerName)) {
-                // Check if it's a custom layer (not in layerDefinitions)
-                const domainLayers = layerDefinitions[domain];
-                const isPredefined = domainLayers && domainLayers.some(l => l.filename === layerName);
+                const isPredefined = layerDefinitions[domain]?.some(l => l.filename === layerName);
                 
                 if (!isPredefined) {
-                  console.log(`=== S3: Found custom layer ${layerName} in domain ${domain} ===`);
-                  
-                  // Load the custom layer using the same logic
-                  try {
-                    const command = new GetObjectCommand({
-                      Bucket: BUCKET_NAME,
-                      Key: obj.Key,
-                    });
-                    
-                    const response = await s3Client.send(command);
-                    const arrayBuffer = await streamToArrayBuffer(response.Body);
-                    const uint8Array = new Uint8Array(arrayBuffer);
-                    
-                    const wasmTable = readParquet(uint8Array);
-                    const ipcBytes = wasmTable.intoIPCStream();
-                    const arrowTable = tableFromIPC(ipcBytes);
-                    
-                    const data = [];
-                    for (let i = 0; i < arrowTable.numRows; i++) {
-                      const row = {};
-                      for (const field of arrowTable.schema.fields) {
-                        const column = arrowTable.getChild(field.name);
-                        row[field.name] = column.get(i);
-                      }
-                      data.push(row);
-                    }
-                    
-                    console.log(`=== S3: Loaded ${data.length} rows for custom layer ${layerName} ===`);
-                    
-                    for (const row of data) {
-                      let geometry = null;
-                      
-                      if (row.geometry_coordinates) {
-                        try {
-                          const geoJsonGeometry = JSON.parse(row.geometry_coordinates);
-                          
-                          if (geoJsonGeometry && (geoJsonGeometry.type === 'LineString' || geoJsonGeometry.type === 'MultiLineString')) {
-                            console.log(`[LOAD] Loading feature from layer ${layerName}:`, {
-                              type: geoJsonGeometry.type,
-                              coordCount: geoJsonGeometry.type === 'LineString' 
-                                ? geoJsonGeometry.coordinates.length 
-                                : geoJsonGeometry.coordinates.reduce((sum, line) => sum + line.length, 0),
-                              firstCoord: geoJsonGeometry.type === 'LineString' 
-                                ? geoJsonGeometry.coordinates[0] 
-                                : geoJsonGeometry.coordinates[0][0],
-                              rawStringLength: row.geometry_coordinates.length
-                            });
-                          }
-                          
-                          if (geoJsonGeometry && geoJsonGeometry.type && geoJsonGeometry.coordinates) {
-                            geometry = geoJsonGeometry;
-                          }
-                        } catch (parseError) {
-                          console.warn(`S3: Error parsing stored GeoJSON geometry:`, parseError.message);
-                        }
-                      }
-                      
-                      if (!geometry && row.longitude != null && row.latitude != null) {
-                        const lon = parseFloat(row.longitude);
-                        const lat = parseFloat(row.latitude);
-                        
-                        if (!isNaN(lon) && !isNaN(lat) && lon >= -180 && lon <= 180 && lat >= -90 && lat <= 90) {
-                          geometry = {
-                            type: 'Point',
-                            coordinates: [lon, lat],
-                          };
-                        }
-                      }
-                      
-                      if (geometry && geometry.type && geometry.coordinates) {
-                        features.push({
-                          type: 'Feature',
-                          geometry,
-                          properties: {
-                            feature_name: row.feature_name || 'Unnamed',
-                            layer_name: row.layer_name || layerName,
-                            domain_name: row.domain_name || domain,
-                            icon: row.icon || null
-                          },
-                        });
-                      }
-                    }
-                  } catch (customLayerError) {
-                    console.error(`=== S3: Error loading custom layer ${layerName} ===`, customLayerError);
-                  }
+                  layersToLoad.push({
+                    domain,
+                    layerName
+                  });
                 }
               }
             }
@@ -1150,13 +1104,31 @@ export const loadCityFeatures = async (cityName, activeLayers) => {
         
         continuationToken = response.NextContinuationToken;
       } while (continuationToken);
-      
     } catch (customLayersError) {
       console.warn('=== S3: Error scanning for custom layers ===', customLayersError);
     }
     
-    console.log(`=== S3: Returning total of ${features.length} features ===`);
-    return features;
+    // Load layers in batches with concurrency control
+    const allFeatures = [];
+    
+    for (let i = 0; i < layersToLoad.length; i += CONCURRENT_S3_REQUESTS) {
+      const batch = layersToLoad.slice(i, i + CONCURRENT_S3_REQUESTS);
+      
+      const batchResults = await Promise.all(
+        batch.map(({ domain, layerName }) =>
+          loadSingleLayerCached(cityName, country, province, city, domain, layerName)
+        )
+      );
+      
+      batchResults.forEach(features => {
+        allFeatures.push(...features);
+      });
+      
+      console.log(`Loaded batch ${Math.floor(i / CONCURRENT_S3_REQUESTS) + 1}/${Math.ceil(layersToLoad.length / CONCURRENT_S3_REQUESTS)}`);
+    }
+    
+    console.log(`=== S3: Returning total of ${allFeatures.length} features ===`);
+    return allFeatures;
     
   } catch (error) {
     console.error('=== S3: Fatal error in loadCityFeatures ===', {
@@ -2128,6 +2100,10 @@ export const saveLayerFeatures = async (features, country, province, city, domai
     });
 
     await s3Client.send(command);
+
+    // Invalidate cache after successful save
+    const cityName = province ? `${city}, ${province}, ${country}` : `${city}, ${country}`;
+    invalidateCityCache(cityName);
     
     if (boundary) {
       console.log(`Layer ${layerName} saved successfully with ${featuresToSave.length} features (${features.length - featuresToSave.length} cropped out)`);
@@ -2231,6 +2207,10 @@ export const deleteLayer = async (cityName, domain, layerName) => {
     
     if (response.Deleted && response.Deleted.length > 0) {
       console.log(`Successfully deleted layer: ${layerName}`);
+
+      // Invalidate cache after successful delete
+      invalidateCityCache(cityName);
+
       return true;
     } else if (response.Errors && response.Errors.length > 0) {
       throw new Error(`Failed to delete layer: ${response.Errors[0].Message}`);
@@ -2785,6 +2765,9 @@ export const deleteCityData = async (cityName) => {
           console.error('Errors during deletion:', deleteResponse.Errors);
         }
       }
+
+      // Invalidate cache after successful delete
+      invalidateCityCache(cityName);
       
       console.log(`Successfully deleted all data for ${cityName} from both population and data folders`);
     } else {
@@ -2860,6 +2843,31 @@ export const deleteCityMetadata = async (country, province, city) => {
     console.error('Error deleting city metadata:', error);
     throw error;
   }
+};
+
+export const prefetchCityMetadata = async (cityNames) => {
+  console.log(`Prefetching metadata for ${cityNames.length} cities`);
+  
+  const promises = cityNames.slice(0, 10).map(async (cityName) => {
+    const parts = cityName.split(',').map(p => p.trim());
+    let city, province, country;
+    
+    if (parts.length === 2) {
+      [city, country] = parts;
+      province = '';
+    } else {
+      [city, province, country] = parts;
+    }
+    
+    try {
+      await getCityData(country, province, city);
+    } catch (error) {
+      console.warn(`Error prefetching ${cityName}:`, error);
+    }
+  });
+  
+  await Promise.allSettled(promises);
+  console.log('Prefetch complete');
 };
 
 // Check if a city already exists in the population bucket

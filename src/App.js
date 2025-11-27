@@ -10,7 +10,7 @@ import CalculateIndicatorsModal from './components/CalculateIndicatorsModal';
 import LoadingScreen from './components/LoadingScreen';
 import {
   getAllCitiesWithDataStatus,
-  loadCityFeatures,
+  loadCityFeatures, // Keep same name
   saveCityData,
   deleteCityData,
   cancelCityProcessing,
@@ -18,7 +18,11 @@ import {
   saveCustomLayer,
   deleteLayer,
   loadLayerForEditing,
-  setDataSource
+  setDataSource,
+  clearCacheForDataSource,
+  invalidateCityCache,
+  prefetchCityMetadata,
+  getCacheStats
 } from './utils/s3';
 import {
   triggerGlueJobWithParams
@@ -79,29 +83,6 @@ function App() {
   useEffect(() => {
     loadCities();
   }, []);
-
-  // Debounced feature reloading when activeLayers changes
-  useEffect(() => {
-    let timeoutId;
-    
-    const reloadFeatures = async () => {
-      if (selectedCity && Object.keys(activeLayers).length > 0) {
-        setIsLoading(true);
-        try {
-          const cityFeatures = await loadCityFeatures(selectedCity.name, activeLayers);
-          console.log(`Loaded ${cityFeatures.length} features for active layers`);
-        } catch (error) {
-          console.error('Error loading features:', error);
-        } finally {
-          setIsLoading(false);
-        }
-      }
-    };
-    
-    timeoutId = setTimeout(reloadFeatures, 300);
-    
-    return () => clearTimeout(timeoutId);
-  }, [activeLayers, selectedCity]);
 
   useEffect(() => {
     // Make cities available globally
@@ -186,7 +167,9 @@ function App() {
   const handleDataSourceChange = async (newSource) => {
     console.log(`Switching data source from ${dataSource} to ${newSource}`);
     
-    // Show loading screen
+    // Clear cache for the new data source
+    clearCacheForDataSource(newSource);
+    
     setIsDataSourceSwitching(true);
     
     try {
@@ -196,9 +179,6 @@ function App() {
       setActiveLayers({});
       setAvailableLayers({});
     
-      console.log('Current processing progress:', processingProgress);
-      console.log(`Showing processing for data source: ${newSource}`);
-    
       const citiesWithStatus = await getAllCitiesWithDataStatus();
       setCities(citiesWithStatus);
     
@@ -207,11 +187,19 @@ function App() {
         newStatus[city.name] = city.hasDataLayers;
       });
       setCityDataStatus(newStatus);
+      
+      // Prefetch metadata for first 10 cities
+      if (citiesWithStatus.length > 0) {
+        const cityNames = citiesWithStatus.slice(0, 10).map(c => c.name);
+        prefetchCityMetadata(cityNames).catch(err => 
+          console.warn('Prefetch failed:', err)
+        );
+      }
+      
       console.log(`Loaded ${citiesWithStatus.length} cities from ${newSource} data source`);
     } catch (error) {
       console.error('Error loading cities after data source change:', error);
     } finally {
-      // Hide loading screen after a brief delay to ensure UI is ready
       setTimeout(() => {
         setIsDataSourceSwitching(false);
       }, 500);
@@ -224,7 +212,6 @@ function App() {
   };
 
   const handleCitySelect = async (city) => {
-    // Handle null case for deselecting city
     if (city === null) {
       console.log('City deselected');
       setSelectedCity(null);
@@ -235,13 +222,17 @@ function App() {
   
     console.log('City selected:', city.name);
     setSelectedCity(city);
+    
+    // First clear layers
     setActiveLayers({});
+    setAvailableLayers({});
   
     try {
       const layers = await getAvailableLayersForCity(city.name);
       console.log('Available layers for city:', layers);
       setAvailableLayers(layers);
   
+      // Enable all layers
       const allLayersActive = {};
       Object.keys(layers).forEach(layerName => {
         allLayersActive[layerName] = true;
@@ -359,6 +350,13 @@ function App() {
               return newProgress;
             });
             
+            setDataSource(targetDataSource);
+    
+            saveCityData(cityData, country, province, city);
+            
+            // Invalidate cache after save
+            invalidateCityCache(cityData.name);
+            
             loadCities();
           }
         }, targetDataSource);
@@ -444,6 +442,12 @@ function App() {
             }
           }
         }
+
+        // Invalidate cache for both old and new city names if renamed
+        if (editingCity && editingCity.name !== updatedCityData.name) {
+          invalidateCityCache(editingCity.name);
+        }
+        invalidateCityCache(updatedCityData.name);
       } catch (error) {
         console.error('Error reloading cities:', error);
         throw error;
@@ -627,21 +631,21 @@ function App() {
     try {
       console.log('Deleting city from current data source:', cityName, dataSource);
       
-      // Cancel processing only for current data source if active
       if (isProcessing) {
         console.log(`Cancelling processing for: ${processingKey}`);
         await cancelCityProcessing(cityName);
       }
   
-      // Delete city data (this already respects the current DATA_SOURCE_PREFIX in s3.js)
       await deleteCityData(cityName);
+      
+      // Invalidate cache after delete
+      invalidateCityCache(cityName);
   
       if (selectedCity?.name === cityName) {
         setSelectedCity(null);
         setActiveLayers({});
       }
   
-      // Clear processing progress only for current data source
       setProcessingProgress(prev => {
         const newProgress = { ...prev };
         delete newProgress[processingKey];
@@ -653,7 +657,7 @@ function App() {
     } catch (error) {
       console.error('Error deleting city:', error);
       alert(`Error deleting city: ${error.message}`);
-    }
+    }  
   };
 
   const handleEditLayer = async (domain, layerName) => {
@@ -702,15 +706,14 @@ function App() {
         throw new Error('No city selected');
       }
   
-      // If editing with changes, the old layer was already deleted in LayerSidebar
-      // Just save the new layer
       await saveCustomLayer(selectedCity.name, layerData, selectedCity.boundary);
+      
+      // Invalidate cache
+      invalidateCityCache(selectedCity.name);
   
-      // Refresh available layers
       const layers = await getAvailableLayersForCity(selectedCity.name);
       setAvailableLayers(layers);
   
-      // Update city status
       setCityDataStatus(prev => ({
         ...prev,
         [selectedCity.name]: true
@@ -748,11 +751,10 @@ function App() {
     }
   
     try {
-      console.log(`Deleting layer: domain="${domain}", layerName="${layerName}", city="${selectedCity.name}" (silent: ${options.silent})`);
+      console.log(`Deleting layer: domain="${domain}", layerName="${layerName}"`);
       
-      await deleteLayer(selectedCity.name, domain, layerName);
+      await deleteLayer(selectedCity.name, domain, layerName); 
   
-      // Update active layers - this will trigger feature reload which clears geometries
       if (activeLayers[layerName]) {
         const newActiveLayers = { ...activeLayers };
         delete newActiveLayers[layerName];
@@ -762,11 +764,9 @@ function App() {
       const layers = await getAvailableLayersForCity(selectedCity.name);
       setAvailableLayers(layers);
       
-      // Check if this was the last layer
       if (Object.keys(layers).length === 0) {
         console.log('Last layer deleted - updating city status to pending');
         handleCityStatusChange(selectedCity.name, false);
-        
         await loadCities();
       }
       
@@ -776,6 +776,18 @@ function App() {
       alert(`Error deleting layer: ${error.message}`);
     }
   };
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const stats = getCacheStats();
+      console.log('Cache stats:', {
+        features: stats.featureCacheSize,
+        metadata: stats.metadataCacheSize
+      });
+    }, 30000); // Every 30 seconds
+    
+    return () => clearInterval(interval);
+  }, []);
 
   const handleCalculateIndicators = async (calculationParams) => {
     // Validate FIRST before setting any state
