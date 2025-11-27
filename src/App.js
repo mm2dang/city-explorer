@@ -7,6 +7,7 @@ import AddCityWizard from './components/AddCityWizard';
 import LayerModal from './components/LayerModal';
 import IndicatorsSidebar from './components/IndicatorsSidebar';
 import CalculateIndicatorsModal from './components/CalculateIndicatorsModal';
+import LoadingScreen from './components/LoadingScreen';
 import {
   getAllCitiesWithDataStatus,
   loadCityFeatures,
@@ -28,7 +29,7 @@ function App() {
   const [cities, setCities] = useState([]);
   const [selectedCity, setSelectedCity] = useState(null);
   const [activeLayers, setActiveLayers] = useState({});
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
   const [showAddCityWizard, setShowAddCityWizard] = useState(false);
   const [showLayerModal, setShowLayerModal] = useState(false);
   const [editingCity, setEditingCity] = useState(null);
@@ -43,6 +44,7 @@ function App() {
   const [connectivityProgress, setConnectivityProgress] = useState(null);
   const [isCalculatingConnectivity, setIsCalculatingConnectivity] = useState(false);
   const [windowWidth, setWindowWidth] = useState(window.innerWidth);
+  const [isDataSourceSwitching, setIsDataSourceSwitching] = useState(false);
 
   // Initialize sidebar states based on screen size
   const [isLayerSidebarCollapsed, setIsLayerSidebarCollapsed] = useState(() => {
@@ -183,22 +185,23 @@ function App() {
 
   const handleDataSourceChange = async (newSource) => {
     console.log(`Switching data source from ${dataSource} to ${newSource}`);
-    setDataSourceState(newSource);
-    setDataSource(newSource);
-    setSelectedCity(null);
-    setActiveLayers({});
-    setAvailableLayers({});
-  
-    // Filter processing progress to show ALL items regardless of data source
-    // This allows concurrent processing across data sources to be visible
-    console.log('Current processing progress:', processingProgress);
-    console.log(`Showing processing for data source: ${newSource}`);
-  
-    setIsLoading(true);
+    
+    // Show loading screen
+    setIsDataSourceSwitching(true);
+    
     try {
+      setDataSourceState(newSource);
+      setDataSource(newSource);
+      setSelectedCity(null);
+      setActiveLayers({});
+      setAvailableLayers({});
+    
+      console.log('Current processing progress:', processingProgress);
+      console.log(`Showing processing for data source: ${newSource}`);
+    
       const citiesWithStatus = await getAllCitiesWithDataStatus();
       setCities(citiesWithStatus);
-  
+    
       const newStatus = {};
       citiesWithStatus.forEach(city => {
         newStatus[city.name] = city.hasDataLayers;
@@ -208,7 +211,10 @@ function App() {
     } catch (error) {
       console.error('Error loading cities after data source change:', error);
     } finally {
-      setIsLoading(false);
+      // Hide loading screen after a brief delay to ensure UI is ready
+      setTimeout(() => {
+        setIsDataSourceSwitching(false);
+      }, 500);
     }
   };
 
@@ -1111,6 +1117,12 @@ function App() {
 
   return (
     <div className="App">
+      {isLoading && cities.length === 0 && (
+        <LoadingScreen message="Connecting to data source..." />
+      )}
+      {isDataSourceSwitching && (
+        <LoadingScreen message="Switching data source..." />
+      )}
       <Header
         cities={cities}
         selectedCity={selectedCity}

@@ -1,15 +1,15 @@
 {
-    "short_name": "CityExplorer",
-    "name": "CityExplorer - Quality of Life Data Visualization",
-    "icons": [
-      {
-        "src": "favicon.ico",
-        "sizes": "64x64 32x32 24x24 16x16",
-        "type": "image/x-icon"
-      }
-    ],
-    "start_url": ".",
-    "display": "standalone",
-    "theme_color": "#000000",
-    "background_color": "#ffffff"
-  }
+  "short_name": "CityExplorer",
+  "name": "CityExplorer - A modern city map analysis tool for exploring urban data across multiple domains",
+  "icons": [
+    {
+      "src": "favicon.ico",
+      "sizes": "64x64 32x32 24x24 16x16",
+      "type": "image/x-icon"
+    }
+  ],
+  "start_url": ".",
+  "display": "standalone",
+  "theme_color": "#0891b2",
+  "background_color": "#0891b2"
+}

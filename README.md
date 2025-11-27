@@ -7,6 +7,8 @@ A modern web application for exploring and analyzing urban data across multiple 
 ```
 cityexplorer/
 ├── public/
+│   ├── favicon.png
+│   ├── favicon.svg
 │   ├── index.html
 │   ├── manifest.json
 │   └── worker.js                            # Web Worker for OSM data processing
@@ -14,17 +16,18 @@ cityexplorer/
 │   ├── assets/
 │   │   └── confetti.js
 │   ├── components/
-│   │   ├── AddCityWizard.js                 # Multi-step city creation wizard
-│   │   ├── CalculateIndicatorsModal.js      # Indicator parameter controls
+│   │   ├── AddCityWizard.js                 # City creation wizard
+│   │   ├── CalculateIndicatorsModal.js      # Indicator calculation wizard
 │   │   ├── Header.js                        # City selector and status display
-│   │   ├── IndicatorsSidebar.js             # Mobile ping indicator controls
-│   │   ├── LayerModal.js                    # Add / edit layer wizard
+│   │   ├── IndicatorsSidebar.js             # Indicator result display
+│   │   ├── LayerModal.js                    # Layer creation wizard
 │   │   ├── LayerSidebar.js                  # Domain and layer controls
-│   │   ├── LayerToggle.js                   # Individual layer toggle component
-│   │   └── MapViewer.js                     # Leaflet map with clustering
+│   │   ├── LayerToggle.js                   # Individual layer toggle
+│   │   ├── LoadingScreen.js                 # Loading screen
+│   │   └── MapViewer.js                     # Leaflet map
 │   ├── utils/
-│   │   ├── connectivity.js                  # Calculate connectivity metrics
-│   │   ├── exportUtils.js                   # Export layers to local computer
+│   │   ├── connectivity.js                  # Connectivity indicator operations
+│   │   ├── exportUtils.js                   # Export to local computer
 │   │   ├── indicators.js                    # AWS mobile ping data operations
 │   │   ├── osm.js                           # OpenStreetMap and Wikipedia API calls
 │   │   ├── regions.js                       # UN SDG region mapping
@@ -37,6 +40,7 @@ cityexplorer/
 │   │   ├── IndicatorsSidebar.css
 │   │   ├── LayerSidebar.css
 │   │   ├── LayerModal.css
+│   │   ├── LoadingScreen.css
 │   │   └── MapViewer.css
 │   ├── App.js                               # Main application component
 │   ├── index.js                             # React entry point
