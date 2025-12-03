@@ -6,7 +6,6 @@ import 'leaflet.markercluster/dist/MarkerCluster.Default.css';
 import 'leaflet.markercluster';
 import '../styles/MapViewer.css';
 
-// Fix for default markers
 delete L.Icon.Default.prototype._getIconUrl;
 L.Icon.Default.mergeOptions({
   iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon-2x.png',
@@ -137,6 +136,13 @@ const MapViewer = ({
     return Object.keys(activeLayers).filter(layer => activeLayers[layer]);
   }, [activeLayers]);
   const loadedLayersRef = useRef(new Set());
+
+  const boundaryHash = useMemo(() => {
+    if (!selectedCity?.boundary) return null;
+    // Use boundary length and a sample of content to create a unique identifier
+    const boundary = selectedCity.boundary;
+    return `${selectedCity.name}-${boundary.length}-${boundary.substring(0, 50)}-${boundary.substring(boundary.length - 50)}`;
+  }, [selectedCity?.boundary, selectedCity?.name]);
 
   // Initialize map
   useEffect(() => {
@@ -1047,6 +1053,14 @@ const MapViewer = ({
         clusterGroupsRef.current['__global__'] = null;
       }
       
+      // Explicitly clear boundary when no city selected
+      if (boundaryLayerRef.current) {
+        if (mapInstanceRef.current.hasLayer(boundaryLayerRef.current)) {
+          mapInstanceRef.current.removeLayer(boundaryLayerRef.current);
+        }
+        boundaryLayerRef.current = null;
+      }
+      
       mapInstanceRef.current.setView([20, 0], 2);
       
       const mapContainer = mapInstanceRef.current.getContainer();
@@ -1061,6 +1075,14 @@ const MapViewer = ({
     }
   
     try {
+      // This ensures old boundary is cleared before adding new one
+      if (boundaryLayerRef.current) {
+        if (mapInstanceRef.current.hasLayer(boundaryLayerRef.current)) {
+          mapInstanceRef.current.removeLayer(boundaryLayerRef.current);
+        }
+        boundaryLayerRef.current = null;
+      }
+      
       // Clear existing cluster group when switching cities
       if (clusterGroupsRef.current['__global__']) {
         const globalCluster = clusterGroupsRef.current['__global__'];
@@ -1082,9 +1104,13 @@ const MapViewer = ({
         mapContainer.dataset.cityLng = selectedCity.longitude;
       }
   
+      // Always parse and create fresh boundary layer
       if (selectedCity.boundary) {
+        
+        // Parse boundary - this creates a fresh object every time
         const boundary = JSON.parse(selectedCity.boundary);
   
+        // Create completely new boundary layer
         const boundaryLayer = L.geoJSON(boundary, {
           style: {
             color: '#0891b2',
@@ -1094,23 +1120,27 @@ const MapViewer = ({
           }
         });
   
+        // Add to map
         boundaryLayer.addTo(mapInstanceRef.current);
         boundaryLayerRef.current = boundaryLayer;
   
+        // Fit map to boundary
         const bounds = boundaryLayer.getBounds();
         if (bounds.isValid()) {
           mapInstanceRef.current.fitBounds(bounds, { padding: [50, 50] });
+        } else {
+          console.warn('MapViewer: Invalid bounds for boundary');
         }
       } else if (selectedCity.latitude && selectedCity.longitude) {
         mapInstanceRef.current.setView([selectedCity.latitude, selectedCity.longitude], 12);
       }
     } catch (error) {
-      console.error('Error updating map for selected city:', error);
+      console.error('MapViewer: Error updating map for selected city:', error);
       if (selectedCity.latitude && selectedCity.longitude) {
         mapInstanceRef.current.setView([selectedCity.latitude, selectedCity.longitude], 12);
       }
     }
-  }, [selectedCity, clearAllLayers, displayCityMarkers]);
+  }, [selectedCity, boundaryHash, clearAllLayers, displayCityMarkers]);
 
   // Cleanup effect when selectedCity changes to null
   useEffect(() => {
@@ -1131,61 +1161,6 @@ const MapViewer = ({
       alert('Enable layers in the sidebar to view features on the map.');
     }
   };
-
-  useEffect(() => {
-    if (!mapInstanceRef.current || !selectedCity) return;
-  
-    // Check if the city is currently processing using the correct processing key
-    const processingKey = `${selectedCity.name}@${dataSource}`;
-    const progress = processingProgress?.[processingKey];
-    const isProcessing = progress && progress.status === 'processing' && progress.dataSource === dataSource;
-    
-    if (isProcessing) {
-      return;
-    }
-  
-    // Update stored coordinates in map container
-    const mapContainer = mapInstanceRef.current.getContainer();
-    if (selectedCity.latitude && selectedCity.longitude) {
-      mapContainer.dataset.cityLat = selectedCity.latitude;
-      mapContainer.dataset.cityLng = selectedCity.longitude;
-    }
-  
-    // Update boundary layer
-    if (selectedCity.boundary) {
-      try {
-        // Remove old boundary if it exists
-        if (boundaryLayerRef.current && mapInstanceRef.current.hasLayer(boundaryLayerRef.current)) {
-          mapInstanceRef.current.removeLayer(boundaryLayerRef.current);
-          boundaryLayerRef.current = null;
-        }
-  
-        // Parse and add new boundary
-        const boundary = JSON.parse(selectedCity.boundary);
-  
-        const boundaryLayer = L.geoJSON(boundary, {
-          style: {
-            color: '#0891b2',
-            weight: 3,
-            opacity: 0.8,
-            fillOpacity: 0.1
-          }
-        });
-  
-        boundaryLayer.addTo(mapInstanceRef.current);
-        boundaryLayerRef.current = boundaryLayer;
-  
-        const bounds = boundaryLayer.getBounds();
-        if (bounds.isValid()) {
-          mapInstanceRef.current.fitBounds(bounds, { padding: [50, 50] });
-        }
-      } catch (error) {
-        console.error('MapViewer: Error updating boundary:', error);
-      }
-    } else if (selectedCity.latitude && selectedCity.longitude) {
-      mapInstanceRef.current.setView([selectedCity.latitude, selectedCity.longitude], 12);
-    }
-  }, [selectedCity, processingProgress, dataSource]);
   
   return (
     <div className="map-viewer">

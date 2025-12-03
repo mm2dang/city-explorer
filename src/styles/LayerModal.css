@@ -211,7 +211,7 @@
 .form-actions {
   display: flex;
   gap: 12px;
-  justify-content: flex-end;
+  justify-content: space-between;
   margin-top: 24px;
   padding-top: 24px;
   border-top: 2px solid #e2e8f0;
@@ -229,6 +229,14 @@
   gap: 8px;
   font-size: 14px;
   border: none;
+}
+
+.btn-secondary:only-child {
+  margin-right: auto;
+}
+
+.btn-primary:only-child {
+  margin-left: auto;
 }
 
 .btn-secondary {

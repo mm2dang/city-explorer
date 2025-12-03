@@ -840,6 +840,22 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel, dataSource = 'city',
   
     e.target.value = '';
   };
+
+  const stripZCoordinates = (geometry) => {
+    if (!geometry) return geometry;
+    
+    const strip = (coords) => {
+      if (typeof coords[0] === 'number') {
+        return [coords[0], coords[1]];
+      }
+      return coords.map(strip);
+    };
+    
+    return {
+      ...geometry,
+      coordinates: strip(geometry.coordinates)
+    };
+  };
   
   // Helper function to process GeoJSON files
   const processGeoJSONFile = async (geojsonFile) => {
@@ -926,7 +942,7 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel, dataSource = 'city',
         // Merge all geometries into single MultiPolygon
         let mergedGeometry;
         try {
-          mergedGeometry = mergeGeometries(geometries);
+          mergedGeometry = stripZCoordinates(mergeGeometries(geometries));
         } catch (mergeError) {
           console.error('Merge error:', mergeError);
           setUploadError(`Error merging geometries: ${mergeError.message}`);
@@ -1017,7 +1033,7 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel, dataSource = 'city',
       // Merge all geometries into single MultiPolygon
       let mergedGeometry;
       try {
-        mergedGeometry = mergeGeometries(geometries);
+        mergedGeometry = stripZCoordinates(mergeGeometries(geometries));
       } catch (mergeError) {
         console.error('Merge error:', mergeError);
         setUploadError(`Error merging geometries: ${mergeError.message}`);

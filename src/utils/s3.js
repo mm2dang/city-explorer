@@ -527,10 +527,34 @@ const getCityData = async (country, province, city) => {
   }
 };
 
+// Helper function to strip Z coordinates from geometry
+const stripZCoordinates = (geometry) => {
+  if (!geometry) return geometry;
+  
+  const strip = (coords) => {
+    if (typeof coords[0] === 'number') {
+      // This is a coordinate pair [lng, lat] or [lng, lat, z]
+      // Return only first 2 values
+      return [coords[0], coords[1]];
+    }
+    // This is an array of coordinates, recurse
+    return coords.map(strip);
+  };
+  
+  return {
+    ...geometry,
+    coordinates: strip(geometry.coordinates)
+  };
+};
+
 // Save city metadata to population bucket
 export const saveCityData = async (cityData, country, province, city) => {
   try {
     await initializeWasm();
+
+    // Invalidate cache before saving to ensure fresh data is loaded
+    const cityName = cityData.name;
+    invalidateCityCache(cityName);
 
     // Validate population - remove all non-numeric characters including commas
     let populationValue = null;
@@ -569,11 +593,25 @@ export const saveCityData = async (cityData, country, province, city) => {
       latitude = parseFloat(lat.toFixed(6));
     }
 
+    // Strip Z coordinates from boundary before saving
+    let boundaryToSave = cityData.boundary;
+    if (boundaryToSave) {
+      try {
+        const parsedBoundary = typeof boundaryToSave === 'string' 
+          ? JSON.parse(boundaryToSave) 
+          : boundaryToSave;
+        const cleanedBoundary = stripZCoordinates(parsedBoundary);
+        boundaryToSave = JSON.stringify(cleanedBoundary);
+      } catch (error) {
+        console.warn('Error cleaning boundary coordinates:', error);
+      }
+    }
+
     const data = [{
       name: String(cityData.name || '').trim(),
       longitude: longitude,
       latitude: latitude,
-      boundary: cityData.boundary ? String(cityData.boundary) : null,
+      boundary: boundaryToSave,
       population: populationValue,
       size: sizeValue,
       sdg_region: cityData.sdg_region ? String(cityData.sdg_region) : null,
@@ -596,12 +634,77 @@ export const saveCityData = async (cityData, country, province, city) => {
 
     await s3Client.send(command);
     
-    // Invalidate cache after successful save
-    const cityName = cityData.name;
+    // Invalidate cache again after successful save to be extra sure
     invalidateCityCache(cityName);
+    
+    // Add a small delay to ensure S3 consistency
+    await new Promise(resolve => setTimeout(resolve, 100));
   } catch (error) {
     console.error('Error saving city data to population bucket:', error);
     throw error;
+  }
+};
+
+export const getCityDataFresh = async (country, province, city) => {
+  try {
+    await initializeWasm();
+    
+    const cityName = province ? `${city}, ${province}, ${country}` : `${city}, ${country}`;
+    
+    // Force invalidate cache first
+    invalidateCityCache(cityName);
+    
+    // Load city metadata from population bucket with cache control headers
+    const cityMetaKey = buildPath('population', country, province, city);
+
+    try {
+      const getCommand = new GetObjectCommand({
+        Bucket: BUCKET_NAME,
+        Key: cityMetaKey,
+        ResponseCacheControl: 'no-cache, no-store, must-revalidate',
+        IfModifiedSince: new Date(0), // Force S3 to return fresh data
+      });
+      
+      const fileResponse = await s3Client.send(getCommand);
+      
+      // Convert stream to ArrayBuffer for browser environment
+      const arrayBuffer = await streamToArrayBuffer(fileResponse.Body);
+      const uint8Array = new Uint8Array(arrayBuffer);
+      
+      // Read as WASM Table, convert to Arrow Table
+      const wasmTable = readParquet(uint8Array);
+      const ipcBytes = wasmTable.intoIPCStream();
+      const arrowTable = tableFromIPC(ipcBytes);
+      
+      if (arrowTable.numRows > 0) {
+        // Extract first row data
+        const row = {};
+        for (const field of arrowTable.schema.fields) {
+          const column = arrowTable.getChild(field.name);
+          row[field.name] = column.get(0);
+        }
+        
+        const cityData = {
+          name: row.name,
+          longitude: parseFloat(row.longitude) || 0,
+          latitude: parseFloat(row.latitude) || 0,
+          boundary: row.boundary,
+          population: row.population ? parseInt(row.population) : null,
+          size: row.size ? parseFloat(row.size) : null,
+          sdg_region: row.sdg_region,
+        };
+        
+        return cityData;
+      }
+    } catch (error) {
+      console.warn(`No city metadata found for ${city}: ${error.message}`);
+      return null;
+    }
+    
+    return null;
+  } catch (error) {
+    console.error(`Error getting fresh city data for ${city}:`, error);
+    return null;
   }
 };
 
@@ -825,11 +928,11 @@ export const getAvailableLayersForCity = async (cityName) => {
   }
 };
 
-const loadSingleLayerCached = async (cityName, country, province, city, domain, layerName) => {
+const loadSingleLayerCached = async (cityName, country, province, city, domain, layerName, forceRefresh = false) => {
   const cacheKey = getCacheKey(cityName, layerName, DATA_SOURCE_PREFIX);
   const cached = featureCache.get(cacheKey);
   
-  if (cached && Date.now() - cached.timestamp < FEATURE_CACHE_TTL) {
+  if (!forceRefresh && cached && Date.now() - cached.timestamp < FEATURE_CACHE_TTL) {
     return cached.features;
   }
   
@@ -851,6 +954,8 @@ const loadSingleLayerCached = async (cityName, country, province, city, domain, 
     const command = new GetObjectCommand({
       Bucket: BUCKET_NAME,
       Key: key,
+      ResponseCacheControl: 'no-cache, no-store, must-revalidate',
+      IfModifiedSince: new Date(0), // Force fresh data
     });
     
     const response = await s3Client.send(command);
@@ -1929,6 +2034,8 @@ export const saveLayerFeatures = async (features, country, province, city, domai
 
     // Invalidate cache after successful save
     const cityName = province ? `${city}, ${province}, ${country}` : `${city}, ${country}`;
+    const cacheKey = getCacheKey(cityName, layerName, DATA_SOURCE_PREFIX);
+    featureCache.delete(cacheKey);
     invalidateCityCache(cityName);
   } catch (error) {
     console.error(`Error saving layer ${layerName}:`, error);

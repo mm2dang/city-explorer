@@ -10,7 +10,7 @@ import CalculateIndicatorsModal from './components/CalculateIndicatorsModal';
 import LoadingScreen from './components/LoadingScreen';
 import {
   getAllCitiesWithDataStatus,
-  loadCityFeatures, // Keep same name
+  loadCityFeatures,
   saveCityData,
   deleteCityData,
   cancelCityProcessing,
@@ -22,6 +22,7 @@ import {
   clearCacheForDataSource,
   invalidateCityCache,
   prefetchCityMetadata,
+  getCityDataFresh,
 } from './utils/s3';
 import {
   triggerGlueJobWithParams
@@ -374,6 +375,16 @@ function App() {
       setIsLoading(true);
       
       try {
+        // Parse the city name to get components
+        const parts = updatedCityData.name.split(',').map(p => p.trim());
+        let city, province, country;
+        if (parts.length === 2) {
+          [city, country] = parts;
+          province = '';
+        } else {
+          [city, province, country] = parts;
+        }
+  
         const citiesWithStatus = await getAllCitiesWithDataStatus();        
         setCities(citiesWithStatus);
   
@@ -382,27 +393,56 @@ function App() {
           newStatus[city.name] = city.hasDataLayers;
         });
         setCityDataStatus(newStatus);
-  
-        // Only update selected city if it wasn't deselected for processing
-        if (shouldRefresh && !willBeProcessed) {
-          const freshCity = citiesWithStatus.find(c => c.name === updatedCityData.name);
-          if (freshCity) {            
-            // Update selected city if it's currently selected
-            if (selectedCity && (selectedCity.name === updatedCityData.name || 
-                                 (editingCity && selectedCity.name === editingCity.name))) {
-              setSelectedCity(freshCity);
-              
-              // Force map to update by clearing and reloading available layers
-              try {
-                const layers = await getAvailableLayersForCity(freshCity.name);
-                setAvailableLayers(layers);
-              } catch (error) {
-                console.warn('Error reloading layers:', error);
+
+        if (shouldRefresh && !willBeProcessed && isCurrentlySelected) {
+          // Step 1: Clear everything to force unmount
+          setSelectedCity(null);
+          setActiveLayers({});
+          setAvailableLayers({});
+          
+          // Step 2: Force-load fresh data directly from S3, bypassing cache
+          try {
+            const freshCityData = await getCityDataFresh(country, province, city);
+            
+            if (freshCityData) {
+              // Step 3: Find this city in the loaded cities and update it
+              const cityIndex = citiesWithStatus.findIndex(c => c.name === freshCityData.name);
+              if (cityIndex >= 0) {
+                citiesWithStatus[cityIndex] = {
+                  ...citiesWithStatus[cityIndex],
+                  ...freshCityData
+                };
+                setCities([...citiesWithStatus]); // Force re-render with fresh data
               }
+              
+              // Step 4: Wait for React to process the clear
+              await new Promise(resolve => setTimeout(resolve, 100));
+              
+              // Step 5: Set the fresh city with new boundary
+              setSelectedCity(freshCityData);
+              
+              // Step 6: Reload and activate all layers
+              setTimeout(async () => {
+                try {
+                  const layers = await getAvailableLayersForCity(freshCityData.name);
+                  setAvailableLayers(layers);
+                  
+                  // Re-enable all layers that were previously active
+                  const allLayersActive = {};
+                  Object.keys(layers).forEach(layerName => {
+                    allLayersActive[layerName] = true;
+                  });
+                  setActiveLayers(allLayersActive);
+                } catch (error) {
+                  console.warn('Error reloading layers:', error);
+                }
+              }, 150);
             }
+          } catch (freshLoadError) {
+            console.error('Error loading fresh city data:', freshLoadError);
           }
         }
-
+  
         // Invalidate cache for both old and new city names if renamed
         if (editingCity && editingCity.name !== updatedCityData.name) {
           invalidateCityCache(editingCity.name);
@@ -625,22 +665,32 @@ function App() {
       if (!selectedCity) {
         throw new Error('No city selected');
       }
-  
+
       await saveCustomLayer(selectedCity.name, layerData, selectedCity.boundary);
       
-      // Invalidate cache
       invalidateCityCache(selectedCity.name);
-  
+      setActiveLayers({});
+      
+      // Reload available layers
       const layers = await getAvailableLayersForCity(selectedCity.name);
       setAvailableLayers(layers);
-  
+
       setCityDataStatus(prev => ({
         ...prev,
         [selectedCity.name]: true
       }));
-  
+
       await loadCities();
-  
+
+      // Re-enable all layers after a short delay
+      setTimeout(() => {
+        const allLayersActive = {};
+        Object.keys(layers).forEach(layerName => {
+          allLayersActive[layerName] = true;
+        });
+        setActiveLayers(allLayersActive);
+      }, 100);
+
       setShowLayerModal(false);
       setEditingLayer(null);
       confetti();

@@ -2990,10 +2990,11 @@ useEffect(() => {
         return `${lat.toFixed(6)},${lon.toFixed(6)}`;
       };
       
-      // Build set of existing coordinates (excluding current layer if editing)
+      // Build set of existing coordinates
       const seenCoordinates = new Set();
+      const seenGeometries = new Set();
+      
       allFeaturesForCheck.forEach(feature => {
-        // Exclude features from BOTH the current name AND the original name
         const isFromCurrentLayer = editingLayer && (
           feature.properties?.layer_name === finalLayerName ||
           feature.properties?.layer_name === originalLayerName
@@ -3004,36 +3005,53 @@ useEffect(() => {
           if (coordKey) {
             seenCoordinates.add(coordKey);
           }
+          
+          const geomHash = getGeometryHash(feature.geometry);
+          if (geomHash) {
+            seenGeometries.add(geomHash);
+          }
         }
       });
       
       // Filter out duplicates
       const uniqueFeatures = [];
-      let duplicatesFound = 0;
+      let coordinateDuplicates = 0;
+      let geometryDuplicates = 0;
       
       features.forEach((feature, index) => {
         const coordKey = getCoordinateKey(feature);
+        const geomHash = getGeometryHash(feature.geometry);
         
-        if (!coordKey) {
-          console.warn(`Could not extract coordinates from feature at index ${index}`);
+        if (!coordKey && !geomHash) {
+          console.warn(`Could not extract coordinates or geometry from feature at index ${index}`);
           uniqueFeatures.push(feature);
           return;
         }
         
-        if (seenCoordinates.has(coordKey)) {
-          duplicatesFound++;
+        if (coordKey && seenCoordinates.has(coordKey)) {
+          coordinateDuplicates++;
           return;
         }
         
-        seenCoordinates.add(coordKey);
+        if (geomHash && seenGeometries.has(geomHash)) {
+          geometryDuplicates++;
+          return;
+        }
+        
+        if (coordKey) seenCoordinates.add(coordKey);
+        if (geomHash) seenGeometries.add(geomHash);
         uniqueFeatures.push(feature);
       });
       
-      if (duplicatesFound > 0) {
+      const totalDuplicates = coordinateDuplicates + geometryDuplicates;
+      
+      if (totalDuplicates > 0) {
         const proceed = window.confirm(
-          `${duplicatesFound} duplicate feature${duplicatesFound > 1 ? 's were' : ' was'} found.\n` +
-          `These features have the same latitude/longitude as features already in OTHER layers across ALL domains.\n\n` +
-          `Do you want to save only the ${uniqueFeatures.length} unique features?`
+          `${totalDuplicates} duplicate feature${totalDuplicates > 1 ? 's were' : ' was'} found:\n` +
+          `- ${coordinateDuplicates} coordinate duplicate${coordinateDuplicates !== 1 ? 's' : ''}\n` +
+          `- ${geometryDuplicates} geometry duplicate${geometryDuplicates !== 1 ? 's' : ''}\n\n` +
+          `These features match existing features in OTHER layers across ALL domains.\n\n` +
+          `Do you want to save only the ${uniqueFeatures.length} unique feature${uniqueFeatures.length !== 1 ? 's' : ''}?`
         );
         
         if (!proceed) {
@@ -3048,26 +3066,26 @@ useEffect(() => {
         return;
       }
       
-      // Check if layer name or domain changed
       const layerNameChanged = editingLayer && finalLayerName !== originalLayerName;
       const domainChanged = editingLayer && selectedDomain !== originalDomain;
       
-      // Save with unique features only
       await onSave({
         name: finalLayerName,
         icon: finalLayerIcon,
         domain: selectedDomain,
-        features: uniqueFeatures,
+        features: uniqueFeatures, 
         isEdit: !!editingLayer,
         layerNameChanged,
         domainChanged,
         originalName: originalLayerName,
         originalDomain: originalDomain
       });
+
+      setIsProcessing(false);
     } catch (error) {
       console.error('Error saving layer:', error);
       alert(`Error saving layer: ${error.message}`);
-      setIsProcessing(false);  // Only reset on error
+      setIsProcessing(false);
     }
   };
 
@@ -3094,6 +3112,7 @@ useEffect(() => {
     setCustomLayerIcon('fas fa-map-marker-alt');
     setAppendMode(true);
     setSelectedDomain(domain || '');
+    setIsProcessing(false);
     onClose();
   };
 
