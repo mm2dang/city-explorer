@@ -48,28 +48,21 @@ export const clearCacheForDataSource = (dataSource) => {
       metadataCache.delete(key);
     }
   }
-  
-  console.log(`Cleared cache for data source: ${dataSource}`);
 };
 
 export const invalidateCityCache = (cityName) => {
-  let deletedCount = 0;
   
   for (const key of featureCache.keys()) {
     if (key.includes(cityName)) {
       featureCache.delete(key);
-      deletedCount++;
     }
   }
   
   for (const key of metadataCache.keys()) {
     if (key.includes(cityName)) {
       metadataCache.delete(key);
-      deletedCount++;
     }
   }
-  
-  console.log(`Invalidated ${deletedCount} cache entries for: ${cityName}`);
 };
 
 export const getCacheStats = () => {
@@ -116,7 +109,6 @@ const initializeWasm = async () => {
       const { default: init } = await import('parquet-wasm');
       await init();
       wasmInitialized = true;
-      console.log('Parquet WASM initialized successfully');
     } catch (error) {
       console.error('Failed to initialize WASM:', error);
       throw new Error(`WASM initialization failed: ${error.message}`);
@@ -234,7 +226,6 @@ if (!process.env.REACT_APP_S3_BUCKET_NAME) {
 export const setDataSource = (source) => {
   if (source === 'city' || source === 'osm') {
     DATA_SOURCE_PREFIX = source;
-    console.log(`Data source set to: ${DATA_SOURCE_PREFIX}`);
   } else {
     console.error(`Invalid data source: ${source}. Must be 'city' or 'osm'`);
   }
@@ -335,9 +326,7 @@ const layerDefinitions = {
 };
 
 // Recursive function to scan S3 directories deeply
-const scanS3Directory = async (prefix, targetFileName = null) => {
-  console.log(`Scanning S3 directory: ${prefix} (data source: ${DATA_SOURCE_PREFIX})`);
-  
+const scanS3Directory = async (prefix, targetFileName = null) => {  
   const foundFiles = [];
   let continuationToken = null;
   
@@ -355,43 +344,31 @@ const scanS3Directory = async (prefix, targetFileName = null) => {
       for (const obj of response.Contents) {
         if (!targetFileName || obj.Key.endsWith(targetFileName)) {
           foundFiles.push(obj.Key);
-          console.log(`Found target file: ${obj.Key}`);
         }
       }
     }
     
     continuationToken = response.NextContinuationToken;
   } while (continuationToken);
-  
-  console.log(`Completed scanning ${prefix}: found ${foundFiles.length} files`);
   return foundFiles;
 };
 
 // Get all cities from BOTH population and data buckets
 export const getAllCities = async () => {
-  try {
-    console.log(`=== Scanning S3 buckets for cities (source: ${DATA_SOURCE_PREFIX}) ===`);
-    
+  try {    
     const cities = new Map();
     
     // Scan population bucket for city_data.snappy.parquet files
-    console.log('--- Scanning population bucket recursively ---');
     const populationFiles = await scanS3Directory(`${DATA_SOURCE_PREFIX}/population/`, 'city_data.snappy.parquet');
     
-    for (const filePath of populationFiles) {
-      console.log(`Processing population file: ${filePath}`);
-      
-      // Extract city info from path: population/country=canada/province=ontario/city=toronto/city_data.snappy.parquet
+    for (const filePath of populationFiles) {      
       const pathMatch = filePath.match(/population\/country=([^/]+)\/province=([^/]*)\/city=([^/]+)\/city_data\.snappy\.parquet$/);
       if (pathMatch) {
         const [, country, province, city] = pathMatch;
         
-        console.log(`Extracted from population: country=${country}, province=${province}, city=${city}`);
-        
         try {
           const cityData = await getCityData(country, province, city);
           if (cityData) {
-            console.log(`Successfully loaded: ${cityData.name}`);
             cities.set(cityData.name, cityData);
           }
         } catch (error) {
@@ -403,7 +380,6 @@ export const getAllCities = async () => {
     }
     
     // Scan data bucket for additional cities
-    console.log('--- Scanning data bucket for additional cities ---');
     const dataFiles = await scanS3Directory(`${DATA_SOURCE_PREFIX}/data/`, '.snappy.parquet');
     
     // Extract unique cities from data files (use normalized names as keys)
@@ -439,19 +415,16 @@ export const getAllCities = async () => {
     for (const cityKey of dataCities) {
       // Check if this city already exists using normalized comparison
       if (normalizedCityMap.has(cityKey)) {
-        console.log(`City ${cityKey} already loaded from population bucket, skipping`);
         continue;
       }
       
       const [city, province, country] = cityKey.split('|');
-      console.log(`Found data-only city: ${cityKey}`);
       
       try {
         // Try to load from population bucket first
         const cityData = await getCityData(country, province, city);
         if (cityData) {
           cities.set(cityData.name, cityData);
-          console.log(`Loaded metadata for data-only city: ${cityData.name}`);
         } else {
           // Create minimal city entry for data-only cities (truly no metadata)
           const cityName = province ? `${city}, ${province}, ${country}` : `${city}, ${country}`;
@@ -464,7 +437,6 @@ export const getAllCities = async () => {
             size: null,
             sdg_region: null,
           };
-          console.log(`Created minimal entry for truly data-only city: ${cityName}`);
           cities.set(cityName, minimalCity);
         }
       } catch (error) {
@@ -473,9 +445,6 @@ export const getAllCities = async () => {
     }
     
     const allCities = Array.from(cities.values());
-    console.log(`=== FINAL RESULTS ===`);
-    console.log(`Total cities found: ${allCities.length}`);
-    allCities.forEach(city => console.log(`- ${city.name}`));
     
     return allCities;
   } catch (error) {
@@ -494,20 +463,11 @@ const getCityData = async (country, province, city) => {
     const cached = metadataCache.get(cacheKey);
     
     if (cached && Date.now() - cached.timestamp < METADATA_CACHE_TTL) {
-      console.log(`Metadata cache HIT: ${cityName}`);
       return cached.data;
     }
     
-    console.log(`Metadata cache MISS: ${cityName} - fetching from S3`);
-    console.log(`=== Loading city data for: ${country}/${province}/${city} (source: ${DATA_SOURCE_PREFIX}) ===`);
-    
     // Load city metadata from population bucket
     const cityMetaKey = buildPath('population', country, province, city);
-
-    console.log(`=== Loading city metadata from S3 ===`);
-    console.log(`Bucket: ${BUCKET_NAME}`);
-    console.log(`Key: ${cityMetaKey}`);
-    console.log(`Full path: s3://${BUCKET_NAME}/${cityMetaKey}`);
 
     try {
       const getCommand = new GetObjectCommand({
@@ -518,9 +478,6 @@ const getCityData = async (country, province, city) => {
       });
       
       const fileResponse = await s3Client.send(getCommand);
-      console.log(`Successfully fetched file, ContentLength: ${fileResponse.ContentLength}`);
-      console.log(`Last Modified: ${fileResponse.LastModified}`);
-      console.log(`ETag: ${fileResponse.ETag}`);
       
       // Convert stream to ArrayBuffer for browser environment
       const arrayBuffer = await streamToArrayBuffer(fileResponse.Body);
@@ -556,11 +513,10 @@ const getCityData = async (country, province, city) => {
           });
         }
         
-        console.log(`Successfully loaded city data for: ${cityData.name}`);
         return cityData;
       }
     } catch (error) {
-      console.log(`No city metadata found for ${city}: ${error.message}`);
+      console.warn(`No city metadata found for ${city}: ${error.message}`);
       return null;
     }
     
@@ -623,16 +579,6 @@ export const saveCityData = async (cityData, country, province, city) => {
       sdg_region: cityData.sdg_region ? String(cityData.sdg_region) : null,
     }];
 
-    console.log('Saving city data:', {
-      name: data[0].name,
-      longitude: data[0].longitude,
-      latitude: data[0].latitude,
-      population: data[0].population,
-      size: data[0].size,
-      sdg_region: data[0].sdg_region,
-      boundary_length: data[0].boundary ? data[0].boundary.length : 0
-    });
-
     // Create Table and write parquet file with Snappy compression
     const table = createParquetTable(data);
     const writerProperties = new WriterPropertiesBuilder()
@@ -649,12 +595,6 @@ export const saveCityData = async (cityData, country, province, city) => {
     });
 
     await s3Client.send(command);
-    console.log('City data saved to population bucket successfully:', {
-      key: key,
-      size: buffer.length,
-      population: populationValue,
-      coordinates: [longitude, latitude]
-    });
     
     // Invalidate cache after successful save
     const cityName = cityData.name;
@@ -666,9 +606,7 @@ export const saveCityData = async (cityData, country, province, city) => {
 };
 
 export const moveCityData = async (oldCountry, oldProvince, oldCity, newCountry, newProvince, newCity) => {
-  try {
-    console.log(`Moving city data from ${oldCountry}/${oldProvince}/${oldCity} to ${newCountry}/${newProvince}/${newCity} (source: ${DATA_SOURCE_PREFIX})`);
-    
+  try {    
     const oldNormalizedCountry = normalizeName(oldCountry);
     const oldNormalizedProvince = normalizeName(oldProvince);
     const oldNormalizedCity = normalizeName(oldCity);
@@ -681,7 +619,6 @@ export const moveCityData = async (oldCountry, oldProvince, oldCity, newCountry,
     if (oldNormalizedCountry === newNormalizedCountry && 
         oldNormalizedProvince === newNormalizedProvince && 
         oldNormalizedCity === newNormalizedCity) {
-      console.log('Source and destination are the same, skipping move');
       return;
     }
     
@@ -690,7 +627,6 @@ export const moveCityData = async (oldCountry, oldProvince, oldCity, newCountry,
     
     // Find all data layer files
     const dataPrefix = `${DATA_SOURCE_PREFIX}/data/country=${oldNormalizedCountry}/province=${oldNormalizedProvince}/city=${oldNormalizedCity}/`;
-    console.log(`Scanning data prefix: ${dataPrefix}`);
     
     let continuationToken = null;
     do {
@@ -715,8 +651,6 @@ export const moveCityData = async (oldCountry, oldProvince, oldCity, newCountry,
               newKey: newKey
             });
             objectsToDelete.push({ Key: obj.Key });
-            
-            console.log(`Will copy: ${obj.Key} -> ${newKey}`);
           }
         }
       }
@@ -724,13 +658,9 @@ export const moveCityData = async (oldCountry, oldProvince, oldCity, newCountry,
       continuationToken = response.NextContinuationToken;
     } while (continuationToken);
     
-    console.log(`Found ${objectsToCopy.length} data files to move`);
-    
     // Copy all files to new location
     for (const { oldKey, newKey } of objectsToCopy) {
-      try {
-        console.log(`Attempting to copy via read/write: ${oldKey} -> ${newKey}`);
-        
+      try {        
         // Step 1: Get the source object
         const getCommand = new GetObjectCommand({
           Bucket: BUCKET_NAME,
@@ -751,9 +681,7 @@ export const moveCityData = async (oldCountry, oldProvince, oldCity, newCountry,
           ContentType: getResponse.ContentType || 'application/octet-stream',
         });
         
-        await s3Client.send(putCommand);
-        console.log(`Copied via read/write: ${oldKey} -> ${newKey}`);
-        
+        await s3Client.send(putCommand);        
       } catch (copyError) {
         console.error(`Error copying ${oldKey}:`, copyError.message);
         console.error(`Full error:`, copyError);
@@ -777,7 +705,6 @@ export const moveCityData = async (oldCountry, oldProvince, oldCity, newCountry,
         });
         
         await s3Client.send(deleteCommand);
-        console.log(`Deleted batch of ${batch.length} old files`);
       }
     }
 
@@ -786,8 +713,6 @@ export const moveCityData = async (oldCountry, oldProvince, oldCity, newCountry,
     invalidateCityCache(oldCityName);
     const newCityName = newProvince ? `${newCity}, ${newProvince}, ${newCountry}` : `${newCity}, ${newCountry}`;
     invalidateCityCache(newCityName);
-    
-    console.log(`Successfully moved all data for city`);
   } catch (error) {
     console.error('Error moving city data:', error);
     throw error;
@@ -867,7 +792,6 @@ export const getAvailableLayersForCity = async (cityName) => {
               } else {
                 // Custom layer - try to load metadata from the parquet file
                 try {
-                  console.log(`Loading icon for custom layer: ${layerName}`);
                   const layerFeatures = await loadLayerForEditing(cityName, domain, layerName);
                   if (layerFeatures.length > 0) {
                     // Check for icon in properties first, then fallback
@@ -875,7 +799,6 @@ export const getAvailableLayersForCity = async (cityName) => {
                                       layerFeatures[0].icon ||
                                       'fas fa-map-marker-alt';
                     icon = storedIcon;
-                    console.log(`Found icon for ${layerName}: ${icon}`);
                   }
                 } catch (error) {
                   console.warn(`Could not load metadata for custom layer ${layerName}:`, error);
@@ -907,11 +830,8 @@ const loadSingleLayerCached = async (cityName, country, province, city, domain, 
   const cached = featureCache.get(cacheKey);
   
   if (cached && Date.now() - cached.timestamp < FEATURE_CACHE_TTL) {
-    console.log(`Cache HIT: ${layerName} for ${cityName}`);
     return cached.features;
   }
-  
-  console.log(`Cache MISS: ${layerName} for ${cityName} - fetching from S3`);
   
   try {
     const key = buildPath('data', country, province, city, domain, layerName);
@@ -925,7 +845,6 @@ const loadSingleLayerCached = async (cityName, country, province, city, domain, 
     const listResponse = await s3Client.send(listCommand);
     
     if (!listResponse.Contents || listResponse.Contents.length === 0) {
-      console.log(`=== S3: Layer file does not exist: ${key} ===`);
       return [];
     }
     
@@ -968,7 +887,6 @@ const loadSingleLayerCached = async (cityName, country, province, city, domain, 
           
           if (geoJsonGeometry && geoJsonGeometry.type && geoJsonGeometry.coordinates) {
             geometry = geoJsonGeometry;
-            console.log(`Parsed ${geoJsonGeometry.type} geometry`);
           } else {
             console.warn('Invalid geometry structure:', geoJsonGeometry);
           }
@@ -1009,8 +927,6 @@ const loadSingleLayerCached = async (cityName, country, province, city, domain, 
       features,
       timestamp: Date.now()
     });
-    
-    console.log(`Loaded and cached ${features.length} features for ${layerName}`);
     return features;
     
   } catch (error) {
@@ -1024,9 +940,7 @@ const CONCURRENT_S3_REQUESTS = 6;
 
 export const loadCityFeatures = async (cityName, activeLayers) => {
   try {
-    await initializeWasm();
-    console.log(`=== S3: loadCityFeatures called (source: ${DATA_SOURCE_PREFIX}) ===`, { cityName, activeLayers });
-    
+    await initializeWasm();    
     const parts = cityName.split(',').map(p => p.trim());
     if (parts.length < 2) {
       console.error('Invalid city name format:', cityName);
@@ -1046,10 +960,8 @@ export const loadCityFeatures = async (cityName, activeLayers) => {
     const normalizedCountry = normalizeName(country);
     
     const activeLayerNames = Object.keys(activeLayers).filter(layer => activeLayers[layer]);
-    console.log('=== S3: Active layer names ===', activeLayerNames);
     
     if (activeLayerNames.length === 0) {
-      console.log('=== S3: No active layers selected ===');
       return [];
     }
     
@@ -1123,11 +1035,7 @@ export const loadCityFeatures = async (cityName, activeLayers) => {
       batchResults.forEach(features => {
         allFeatures.push(...features);
       });
-      
-      console.log(`Loaded batch ${Math.floor(i / CONCURRENT_S3_REQUESTS) + 1}/${Math.ceil(layersToLoad.length / CONCURRENT_S3_REQUESTS)}`);
     }
-    
-    console.log(`=== S3: Returning total of ${allFeatures.length} features ===`);
     return allFeatures;
     
   } catch (error) {
@@ -1179,9 +1087,7 @@ const validateBoundaryPolygon = (geometry) => {
   }
 };
 
-const clipLineStringSegmentBySegment = (lineCoords, boundaryFeature) => {
-  console.log('Clipping LineString with', lineCoords.length, 'points');
-  
+const clipLineStringSegmentBySegment = (lineCoords, boundaryFeature) => {  
   // Check if completely within
   const lineFeature = {
     type: 'Feature',
@@ -1197,20 +1103,16 @@ const clipLineStringSegmentBySegment = (lineCoords, boundaryFeature) => {
     try {
       const intersections = turf.lineIntersect(lineFeature, boundaryFeature);
       lineIntersectsBoundary = intersections.features.length > 0;
-      console.log('Line intersects boundary edge?', lineIntersectsBoundary);
     } catch (intersectError) {
       console.warn('Error checking line intersection with boundary:', intersectError);
     }
     
     if (isFullyWithin && !lineIntersectsBoundary) {
-      console.log('LineString is fully within boundary (verified - no edge crossings)');
       return [lineCoords]; // Return as array of segments
     }
   } catch (error) {
     console.warn('Error checking if line is fully within:', error);
   }
-  
-  console.log('LineString crosses boundary - clipping needed');
   
   // Line crosses boundary - clip it segment by segment
   const clippedSegments = [];
@@ -1246,10 +1148,7 @@ const clipLineStringSegmentBySegment = (lineCoords, boundaryFeature) => {
           currentSegment.push(point1);
         }
         currentSegment.push(point2);
-      } else {
-        // Segment goes outside and comes back in - need to split
-        console.log('Segment appears inside but crosses boundary - splitting');
-        
+      } else {        
         if (currentSegment.length === 0) {
           currentSegment.push(point1);
         }
@@ -1286,7 +1185,6 @@ const clipLineStringSegmentBySegment = (lineCoords, boundaryFeature) => {
           // Add the intersection point (exit point)
           const exitPoint = intersections.features[0].geometry.coordinates;
           currentSegment.push(exitPoint);
-          console.log('Found exit point:', exitPoint);
         }
       } catch (err) {
         console.warn('Error finding exit intersection:', err);
@@ -1295,7 +1193,6 @@ const clipLineStringSegmentBySegment = (lineCoords, boundaryFeature) => {
       // Save this segment
       if (currentSegment.length >= 2) {
         clippedSegments.push([...currentSegment]);
-        console.log('Saved segment with', currentSegment.length, 'points (exiting boundary)');
       }
       currentSegment = [];
       
@@ -1308,7 +1205,6 @@ const clipLineStringSegmentBySegment = (lineCoords, boundaryFeature) => {
           // Start new segment with entry point
           const entryPoint = intersections.features[0].geometry.coordinates;
           currentSegment = [entryPoint, point2];
-          console.log('Found entry point:', entryPoint);
         } else {
           // No intersection found, start with p2
           currentSegment = [point2];
@@ -1329,7 +1225,6 @@ const clipLineStringSegmentBySegment = (lineCoords, boundaryFeature) => {
           const entry = intersections.features[0].geometry.coordinates;
           const exit = intersections.features[1].geometry.coordinates;
           clippedSegments.push([entry, exit]);
-          console.log('Segment crosses through boundary - keeping middle part');
         }
       } catch (err) {
         console.warn('Error checking segment crossing:', err);
@@ -1341,15 +1236,11 @@ const clipLineStringSegmentBySegment = (lineCoords, boundaryFeature) => {
   // Don't forget the last segment if we were building one
   if (currentSegment.length >= 2) {
     clippedSegments.push(currentSegment);
-    console.log('Saved final segment with', currentSegment.length, 'points');
   }
-  
-  console.log('LineString clipping resulted in', clippedSegments.length, 'segments');
   return clippedSegments;
 };
 
 const clipMultiLineStringSegmentBySegment = (multiLineCoords, boundaryFeature) => {
-  console.log('Clipping MultiLineString with', multiLineCoords.length, 'lines');
   const allClippedSegments = [];
   
   for (const lineCoords of multiLineCoords) {
@@ -1381,7 +1272,6 @@ const clipMultiLineStringSegmentBySegment = (multiLineCoords, boundaryFeature) =
       try {
         const intersections = turf.lineIntersect(lineFeature, boundaryFeature);
         lineIntersectsBoundary = intersections.features.length > 0;
-        console.log('MultiLineString component intersects boundary edge?', lineIntersectsBoundary);
       } catch (intersectError) {
         console.warn('Error checking line intersection with boundary:', intersectError);
       }
@@ -1427,10 +1317,7 @@ const clipMultiLineStringSegmentBySegment = (multiLineCoords, boundaryFeature) =
             currentSegment.push(point1);
           }
           currentSegment.push(point2);
-        } else {
-          // Segment goes outside and comes back in - need to split
-          console.log('MultiLineString segment appears inside but crosses boundary - splitting');
-          
+        } else {          
           if (currentSegment.length === 0) {
             currentSegment.push(point1);
           }
@@ -1510,8 +1397,6 @@ const clipMultiLineStringSegmentBySegment = (multiLineCoords, boundaryFeature) =
       allClippedSegments.push(currentSegment);
     }
   }
-  
-  console.log('MultiLineString clipping resulted in', allClippedSegments.length, 'segments');
   return allClippedSegments;
 };
 
@@ -1596,7 +1481,6 @@ const cropFeaturesByBoundary = (features, boundary) => {
     
     // If boundary is a Feature object, extract just the geometry
     if (boundaryGeometry.type === 'Feature' && boundaryGeometry.geometry) {
-      console.log('Boundary is a Feature object, extracting geometry');
       boundaryGeometry = boundaryGeometry.geometry;
     }
     
@@ -1614,19 +1498,9 @@ const cropFeaturesByBoundary = (features, boundary) => {
       geometry: boundaryGeometry,
       properties: {}
     };
-    
-    console.log(`Cropping features against ${boundaryGeometry.type} boundary`);
-    if (boundaryGeometry.type === 'MultiPolygon') {
-      console.log(`MultiPolygon has ${boundaryGeometry.coordinates.length} separate polygons`);
-    }
-    
+
     const croppedFeatures = [];
     const seenGeometries = new Set();
-    let fullyCroppedCount = 0;
-    let partiallyCroppedCount = 0;
-    let pointsInsideCount = 0;
-    let pointsOutsideCount = 0;
-    let geometryDuplicatesCount = 0;
     
     for (const feature of features) {
       try {
@@ -1668,32 +1542,25 @@ const cropFeaturesByBoundary = (features, boundary) => {
               
               if (isWithin) {
                 croppedGeometry = geometry;
-                pointsInsideCount++;
               } else {
-                pointsOutsideCount++;
                 continue;
               }
               
             } else if (geometry.type === 'LineString') {
-              try {
-                console.log('Processing LineString with', geometry.coordinates.length, 'points');
-                
+              try {                
                 const clippedSegments = clipLineStringSegmentBySegment(
                   geometry.coordinates, 
                   boundaryFeature
                 );
                 
                 if (clippedSegments.length === 0) {
-                  console.log('No segments inside boundary');
                   continue;
                 } else if (clippedSegments.length === 1) {
-                  console.log('Single segment inside boundary with', clippedSegments[0].length, 'points');
                   croppedGeometry = {
                     type: 'LineString',
                     coordinates: clippedSegments[0]
                   };
                 } else {
-                  console.log('Multiple segments inside boundary:', clippedSegments.map(s => s.length));
                   croppedGeometry = {
                     type: 'MultiLineString',
                     coordinates: clippedSegments
@@ -1705,25 +1572,20 @@ const cropFeaturesByBoundary = (features, boundary) => {
               }
               
             } else if (geometry.type === 'MultiLineString') {
-              try {
-                console.log('Processing MultiLineString with', geometry.coordinates.length, 'lines');
-                
+              try {                
                 const clippedSegments = clipMultiLineStringSegmentBySegment(
                   geometry.coordinates,
                   boundaryFeature
                 );
                 
                 if (clippedSegments.length === 0) {
-                  console.log('No segments inside boundary');
                   continue;
                 } else if (clippedSegments.length === 1) {
-                  console.log('Single segment inside boundary with', clippedSegments[0].length, 'points');
                   croppedGeometry = {
                     type: 'LineString',
                     coordinates: clippedSegments[0]
                   };
                 } else {
-                  console.log('Multiple segments inside boundary:', clippedSegments.map(s => s.length));
                   croppedGeometry = {
                     type: 'MultiLineString',
                     coordinates: clippedSegments
@@ -1743,18 +1605,11 @@ const cropFeaturesByBoundary = (features, boundary) => {
                   croppedGeometry = intersection.geometry;
                   
                   // Check if it was actually cropped or was fully inside
-                  const isFullyWithin = turf.booleanWithin(turfFeature, boundaryFeature);
-                  if (isFullyWithin) {
-                    fullyCroppedCount++;
-                  } else {
-                    partiallyCroppedCount++;
-                  }
                 } else {
                   // Intersection failed, check if completely within
                   const isFullyWithin = turf.booleanWithin(turfFeature, boundaryFeature);
                   if (isFullyWithin) {
                     croppedGeometry = geometry;
-                    fullyCroppedCount++;
                   }
                 }
               } catch (intersectError) {
@@ -1799,7 +1654,6 @@ const cropFeaturesByBoundary = (features, boundary) => {
                   } else {
                     croppedGeometry = { type: 'MultiPolygon', coordinates: croppedPolygons };
                   }
-                  partiallyCroppedCount++;
                 }
               } catch (multiPolyError) {
                 console.warn('Error processing MultiPolygon:', multiPolyError.message);
@@ -1818,8 +1672,6 @@ const cropFeaturesByBoundary = (features, boundary) => {
                 // Check for duplicate geometry
                 const geomHash = getGeometryHash(croppedGeometry);
                 if (geomHash && seenGeometries.has(geomHash)) {
-                  geometryDuplicatesCount++;
-                  console.log('Duplicate geometry detected after cropping, skipping');
                   continue;
                 }
                 
@@ -1838,15 +1690,12 @@ const cropFeaturesByBoundary = (features, boundary) => {
             
           } catch (cropError) {
             console.warn('Error cropping individual feature:', cropError.message);
-            // If cropping fails but feature intersects, try to include original
-            // only if it's mostly within the boundary
             try {
               const isFullyWithin = turf.booleanWithin(turfFeature, boundaryFeature);
               if (isFullyWithin) {
                 // Check for duplicate even for fully within features
                 const geomHash = getGeometryHash(geometry);
                 if (geomHash && seenGeometries.has(geomHash)) {
-                  geometryDuplicatesCount++;
                   continue;
                 }
                 if (geomHash) {
@@ -1864,29 +1713,14 @@ const cropFeaturesByBoundary = (features, boundary) => {
         console.warn('Error processing feature for cropping:', featureError.message);
       }
     }
-    
-    console.log(`Cropping summary:`);
-    console.log(`  Input features: ${features.length}`);
-    console.log(`  Output features: ${croppedFeatures.length}`);
-    console.log(`  Fully inside: ${fullyCroppedCount}`);
-    console.log(`  Partially cropped: ${partiallyCroppedCount}`);
-    console.log(`  Points inside: ${pointsInsideCount}`);
-    console.log(`  Points outside: ${pointsOutsideCount}`);
-    console.log(`  Geometry duplicates removed: ${geometryDuplicatesCount}`);
-    console.log(`  Total removed: ${features.length - croppedFeatures.length}`);
-    
-    // Split multi-geometries into individual geometries
-    console.log(`\nSplitting multi-geometries...`);
-    const splitFeatures = splitMultiGeometries(croppedFeatures);
-    console.log(`After splitting: ${splitFeatures.length} features (${splitFeatures.length - croppedFeatures.length} new from splits)`);
-    
+
+    const splitFeatures = splitMultiGeometries(croppedFeatures);    
     return splitFeatures;
     
   } catch (error) {
     console.error('Error in cropFeaturesByBoundary:', error);
     console.warn('Boundary geometry type:', boundary?.type);
     console.warn('Features count:', features.length);
-    // Return original features if cropping fails to avoid losing data
     return features;
   }
 };
@@ -2004,26 +1838,18 @@ export const saveLayerFeatures = async (features, country, province, city, domai
     await initializeWasm();
     
     if (features.length === 0) {
-      console.log(`No features found for layer ${layerName}, skipping save`);
       return;
     }
 
     let featuresToSave = features;
     
-    // Only crop if boundary is provided (for automated processing)
-    // If boundary is null, features are already cropped (manual uploads)
+    // Only crop if boundary is provided
     if (boundary) {
-      console.log(`Cropping ${features.length} features for layer ${layerName} by city boundary...`);
       featuresToSave = cropFeaturesByBoundary(features, boundary);
       
       if (featuresToSave.length === 0) {
-        console.log(`No features remain after cropping for layer ${layerName}, skipping save`);
         return;
       }
-      
-      console.log(`After cropping: ${featuresToSave.length} features remain (${features.length - featuresToSave.length} removed)`);
-    } else {
-      console.log(`Using pre-cropped features for layer ${layerName}: ${featuresToSave.length} features`);
     }
 
     // Prepare data for parquet with proper GeoJSON geometry storage
@@ -2104,12 +1930,6 @@ export const saveLayerFeatures = async (features, country, province, city, domai
     // Invalidate cache after successful save
     const cityName = province ? `${city}, ${province}, ${country}` : `${city}, ${country}`;
     invalidateCityCache(cityName);
-    
-    if (boundary) {
-      console.log(`Layer ${layerName} saved successfully with ${featuresToSave.length} features (${features.length - featuresToSave.length} cropped out)`);
-    } else {
-      console.log(`Layer ${layerName} saved successfully with ${featuresToSave.length} pre-cropped features`);
-    }
   } catch (error) {
     console.error(`Error saving layer ${layerName}:`, error);
     throw error;
@@ -2133,9 +1953,6 @@ export const saveCustomLayer = async (cityName, layerData, boundary = null) => {
       [city, province, country] = parts;
     }
 
-    console.log(`Saving custom layer: ${layerData.name} for ${cityName} with icon: ${layerData.icon}`);
-    console.log(`Initial feature count: ${layerData.features.length}`);
-
     // Prepare features with proper structure
     const features = layerData.features.map(f => ({
       type: 'Feature',
@@ -2148,8 +1965,6 @@ export const saveCustomLayer = async (cityName, layerData, boundary = null) => {
       },
       icon: layerData.icon
     }));
-
-    console.log(`Prepared ${features.length} features for saving`);
     
     // Validate that we have features to save
     if (features.length === 0) {
@@ -2166,8 +1981,6 @@ export const saveCustomLayer = async (cityName, layerData, boundary = null) => {
       layerData.name,
       null
     );
-
-    console.log(`Custom layer ${layerData.name} saved successfully with ${features.length} features`);
     return true;
   } catch (error) {
     console.error('Error saving custom layer:', error);
@@ -2193,8 +2006,6 @@ export const deleteLayer = async (cityName, domain, layerName) => {
 
     const key = buildPath('data', country, province, city, domain, layerName);
 
-    console.log(`Deleting layer: ${key}`);
-
     const deleteCommand = new DeleteObjectsCommand({
       Bucket: BUCKET_NAME,
       Delete: {
@@ -2206,8 +2017,6 @@ export const deleteLayer = async (cityName, domain, layerName) => {
     const response = await s3Client.send(deleteCommand);
     
     if (response.Deleted && response.Deleted.length > 0) {
-      console.log(`Successfully deleted layer: ${layerName}`);
-
       // Invalidate cache after successful delete
       invalidateCityCache(cityName);
 
@@ -2242,8 +2051,6 @@ export const loadLayerForEditing = async (cityName, domain, layerName) => {
     }
 
     const key = buildPath('data', country, province, city, domain, layerName);
-
-    console.log(`Loading layer for editing: ${key}`);
 
     const command = new GetObjectCommand({
       Bucket: BUCKET_NAME,
@@ -2289,8 +2096,6 @@ export const loadLayerForEditing = async (cityName, domain, layerName) => {
         });
       }
     }
-
-    console.log(`Loaded ${features.length} features for editing`);
     return features;
   } catch (error) {
     console.error('Error loading layer for editing:', error);
@@ -2303,7 +2108,6 @@ export const cancelCityProcessing = async (cityName) => {
   const processingInfo = activeProcessing.get(cityName);
   
   if (processingInfo) {
-    console.log(`Cancelling processing for ${cityName}`);
     processingInfo.shouldCancel = true;
     
     // Terminate any active worker
@@ -2315,7 +2119,6 @@ export const cancelCityProcessing = async (cityName) => {
     // Delete existing data
     try {
       await deleteCityData(cityName);
-      console.log(`Deleted existing data for ${cityName} after cancellation`);
     } catch (error) {
       console.error(`Error deleting data after cancellation for ${cityName}:`, error);
     }
@@ -2334,11 +2137,8 @@ export const isCityProcessing = (cityName) => {
 };
 
 // Background processing function
-// Background processing function
 export const processCityFeatures = async (cityData, country, province, city, onProgressUpdate, targetDataSource) => {
-  try {
-    console.log(`Starting background processing for ${cityData.name} in data source: ${targetDataSource}`);
-    
+  try {    
     // Store the original data source prefix
     const originalDataSource = DATA_SOURCE_PREFIX;
     
@@ -2352,7 +2152,6 @@ export const processCityFeatures = async (cityData, country, province, city, onP
       // Check if city still exists before starting
       const cityExists = await checkCityExists(country, province, city);
       if (!cityExists) {
-        console.log(`City ${cityData.name} no longer exists, aborting processing`);
         activeProcessing.delete(cityData.name);
         if (onProgressUpdate) {
           onProgressUpdate(cityData.name, {
@@ -2390,7 +2189,6 @@ export const processCityFeatures = async (cityData, country, province, city, onP
         // Check if processing should be cancelled
         const processingInfo = activeProcessing.get(cityData.name);
         if (!processingInfo || processingInfo.shouldCancel) {
-          console.log(`Processing cancelled for ${cityData.name}`);
           activeProcessing.delete(cityData.name);
           
           if (onProgressUpdate) {
@@ -2409,7 +2207,6 @@ export const processCityFeatures = async (cityData, country, province, city, onP
         // Check if city still exists
         const cityExists = await checkCityExists(country, province, city);
         if (!cityExists) {
-          console.log(`City ${cityData.name} was deleted during processing, aborting`);
           activeProcessing.delete(cityData.name);
           
           // Delete any partially processed data
@@ -2435,8 +2232,6 @@ export const processCityFeatures = async (cityData, country, province, city, onP
         const batch = allLayers.slice(i, i + BATCH_SIZE);
         
         try {
-          console.log(`Processing batch ${Math.floor(i/BATCH_SIZE) + 1}/${Math.ceil(totalLayers/BATCH_SIZE)} for data source: ${targetDataSource}`);
-        
           const worker = new Worker('/worker.js');
           
           // Store worker reference for potential cancellation
@@ -2454,28 +2249,9 @@ export const processCityFeatures = async (cityData, country, province, city, onP
               reject(new Error('Worker timeout'));
             }, 180000); // 3 minutes timeout
             
-            worker.onmessage = (e) => {
-              console.log('===== WORKER MESSAGE RECEIVED =====');
-              console.log('Message data:', e.data);
-              console.log('Has progress?', !!e.data.progress);
-              console.log('Has results?', !!e.data.results);
-              
-              // Check if this is a progress update (not final results)
-              if (e.data.progress && !e.data.results) {
-                console.log('===== PROGRESS UPDATE DETECTED =====');
-                console.log('Worker progress:', e.data.progress);
-                console.log('Progress fields:', {
-                  processed: e.data.progress.processed,
-                  saved: e.data.progress.saved,
-                  total: e.data.progress.total,
-                  status: e.data.progress.status
-                });
-                console.log('Batch start values:', {
-                  batchStartProcessed,
-                  batchStartSaved,
-                  totalLayers
-                });
-                
+            worker.onmessage = (e) => {              
+              // Check if this is a progress update
+              if (e.data.progress && !e.data.results) {                
                 // Forward progress to the callback without terminating worker
                 if (onProgressUpdate) {
                   const progressData = {
@@ -2485,16 +2261,13 @@ export const processCityFeatures = async (cityData, country, province, city, onP
                     status: 'processing',
                     dataSource: targetDataSource
                   };
-                  console.log('Calling onProgressUpdate with:', progressData);
                   onProgressUpdate(cityData.name, progressData);
                 } else {
                   console.warn('onProgressUpdate callback is not defined!');
                 }
                 return; // Don't resolve/terminate - keep worker running
               }
-              
-              console.log('===== FINAL RESULTS RECEIVED =====');
-              // This is the final result
+
               clearTimeout(timeout);
               worker.terminate();
               
@@ -2534,7 +2307,6 @@ export const processCityFeatures = async (cityData, country, province, city, onP
           // Check again if processing should be cancelled after worker completes
           const processingInfoAfterWorker = activeProcessing.get(cityData.name);
           if (!processingInfoAfterWorker || processingInfoAfterWorker.shouldCancel) {
-            console.log(`Processing cancelled for ${cityData.name} after worker completion`);
             activeProcessing.delete(cityData.name);
             
             if (onProgressUpdate) {
@@ -2572,7 +2344,6 @@ export const processCityFeatures = async (cityData, country, province, city, onP
             // Check cancellation before each save
             const processingInfoBeforeSave = activeProcessing.get(cityData.name);
             if (!processingInfoBeforeSave || processingInfoBeforeSave.shouldCancel) {
-              console.log(`Processing cancelled for ${cityData.name} before saving layer`);
               activeProcessing.delete(cityData.name);
               
               if (onProgressUpdate) {
@@ -2602,11 +2373,8 @@ export const processCityFeatures = async (cityData, country, province, city, onP
                 null
               );
               savedCount++;
-              console.log(`Saved layer ${layerInfo.filename} with cropped features to ${targetDataSource}`);
-            } else {
-              console.log(`Layer ${layerInfo.filename} processed with 0 features (not saving to S3)`);
-            }
-            
+            } 
+
             processedCount++;
             
             if (onProgressUpdate) {
@@ -2619,8 +2387,6 @@ export const processCityFeatures = async (cityData, country, province, city, onP
               });
             }
           }
-
-          console.log(`Completed batch processing (${processedCount}/${totalLayers} layers processed, ${savedCount} saved to ${targetDataSource})`);
 
           await new Promise(resolve => setTimeout(resolve, 2000));
 
@@ -2639,8 +2405,6 @@ export const processCityFeatures = async (cityData, country, province, city, onP
           }
         }
       }
-
-      console.log(`Completed background processing for ${cityData.name} in ${targetDataSource}: ${processedCount}/${totalLayers} layers processed, ${savedCount} saved`);
       
       // Remove from active processing on successful completion
       activeProcessing.delete(cityData.name);
@@ -2659,7 +2423,6 @@ export const processCityFeatures = async (cityData, country, province, city, onP
     } finally {
       // Always restore the original data source prefix
       DATA_SOURCE_PREFIX = originalDataSource;
-      console.log(`Restored data source prefix to: ${originalDataSource}`);
     }
   } catch (error) {
     console.error('Error in background processing:', error);
@@ -2687,14 +2450,10 @@ export const deleteCityData = async (cityName) => {
     const normalizedProvince = normalizeName(province);
     const normalizedCountry = normalizeName(country);
 
-    console.log(`Deleting city data for: ${cityName}`);
-    console.log(`Normalized: country=${normalizedCountry}, province=${normalizedProvince}, city=${normalizedCity}`);
-
     const objectsToDelete = [];
 
     // List and collect population data files
     const populationPrefix = `${DATA_SOURCE_PREFIX}/population/country=${normalizedCountry}/province=${normalizedProvince}/city=${normalizedCity}/`;
-    console.log(`Scanning population prefix: ${populationPrefix}`);
     
     let populationContinuationToken = null;
     do {
@@ -2708,7 +2467,6 @@ export const deleteCityData = async (cityName) => {
       if (populationResponse.Contents && populationResponse.Contents.length > 0) {
         populationResponse.Contents.forEach(obj => {
           objectsToDelete.push({ Key: obj.Key });
-          console.log(`Found population file: ${obj.Key}`);
         });
       }
       
@@ -2717,7 +2475,6 @@ export const deleteCityData = async (cityName) => {
 
     // List and collect data layer files
     const dataPrefix = `${DATA_SOURCE_PREFIX}/data/country=${normalizedCountry}/province=${normalizedProvince}/city=${normalizedCity}/`;
-    console.log(`Scanning data prefix: ${dataPrefix}`);
     
     let dataContinuationToken = null;
     do {
@@ -2731,14 +2488,11 @@ export const deleteCityData = async (cityName) => {
       if (dataResponse.Contents && dataResponse.Contents.length > 0) {
         dataResponse.Contents.forEach(obj => {
           objectsToDelete.push({ Key: obj.Key });
-          console.log(`Found data file: ${obj.Key}`);
         });
       }
       
       dataContinuationToken = dataResponse.NextContinuationToken;
     } while (dataContinuationToken);
-
-    console.log(`Total files to delete: ${objectsToDelete.length}`);
 
     if (objectsToDelete.length > 0) {
       // S3 DeleteObjects has a limit of 1000 objects per request
@@ -2757,10 +2511,6 @@ export const deleteCityData = async (cityName) => {
         
         const deleteResponse = await s3Client.send(deleteCommand);
         
-        if (deleteResponse.Deleted) {
-          console.log(`Deleted ${deleteResponse.Deleted.length} objects in batch ${Math.floor(i / BATCH_SIZE) + 1}`);
-        }
-        
         if (deleteResponse.Errors && deleteResponse.Errors.length > 0) {
           console.error('Errors during deletion:', deleteResponse.Errors);
         }
@@ -2768,10 +2518,6 @@ export const deleteCityData = async (cityName) => {
 
       // Invalidate cache after successful delete
       invalidateCityCache(cityName);
-      
-      console.log(`Successfully deleted all data for ${cityName} from both population and data folders`);
-    } else {
-      console.log(`No files found to delete for ${cityName}`);
     }
   } catch (error) {
     console.error('Error deleting city data:', error);
@@ -2786,14 +2532,10 @@ export const deleteCityMetadata = async (country, province, city) => {
     const normalizedProvince = normalizeName(province);
     const normalizedCountry = normalizeName(country);
 
-    console.log(`Deleting city metadata for: ${country}/${province}/${city}`);
-    console.log(`Normalized: country=${normalizedCountry}, province=${normalizedProvince}, city=${normalizedCity}`);
-
     const objectsToDelete = [];
 
     // List and collect population data files only
     const populationPrefix = `${DATA_SOURCE_PREFIX}/population/country=${normalizedCountry}/province=${normalizedProvince}/city=${normalizedCity}/`;
-    console.log(`Scanning population prefix: ${populationPrefix}`);
     
     let populationContinuationToken = null;
     do {
@@ -2807,14 +2549,11 @@ export const deleteCityMetadata = async (country, province, city) => {
       if (populationResponse.Contents && populationResponse.Contents.length > 0) {
         populationResponse.Contents.forEach(obj => {
           objectsToDelete.push({ Key: obj.Key });
-          console.log(`Found population file to delete: ${obj.Key}`);
         });
       }
       
       populationContinuationToken = populationResponse.NextContinuationToken;
     } while (populationContinuationToken);
-
-    console.log(`Total metadata files to delete: ${objectsToDelete.length}`);
 
     if (objectsToDelete.length > 0) {
       const deleteCommand = new DeleteObjectsCommand({
@@ -2827,17 +2566,9 @@ export const deleteCityMetadata = async (country, province, city) => {
       
       const deleteResponse = await s3Client.send(deleteCommand);
       
-      if (deleteResponse.Deleted) {
-        console.log(`Deleted ${deleteResponse.Deleted.length} metadata objects`);
-      }
-      
       if (deleteResponse.Errors && deleteResponse.Errors.length > 0) {
         console.error('Errors during metadata deletion:', deleteResponse.Errors);
       }
-      
-      console.log(`Successfully deleted metadata for ${city}`);
-    } else {
-      console.log(`No metadata files found to delete for ${city}`);
     }
   } catch (error) {
     console.error('Error deleting city metadata:', error);
@@ -2846,8 +2577,6 @@ export const deleteCityMetadata = async (country, province, city) => {
 };
 
 export const prefetchCityMetadata = async (cityNames) => {
-  console.log(`Prefetching metadata for ${cityNames.length} cities`);
-  
   const promises = cityNames.slice(0, 10).map(async (cityName) => {
     const parts = cityName.split(',').map(p => p.trim());
     let city, province, country;
@@ -2867,17 +2596,12 @@ export const prefetchCityMetadata = async (cityNames) => {
   });
   
   await Promise.allSettled(promises);
-  console.log('Prefetch complete');
 };
 
 // Check if a city already exists in the population bucket
 export const checkCityExists = async (country, province, city) => {
   try {
     await initializeWasm();
-    
-    const normalizedCountry = normalizeName(country);
-    const normalizedProvince = normalizeName(province);
-    const normalizedCity = normalizeName(city);
     
     const cityMetaKey = buildPath('population', country, province, city);
     
@@ -2890,10 +2614,8 @@ export const checkCityExists = async (country, province, city) => {
       
       const response = await s3Client.send(listCommand);
       const exists = response.Contents && response.Contents.length > 0;
-      console.log(`City ${normalizedCountry}/${normalizedProvince}/${normalizedCity} exists: ${exists}`);
       return exists;
     } catch (error) {
-      console.log(`City ${normalizedCountry}/${normalizedProvince}/${normalizedCity} does not exist:`, error.message);
       return false;
     }
   } catch (error) {

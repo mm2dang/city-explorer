@@ -111,8 +111,6 @@ self.onmessage = async (e) => {
     const north = Math.max(...lats);
     const east = Math.max(...lons);
     bbox = `${south},${west},${north},${east}`;
-    
-    console.log(`Calculated bbox for ${boundary.type}:`, bbox);
 
     // Simplify boundary to reduce complexity
     let simplifiedBoundary = boundary;
@@ -125,7 +123,6 @@ self.onmessage = async (e) => {
         };
         const simplified = turf.simplify(boundaryFeature, { tolerance: 0.001, highQuality: true });
         simplifiedBoundary = simplified.geometry;
-        console.log(`Simplified ${boundary.type} boundary for faster processing`);
       }
     } catch (error) {
       console.warn('Error simplifying boundary:', error);
@@ -140,8 +137,6 @@ self.onmessage = async (e) => {
     };
 
     const clipLineStringByBoundary = (lineCoords, boundaryFeature) => {
-      console.log('Clipping LineString with', lineCoords.length, 'points');
-      
       // Check if completely within
       const lineFeature = {
         type: 'Feature',
@@ -152,25 +147,21 @@ self.onmessage = async (e) => {
       try {
         const isFullyWithin = turf.booleanWithin(lineFeature, boundaryFeature);
         
-        // CRITICAL: Even if booleanWithin returns true, check if line intersects boundary edge
+        // Even if booleanWithin returns true, check if line intersects boundary edge
         let lineIntersectsBoundary = false;
         try {
           const intersections = turf.lineIntersect(lineFeature, boundaryFeature);
           lineIntersectsBoundary = intersections.features.length > 0;
-          console.log('Line intersects boundary edge?', lineIntersectsBoundary);
         } catch (intersectError) {
           console.warn('Error checking line intersection with boundary:', intersectError);
         }
         
         if (isFullyWithin && !lineIntersectsBoundary) {
-          console.log('LineString is fully within boundary (verified - no edge crossings)');
-          return [lineCoords]; // Return as array of segments
+          return [lineCoords];
         }
       } catch (error) {
         console.warn('Error checking if line is fully within:', error);
       }
-      
-      console.log('LineString crosses boundary - clipping needed');
       
       // Line crosses boundary - clip it segment by segment
       const clippedSegments = [];
@@ -208,7 +199,6 @@ self.onmessage = async (e) => {
             currentSegment.push(point2);
           } else {
             // Segment goes outside and comes back in - need to split
-            console.log('Segment appears inside but crosses boundary - splitting');
             
             if (currentSegment.length === 0) {
               currentSegment.push(point1);
@@ -246,7 +236,6 @@ self.onmessage = async (e) => {
               // Add the intersection point (exit point)
               const exitPoint = intersections.features[0].geometry.coordinates;
               currentSegment.push(exitPoint);
-              console.log('Found exit point:', exitPoint);
             }
           } catch (err) {
             console.warn('Error finding exit intersection:', err);
@@ -255,7 +244,6 @@ self.onmessage = async (e) => {
           // Save this segment
           if (currentSegment.length >= 2) {
             clippedSegments.push([...currentSegment]);
-            console.log('Saved segment with', currentSegment.length, 'points (exiting boundary)');
           }
           currentSegment = [];
           
@@ -268,7 +256,6 @@ self.onmessage = async (e) => {
               // Start new segment with entry point
               const entryPoint = intersections.features[0].geometry.coordinates;
               currentSegment = [entryPoint, point2];
-              console.log('Found entry point:', entryPoint);
             } else {
               // No intersection found, start with p2
               currentSegment = [point2];
@@ -289,27 +276,20 @@ self.onmessage = async (e) => {
               const entry = intersections.features[0].geometry.coordinates;
               const exit = intersections.features[1].geometry.coordinates;
               clippedSegments.push([entry, exit]);
-              console.log('Segment crosses through boundary - keeping middle part');
             }
           } catch (err) {
             console.warn('Error checking segment crossing:', err);
           }
-          // If segment doesn't cross boundary, ignore it
         }
       }
-      
-      // Don't forget the last segment if we were building one
       if (currentSegment.length >= 2) {
         clippedSegments.push(currentSegment);
-        console.log('Saved final segment with', currentSegment.length, 'points');
       }
       
-      console.log('LineString clipping resulted in', clippedSegments.length, 'segments');
       return clippedSegments;
     };
     
     const clipMultiLineStringByBoundary = (multiLineCoords, boundaryFeature) => {
-      console.log('Clipping MultiLineString with', multiLineCoords.length, 'lines');
       const allClippedSegments = [];
       
       for (const lineCoords of multiLineCoords) {
@@ -336,12 +316,11 @@ self.onmessage = async (e) => {
         try {
           const isFullyWithin = turf.booleanWithin(lineFeature, boundaryFeature);
           
-          // CRITICAL: Even if booleanWithin returns true, check if line intersects boundary edge
+          // Even if booleanWithin returns true, check if line intersects boundary edge
           let lineIntersectsBoundary = false;
           try {
             const intersections = turf.lineIntersect(lineFeature, boundaryFeature);
             lineIntersectsBoundary = intersections.features.length > 0;
-            console.log('MultiLineString component intersects boundary edge?', lineIntersectsBoundary);
           } catch (intersectError) {
             console.warn('Error checking line intersection with boundary:', intersectError);
           }
@@ -389,8 +368,6 @@ self.onmessage = async (e) => {
               currentSegment.push(point2);
             } else {
               // Segment goes outside and comes back in - need to split
-              console.log('MultiLineString segment appears inside but crosses boundary - splitting');
-              
               if (currentSegment.length === 0) {
                 currentSegment.push(point1);
               }
@@ -470,8 +447,6 @@ self.onmessage = async (e) => {
           allClippedSegments.push(currentSegment);
         }
       }
-      
-      console.log('MultiLineString clipping resulted in', allClippedSegments.length, 'segments');
       return allClippedSegments;
     };
 
@@ -780,8 +755,6 @@ self.onmessage = async (e) => {
 
     for (const { tags, filename, domain } of tagsList) {
       try {
-        console.log(`Worker processing layer: ${filename} in domain: ${domain}`);
-        
         // Build tag query
         let tagQuery = '';
         for (const [key, value] of Object.entries(tags)) {
@@ -813,8 +786,6 @@ self.onmessage = async (e) => {
         
         while (retryCount < maxRetries && !data) {
           try {
-            console.log(`Fetching data for ${filename}, attempt ${retryCount + 1}`);
-            
             const response = await fetch('https://overpass-api.de/api/interpreter', {
               method: 'POST',
               headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -849,7 +820,6 @@ self.onmessage = async (e) => {
             }
 
             data = await response.json();
-            console.log(`Successfully fetched ${data.elements?.length || 0} elements for ${filename}`);
             break;
             
           } catch (fetchError) {
@@ -868,8 +838,6 @@ self.onmessage = async (e) => {
           console.warn(`No valid data found for ${filename}`);
           continue;
         }
-        
-        console.log(`Processing ${data.elements.length} elements for ${filename}`);
         
         // Process in smaller batches
         const BATCH_SIZE = 25;
@@ -941,12 +909,9 @@ self.onmessage = async (e) => {
                 
                 if (geometry.type === 'LineString') {
                   try {
-                    console.log(`Processing LineString with ${geometry.coordinates.length} points`);
-                    
                     const clippedSegments = clipLineStringByBoundary(geometry.coordinates, boundaryFeature);
                     
                     if (clippedSegments.length === 0) {
-                      console.log('LineString completely outside boundary');
                       continue;
                     } else if (clippedSegments.length === 1) {
                       finalGeometry = {
@@ -967,12 +932,9 @@ self.onmessage = async (e) => {
                   
                 } else if (geometry.type === 'MultiLineString') {
                   try {
-                    console.log(`Processing MultiLineString with ${geometry.coordinates.length} lines`);
-                    
                     const clippedSegments = clipMultiLineStringByBoundary(geometry.coordinates, boundaryFeature);
                     
                     if (clippedSegments.length === 0) {
-                      console.log('MultiLineString completely outside boundary');
                       continue;
                     } else if (clippedSegments.length === 1) {
                       finalGeometry = {
@@ -1029,20 +991,6 @@ self.onmessage = async (e) => {
                   domain_name: domain,
                 };
 
-                if (geometry.type === 'LineString' || geometry.type === 'MultiLineString') {
-                  console.log(`[WORKER] Created feature for ${filename}:`, {
-                    originalType: geometry.type,
-                    originalCoordCount: geometry.type === 'LineString' 
-                      ? geometry.coordinates.length 
-                      : geometry.coordinates.reduce((sum, line) => sum + line.length, 0),
-                    finalType: finalGeometry.type,
-                    finalCoordCount: finalGeometry.type === 'LineString' 
-                      ? finalGeometry.coordinates.length 
-                      : finalGeometry.coordinates.reduce((sum, line) => sum + line.length, 0),
-                    wasCropped: JSON.stringify(geometry) !== JSON.stringify(finalGeometry)
-                  });
-                }
-
                 results.push(feature);
                 processedCount++;
               }
@@ -1059,8 +1007,6 @@ self.onmessage = async (e) => {
           }
         }
 
-        console.log(`Completed ${filename}: ${processedCount} features found inside boundary (${duplicateCount} duplicates removed)`);
-
         // Track if this layer had data
         processedLayers++;
         if (processedCount > 0) {
@@ -1076,7 +1022,6 @@ self.onmessage = async (e) => {
             status: 'processing'
           }
         };
-        console.log('Worker sending progress update:', progressUpdate);
         self.postMessage(progressUpdate);
         
       } catch (layerError) {
@@ -1098,13 +1043,9 @@ self.onmessage = async (e) => {
       // Small delay between layers to avoid overwhelming the API
       await new Promise(resolve => setTimeout(resolve, 1000));
     }
-
-    console.log(`Worker completed processing with ${results.length} total features`);
     
     // Split multi-geometries
-    console.log('Splitting multi-geometries in worker...');
     const splitResults = splitMultiGeometries(results);
-    console.log(`After splitting: ${splitResults.length} features (${splitResults.length - results.length} new from splits)`);
     
     self.postMessage({ 
       results: splitResults,

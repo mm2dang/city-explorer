@@ -17,7 +17,6 @@ const MapController = ({ center, boundary, onBoundaryLoad }) => {
 
   useEffect(() => {
     if (boundary) {
-      console.log('MapController: boundary changed, fitting to bounds');
       try {
         const geoJsonLayer = L.geoJSON(boundary);
         const bounds = geoJsonLayer.getBounds();
@@ -35,7 +34,6 @@ const MapController = ({ center, boundary, onBoundaryLoad }) => {
         map.setView(center || [51.505, -0.09], 12);
       }
     } else if (center && center[0] && center[1]) {
-      console.log('MapController: No boundary, using center');
       map.setView(center, 12);
     }
 
@@ -57,7 +55,6 @@ const MapController = ({ center, boundary, onBoundaryLoad }) => {
 
   useEffect(() => {
     if (boundary && onBoundaryLoad) {
-      console.log('MapController: Calling onBoundaryLoad');
       onBoundaryLoad(map);
     }
   }, [boundary, onBoundaryLoad, map]);
@@ -94,7 +91,6 @@ const reprojectGeometry = (geometry, prjWkt, crsFromGeoJSON = null) => {
     const y = firstCoord[1];
     
     if (x >= -180 && x <= 180 && y >= -90 && y <= 90) {
-      console.log('Coordinates appear to be in WGS84, no reprojection needed');
       return geometry;
     }
     
@@ -337,10 +333,8 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel, dataSource = 'city',
         });
         
         try {
-          console.log('Checking if features exist for:', editingCity.name);
           const layers = await getAvailableLayersForCity(editingCity.name);
           const hasFeatures = Object.keys(layers).length > 0;
-          console.log(`Found ${Object.keys(layers).length} layers for ${editingCity.name}`);
           setHasExistingFeatures(hasFeatures);
           
           // If no features exist and data source is OSM, default to checked
@@ -463,11 +457,8 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel, dataSource = 'city',
     
     // If there's an existing boundary, merge the new polygon with it
     if (boundary) {
-      console.log('Adding new polygon to existing boundary');
       try {
-        const mergedGeometry = mergeGeometries([boundary, newGeometry]);
-        console.log(`Merged new polygon with existing boundary`);
-        
+        const mergedGeometry = mergeGeometries([boundary, newGeometry]);        
         setBoundary(mergedGeometry);
         setUploadError('');
         
@@ -535,9 +526,7 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel, dataSource = 'city',
     
     // Merge all edited geometries back into a single MultiPolygon
     try {
-      const mergedGeometry = mergeGeometries(allGeometries);
-      console.log(`Merged ${allGeometries.length} edited geometries into ${mergedGeometry.type}`);
-      
+      const mergedGeometry = mergeGeometries(allGeometries);      
       setBoundary(mergedGeometry);
       setUploadError('');
       
@@ -567,14 +556,11 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel, dataSource = 'city',
     }
     
     if (remainingLayers.length === 0) {
-      console.log('All polygons deleted');
       setBoundary(null);
       setUploadError('');
     } else {
       try {
-        const mergedGeometry = mergeGeometries(remainingLayers);
-        console.log(`Merged ${remainingLayers.length} remaining geometries`);
-        
+        const mergedGeometry = mergeGeometries(remainingLayers);        
         setBoundary(mergedGeometry);
         setUploadError('');
         
@@ -596,8 +582,6 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel, dataSource = 'city',
 
   const handleBoundaryLoad = useCallback((map) => {
     if (boundary && drawRef.current && map) {
-      console.log('Loading boundary on map:', boundary);
-      console.log('Boundary type:', boundary.type);
       drawRef.current.clearLayers();
       
       try {
@@ -629,9 +613,7 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel, dataSource = 'city',
           }
           
           // For MultiPolygon with multiple parts, handle each polygon separately
-          if (boundary.type === 'MultiPolygon') {
-            console.log(`MultiPolygon with ${boundary.coordinates.length} parts detected`);
-            
+          if (boundary.type === 'MultiPolygon') {            
             // Split MultiPolygon into individual Polygons for editing
             boundary.coordinates.forEach((polygonCoords, index) => {
               const singlePolygon = L.polygon(
@@ -654,16 +636,8 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel, dataSource = 'city',
           }
         });
         
-        const bounds = geoJsonLayer.getBounds();
-        console.log('Bounds object:', {
-          isValid: bounds.isValid(),
-          southWest: bounds.getSouthWest(),
-          northEast: bounds.getNorthEast(),
-          center: bounds.getCenter()
-        });
-        
+        const bounds = geoJsonLayer.getBounds();        
         if (bounds.isValid()) {
-          console.log('Fitting bounds:', bounds);
           map.fitBounds(bounds, { 
             padding: [50, 50],
             maxZoom: 15 
@@ -769,12 +743,9 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel, dataSource = 'city',
       // Check if a ZIP file was uploaded
       const zipFile = files.find(f => f.name.toLowerCase().endsWith('.zip'));
       
-      if (zipFile) {
-        console.log('Processing ZIP file:', zipFile.name);
-        
+      if (zipFile) {        
         try {
           const zip = await JSZip.loadAsync(zipFile);
-          console.log('ZIP contents:', Object.keys(zip.files));
           
           // Extract shapefile components from ZIP
           let shpBuffer = null;
@@ -787,13 +758,10 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel, dataSource = 'city',
             const lowerName = filename.toLowerCase();
             
             if (lowerName.endsWith('.shp')) {
-              console.log('Found .shp file in ZIP:', filename);
               shpBuffer = await zipEntry.async('arraybuffer');
             } else if (lowerName.endsWith('.dbf')) {
-              console.log('Found .dbf file in ZIP:', filename);
               dbfBuffer = await zipEntry.async('arraybuffer');
             } else if (lowerName.endsWith('.prj')) {
-              console.log('Found .prj file in ZIP:', filename);
               prjWkt = await zipEntry.async('text');
             }
           }
@@ -841,7 +809,6 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel, dataSource = 'city',
           const prjFile = files.find(f => f.name.toLowerCase().endsWith('.prj'));
           if (prjFile) {
             prjWkt = await prjFile.text();
-            console.log('Found PRJ file:', prjWkt);
           } else {
             console.warn('No PRJ file found - will assume WGS 1984 UTM Zone 19S (EPSG:32719)');
           }
@@ -889,7 +856,6 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel, dataSource = 'city',
             const epsgMatch = crsName.match(/EPSG[:\s]+(\d+)/i);
             if (epsgMatch) {
               crsInfo = `EPSG:${epsgMatch[1]}`;
-              console.log('Found CRS in GeoJSON:', crsInfo);
             }
           }
         }
@@ -949,7 +915,6 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel, dataSource = 'city',
             geometries = geometries.map(geom => 
               reprojectGeometry(geom, null, crsInfo)
             );
-            console.log('Reprojected GeoJSON geometries to WGS84');
           } catch (reprojError) {
             console.error('Reprojection error:', reprojError);
             setUploadError(`Error reprojecting coordinates: ${reprojError.message}`);
@@ -962,15 +927,12 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel, dataSource = 'city',
         let mergedGeometry;
         try {
           mergedGeometry = mergeGeometries(geometries);
-          console.log(`Merged ${geometries.length} geometries into MultiPolygon with ${mergedGeometry.coordinates.length} polygon(s)`);
         } catch (mergeError) {
           console.error('Merge error:', mergeError);
           setUploadError(`Error merging geometries: ${mergeError.message}`);
           setIsProcessing(false);
           return;
         }
-  
-        console.log('Successfully loaded and merged GeoJSON boundary:', mergedGeometry);
         
         setBoundary(mergedGeometry);
         
@@ -1039,15 +1001,12 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel, dataSource = 'city',
           return;
         }
       }
-  
-      console.log(`Original Shapefile contains ${geometries.length} polygon(s)`);
       
       // Reproject all geometries
       try {
         geometries = geometries.map(geom => 
           reprojectGeometry(geom, prjWkt, null)
         );
-        console.log('Reprojected all geometries to WGS84');
       } catch (reprojError) {
         console.error('Reprojection error:', reprojError);
         setUploadError(`Error reprojecting coordinates: ${reprojError.message}`);
@@ -1059,7 +1018,6 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel, dataSource = 'city',
       let mergedGeometry;
       try {
         mergedGeometry = mergeGeometries(geometries);
-        console.log(`Merged ${geometries.length} geometries into MultiPolygon with ${mergedGeometry.coordinates.length} polygon(s)`);
       } catch (mergeError) {
         console.error('Merge error:', mergeError);
         setUploadError(`Error merging geometries: ${mergeError.message}`);
@@ -1148,9 +1106,7 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel, dataSource = 'city',
     
     const targetDataSource = dataSource;
     
-    try {
-      console.log('Submitting city with data source:', targetDataSource);
-      
+    try {      
       const fullName = [cityName.trim(), province.trim(), country.trim()].filter(Boolean).join(', ');
       const normalizedOldName = editingCity ? editingCity.name.split(',').map(p => p.trim()).join(', ') : '';
       const normalizedNewName = fullName.split(',').map(p => p.trim()).join(', ');
@@ -1221,16 +1177,11 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel, dataSource = 'city',
         size: sizeValue,
         sdg_region: sdgRegion
       };
-  
-      console.log('City data to save:', cityData);
-      console.log('Target data source:', targetDataSource);
-  
+
       if (editingCity) {
         const oldParsed = parseCityName(editingCity.name);
         
         if (isRename) {
-          console.log('City renamed, moving data and saving new metadata to:', targetDataSource);
-          
           // First, save the new city data
           await saveCityData(cityData, country, province, cityName);
           
@@ -1247,10 +1198,7 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel, dataSource = 'city',
           // Finally, delete the old city metadata
           await deleteCityData(editingCity.name);
           
-        } else {
-          // Just updating metadata, not renaming
-          console.log('Updating city metadata without rename - deleting old metadata first...');
-          
+        } else {          
           // Delete old metadata from population bucket only
           await deleteCityMetadata(country, province, cityName);
           
@@ -1272,7 +1220,6 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel, dataSource = 'city',
                   progressHandler,
                   targetDataSource
                 );
-                console.log('Background processing completed for', fullName);
               } catch (error) {
                 console.error('Background processing error:', error);
               }
@@ -1284,7 +1231,6 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel, dataSource = 'city',
         }
       } else {
         // New city
-        console.log('Adding new city to data source:', targetDataSource);
         await saveCityData(cityData, country, province, cityName);
         
         // Only process if user checked the option
@@ -1300,7 +1246,6 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel, dataSource = 'city',
                   progressHandler,
                   targetDataSource 
                 );
-                console.log('Background processing completed for', fullName);
               } catch (error) {
                 console.error('Background processing error:', error);
               }
@@ -1324,7 +1269,6 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel, dataSource = 'city',
     if (step === 1) {
       // Skip Wikipedia fetch if editing city and data already exists
       if (editingCity && (wikiData.population || wikiData.size)) {
-        console.log('Editing city - keeping existing population/size data');
         setStep(step + 1);
         return;
       }

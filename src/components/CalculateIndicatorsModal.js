@@ -44,7 +44,6 @@ const CalculateIndicatorsModal = ({ cities, selectedCity, dataSource, onCancel, 
         const dateRange = `${startMonth}_to_${endMonth}`;
         const statusMap = await batchCheckCityCalculationStatus(cities, dateRange, dataSource);
         setCityStatusMap(statusMap);
-        console.log('Loaded calculation status for all cities');
       } catch (error) {
         console.error('Error loading calculation status:', error);
       } finally {
@@ -281,8 +280,6 @@ const CalculateIndicatorsModal = ({ cities, selectedCity, dataSource, onCancel, 
       calculateConnectivity: calculateConnectivity,
       calculateMobilePing: calculateMobilePing
     };
-  
-    console.log('Starting calculation with parameters:', calculationParams);
     
     onCalculate(calculationParams);
   };

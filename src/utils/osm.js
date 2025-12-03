@@ -171,8 +171,6 @@ export const fetchWikipediaData = async (cityName) => {
         return { population: null, size: null, url: null };
       }
   
-      console.log(`Fetching Wikipedia data for: ${title}`);
-  
       // Helper function to decode HTML entities
       const decodeHtmlEntities = (text) => {
         const textarea = document.createElement('textarea');
@@ -215,7 +213,6 @@ export const fetchWikipediaData = async (cityName) => {
             // Valid population range: 10,000 to 100,000,000
             if (num >= 10000 && num < 100000000) {
               population = num;
-              console.log(`Found population: ${num} from row: ${cleanRow.substring(0, 150)}`);
               break;
             }
           }
@@ -248,44 +245,31 @@ export const fetchWikipediaData = async (cityName) => {
               const kmNum = parseFloat(kmMatch[1].replace(/,/g, ''));
               if (kmNum >= 1 && kmNum < 100000) {
                 size = kmNum;
-                console.log(`Found area: ${kmNum} km² (converted from sq mi) from row: ${cleanRow.substring(0, 150)}`);
                 break;
               }
             }
           } else if (num >= 1 && num < 100000) {
-            // Already in km
             size = num;
-            console.log(`Found area: ${num} km² from row: ${cleanRow.substring(0, 150)}`);
             break;
           }
         }
       }
-  
-      // If we still don't have area, search for any row with area indicators and units
-      // The area value is often in a separate row from the "Area" header
-      if (!size) {
-        console.log('Searching for area data in any row...');
-        
+
+      if (!size) {        
         for (const row of rows) {
           const cleanRow = cleanText(row);
-          
-          // Look for rows with area indicators (• Total, • City, • Capital City, • Metropolis, or just "Area")
-          // AND area units (km or sq mi)
           const hasAreaIndicator = /•\s*(?:total|city|capital\s+city|metropolis|land|water|urban)\b/i.test(cleanRow) || /\barea\b/i.test(cleanRow);
           const hasAreaUnits = /km/i.test(cleanRow) || /sq\s*mi/i.test(cleanRow);
           
           if (hasAreaIndicator && hasAreaUnits) {
-            console.log(`Found area candidate: ${cleanRow.substring(0, 150)}`);
             
             // Skip if this is clearly population or other non-area data
             if (/census|population|density|rank|code/i.test(cleanRow) && !/km|sq\s*mi/i.test(cleanRow.substring(0, 100))) {
-              console.log('  -> Skipped: not area data');
               continue;
             }
             
             // Skip CMA, metro, urban area - we want city proper
             if (/•\s*(?:cma|metro|urban)\b/i.test(cleanRow)) {
-              console.log('  -> Skipped: CMA/metro/urban area');
               continue;
             }
             
@@ -295,7 +279,6 @@ export const fetchWikipediaData = async (cityName) => {
               const num = parseFloat(kmFirstMatch[1].replace(/,/g, ''));
               if (num >= 1 && num < 100000) {
                 size = num;
-                console.log(`Found area: ${num} km² (pattern: km first)`);
                 break;
               }
             }
@@ -306,7 +289,6 @@ export const fetchWikipediaData = async (cityName) => {
               const num = parseFloat(sqMiFirstMatch[1].replace(/,/g, ''));
               if (num >= 1 && num < 100000) {
                 size = num;
-                console.log(`Found area: ${num} km² (pattern: converted from sq mi)`);
                 break;
               }
             }
@@ -318,7 +300,6 @@ export const fetchWikipediaData = async (cityName) => {
                 const num = parseFloat(areaMatch[1].replace(/,/g, ''));
                 if (num >= 1 && num < 100000) {
                   size = num;
-                  console.log(`Found area: ${num} km² (pattern: Area keyword)`);
                   break;
                 }
               }
@@ -329,8 +310,6 @@ export const fetchWikipediaData = async (cityName) => {
       
       // Final fallback: look for any row with "Total" and area, extract from cells
       if (!size) {
-        console.log('Final fallback: searching table cells...');
-        
         for (const row of rows) {
           const cleanRow = cleanText(row);
           
@@ -340,16 +319,6 @@ export const fetchWikipediaData = async (cityName) => {
           // Extract ALL table cells from this row
           const tdRegex = /<td[^>]*>([\s\S]*?)<\/td>/gi;
           const cells = row.match(tdRegex) || [];
-          
-          console.log(`Checking ${cells.length} cells in row with "• Total"`);
-          
-          // Debug: log all cells
-          cells.forEach((cell, i) => {
-            const cellText = cleanText(cell);
-            if (cellText.length > 0) {
-              console.log(`  Cell ${i}: ${cellText.substring(0, 100)}`);
-            }
-          });
           
           // Look through cells for the number after we've seen "Total"
           let foundTotal = false;
@@ -370,13 +339,11 @@ export const fetchWikipediaData = async (cityName) => {
                     const kmNum = parseFloat(kmMatch[1].replace(/,/g, ''));
                     if (kmNum >= 1 && kmNum < 100000) {
                       size = kmNum;
-                      console.log(`Found area (same cell): ${kmNum} km²`);
                       break;
                     }
                   }
                 } else if (num >= 1 && num < 100000) {
                   size = num;
-                  console.log(`Found area (same cell): ${num} km²`);
                   break;
                 }
               }
@@ -394,14 +361,12 @@ export const fetchWikipediaData = async (cityName) => {
                 const num = parseFloat(sqMiMatch[2].replace(/,/g, ''));
                 if (num >= 1 && num < 100000) {
                   size = num;
-                  console.log(`Found area (next cell, converted): ${num} km²`);
                   break;
                 }
               } else if (kmMatch) {
                 const num = parseFloat(kmMatch[1].replace(/,/g, ''));
                 if (num >= 1 && num < 100000 && !/cma|metro|urban/i.test(cleanCell)) {
                   size = num;
-                  console.log(`Found area (next cell): ${num} km²`);
                   break;
                 }
               }
@@ -415,7 +380,6 @@ export const fetchWikipediaData = async (cityName) => {
       const encodedTitle = encodeURIComponent(title.replace(/ /g, '_'));
       const url = `https://en.wikipedia.org/wiki/${encodedTitle}`;
   
-      console.log(`Wikipedia extraction results for ${title}:`, { population, size, url });
       return { population, size, url };
   
     } catch (error) {
@@ -432,7 +396,6 @@ const variations = generateCityVariations(cityName);
       if (await checkWikipediaPage(variation)) {
         const data = await fetchPageData(variation);
         if (data.population || data.size || data.url) {
-          console.log(`Found Wikipedia data for ${variation}:`, data);
           return data;
         }
       }
@@ -441,8 +404,6 @@ const variations = generateCityVariations(cityName);
       continue;
     }
   }
-
-  console.log(`No Wikipedia data found for ${cityName}`);
   return { population: null, size: null, url: null };
 };
 

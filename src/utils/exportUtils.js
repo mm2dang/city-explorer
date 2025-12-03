@@ -62,7 +62,6 @@ const streamToArrayBuffer = async (stream) => {
 // Load layer data from S3
 const loadLayerData = async (cityName, domain, layerName) => {
   try {
-    console.log(`Loading from S3: city="${cityName}", domain="${domain}", layer="${layerName}"`);
     
     const parts = cityName.split(',').map(p => p.trim());
     if (parts.length < 2) {
@@ -83,7 +82,6 @@ const loadLayerData = async (cityName, domain, layerName) => {
     
     // Get current data source prefix from s3.js
     const DATA_SOURCE_PREFIX = getDataSource();
-    console.log(`Using data source prefix: ${DATA_SOURCE_PREFIX}`);
     
     const possibleKeys = [
       `${DATA_SOURCE_PREFIX}/data/country=${normalizedCountry}/province=${normalizedProvince}/city=${normalizedCity}/domain=${domain}/${layerName}.snappy.parquet`,
@@ -91,7 +89,6 @@ const loadLayerData = async (cityName, domain, layerName) => {
     
     for (const key of possibleKeys) {
       try {
-        console.log(`Trying key: ${key}`);
         const command = new GetObjectCommand({
           Bucket: BUCKET_NAME,
           Key: key,
@@ -115,8 +112,6 @@ const loadLayerData = async (cityName, domain, layerName) => {
           }
           data.push(row);
         }
-        
-        console.log(`Successfully loaded ${data.length} rows from: ${key}`);
         return data;
         
       } catch (error) {
@@ -181,7 +176,6 @@ const exportAsParquet = async (data, layerName) => {
     const blob = new Blob([buffer], { type: 'application/octet-stream' });
     downloadFile(blob, `${formattedName}.snappy.parquet`);
     
-    console.log(`Exported ${data.length} rows as Parquet`);
   } catch (error) {
     console.error('Error exporting as Parquet:', error);
     throw new Error(`Failed to export as Parquet: ${error.message}`);
@@ -222,7 +216,6 @@ const exportAsCSV = (data, layerName) => {
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     downloadFile(blob, `${formattedName}.csv`);
     
-    console.log(`Exported ${data.length} rows as CSV`);
   } catch (error) {
     console.error('Error exporting as CSV:', error);
     throw new Error(`Failed to export as CSV: ${error.message}`);
@@ -285,7 +278,6 @@ const exportAsGeoJSON = (data, layerName) => {
     const blob = new Blob([jsonContent], { type: 'application/geo+json;charset=utf-8;' });
     downloadFile(blob, `${formattedName}.geojson`);
     
-    console.log(`Exported ${features.length} features as GeoJSON`);
   } catch (error) {
     console.error('Error exporting as GeoJSON:', error);
     throw new Error(`Failed to export as GeoJSON: ${error.message}`);
@@ -396,7 +388,6 @@ const exportAsShapefile = async (data, layerName) => {
     
     downloadFile(zipBlob, `${formattedLayerName}.zip`);
     
-    console.log(`Exported ${features.length} features as Shapefile (${Object.keys(byGeometryType).length} geometry types)`);
   } catch (error) {
     console.error('Error exporting as Shapefile:', error);
     throw new Error(`Failed to export as Shapefile: ${error.message}`);
@@ -405,9 +396,7 @@ const exportAsShapefile = async (data, layerName) => {
 
 // Main export function
 export const exportLayer = async (cityName, domain, layerName, format) => {
-  try {
-    console.log(`Exporting layer ${layerName} as ${format}`);
-    
+  try {    
     // Load data from S3
     const data = await loadLayerData(cityName, domain, layerName);
     
@@ -432,8 +421,7 @@ export const exportLayer = async (cityName, domain, layerName, format) => {
       default:
         throw new Error(`Unsupported export format: ${format}`);
     }
-    
-    console.log(`Successfully exported ${layerName} as ${format}`);
+
   } catch (error) {
     console.error(`Export failed:`, error);
     throw error;
@@ -442,9 +430,7 @@ export const exportLayer = async (cityName, domain, layerName, format) => {
 
 // Export all layers organized by city and domain
 export const exportAllLayers = async (cityName, availableLayersByDomain, format = 'all') => {
-  try {
-    console.log(`Exporting all layers as ${format}...`);
-    
+  try {    
     // Create main zip file
     const mainZip = new JSZip();
     
@@ -457,9 +443,7 @@ export const exportAllLayers = async (cityName, availableLayersByDomain, format 
         // Find the city object to get boundary
         const city = window.citiesData?.find(c => c.name === cityName);
         
-        if (city && city.boundary) {
-          console.log('Adding city boundary to export...');
-          
+        if (city && city.boundary) {          
           // Parse boundary (it's stored as WKT string)
           const boundaryGeometry = JSON.parse(city.boundary);
           
@@ -488,7 +472,6 @@ export const exportAllLayers = async (cityName, availableLayersByDomain, format 
               
               const jsonContent = JSON.stringify(boundaryGeoJSON, null, 2);
               mainZip.file(`${cityFolder}/city_boundary.geojson`, jsonContent);
-              console.log('Added boundary as GeoJSON');
             }
             
             if (exportFormat === 'shapefile') {
@@ -512,7 +495,6 @@ export const exportAllLayers = async (cityName, availableLayersByDomain, format 
                 });
                 
                 mainZip.file(`${cityFolder}/city_boundary.zip`, shpData);
-                console.log('Added boundary as Shapefile');
               } catch (shpError) {
                 console.warn('Could not create boundary shapefile:', shpError);
               }
@@ -523,7 +505,6 @@ export const exportAllLayers = async (cityName, availableLayersByDomain, format 
               const wktString = JSON.stringify(boundaryGeometry);
               const csvContent = `name,geometry_type,geometry_wkt\n"${cityName}","${boundaryGeometry.type}","${wktString.replace(/"/g, '""')}"`;
               mainZip.file(`${cityFolder}/city_boundary.csv`, csvContent);
-              console.log('Added boundary as CSV');
             }
             
             if (exportFormat === 'parquet') {
@@ -556,7 +537,6 @@ export const exportAllLayers = async (cityName, availableLayersByDomain, format 
                 const buffer = writeParquet(wasmTable, writerProperties);
                 
                 mainZip.file(`${cityFolder}/city_boundary.snappy.parquet`, buffer);
-                console.log('Added boundary as Parquet');
               } catch (parquetError) {
                 console.warn('Could not create boundary parquet:', parquetError);
               }
@@ -581,9 +561,7 @@ export const exportAllLayers = async (cityName, availableLayersByDomain, format 
       
       // Process each layer in the domain
       for (const layer of layers) {
-        try {
-          console.log(`Loading ${layer.name} from ${domain}...`);
-          
+        try {          
           // Load data from S3
           const data = await loadLayerData(cityName, domain, layer.name);
           
@@ -809,8 +787,6 @@ export const exportAllLayers = async (cityName, availableLayersByDomain, format 
     // Download with city name and format suffix
     const formatSuffix = format === 'all' ? 'all_formats' : format;
     downloadFile(finalZip, `${cityName.replace(/,/g, '_')}_${formatSuffix}.zip`);
-    
-    console.log('Successfully exported all layers!');
   } catch (error) {
     console.error('Error exporting all layers:', error);
     throw new Error(`Failed to export all layers: ${error.message}`);

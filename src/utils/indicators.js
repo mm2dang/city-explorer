@@ -30,9 +30,7 @@ const GLUE_JOB_NAME = 'calculate_indicators';
  * Read and decompress a gzipped CSV file from S3
  */
 async function readGzippedCsv(bucket, key) {
-  try {
-    console.log(`[CSV] Reading: s3://${bucket}/${key}`);
-    
+  try {    
     const command = new GetObjectCommand({
       Bucket: bucket,
       Key: key
@@ -71,12 +69,8 @@ async function readGzippedCsv(bucket, key) {
       }
     }
     
-    console.log(`[CSV] Downloaded ${buffer.length} bytes`);
-    
     // Decompress the gzipped content
     const decompressed = pako.ungzip(buffer, { to: 'string' });
-    console.log(`[CSV] Decompressed to ${decompressed.length} characters`);
-    console.log(`[CSV] First 200 chars:`, decompressed.substring(0, 200));
     
     // Parse CSV
     return new Promise((resolve, reject) => {
@@ -89,11 +83,6 @@ async function readGzippedCsv(bucket, key) {
           return header.trim();
         },
         complete: (results) => {
-          console.log(`[CSV] Parsed ${results.data.length} rows`);
-          if (results.data.length > 0) {
-            console.log(`[CSV] First row:`, results.data[0]);
-            console.log(`[CSV] Headers:`, Object.keys(results.data[0]));
-          }
           if (results.errors.length > 0) {
             console.warn(`[CSV] Parse errors:`, results.errors);
           }
@@ -130,13 +119,11 @@ export async function getAvailableDateRanges(dataSource) {
     const dateRanges = (result.CommonPrefixes || [])
       .map(prefix => {
         const parts = prefix.Prefix.split('/');
-        return parts[parts.length - 2]; // Get the date range folder name
+        return parts[parts.length - 2];
       })
       .filter(range => range.match(/^\d{4}-\d{2}_to_\d{4}-\d{2}$/))
       .sort()
-      .reverse(); // Most recent first
-
-    console.log(`Found ${dateRanges.length} date ranges for ${dataSource}:`, dateRanges);
+      .reverse();
     return dateRanges;
   } catch (error) {
     console.error('Error getting available date ranges:', error);
@@ -163,13 +150,11 @@ export async function getAvailableConnectivityDateRanges(dataSource) {
     const dateRanges = (result.CommonPrefixes || [])
       .map(prefix => {
         const parts = prefix.Prefix.split('/');
-        return parts[parts.length - 2]; // Get the date range folder name
+        return parts[parts.length - 2];
       })
       .filter(range => range.match(/^\d{4}-\d{2}_to_\d{4}-\d{2}$/))
       .sort()
       .reverse(); // Most recent first
-
-    console.log(`Found ${dateRanges.length} connectivity date ranges:`, dateRanges);
     return dateRanges;
   } catch (error) {
     console.error('Error getting connectivity date ranges:', error);
@@ -197,8 +182,6 @@ export async function getSummaryData(dataSource, dateRange) {
       obj.Key.endsWith('.csv.gz')
     );
 
-    console.log(`Found ${csvFiles.length} CSV files in ${prefix}`);
-
     // Read and combine all CSV files
     let allData = [];
     for (const file of csvFiles) {
@@ -209,8 +192,6 @@ export async function getSummaryData(dataSource, dateRange) {
         console.error(`Error reading file ${file.Key}:`, error);
       }
     }
-
-    console.log(`Loaded ${allData.length} rows of summary data`);
     return allData;
   } catch (error) {
     console.error('Error getting summary data:', error);
@@ -219,16 +200,13 @@ export async function getSummaryData(dataSource, dateRange) {
 }
 
 export async function getSummaryDataWithConnectivity(dataSource, dateRange, cities) {
-  try {
-    console.log(`[Summary] Loading data for ${dataSource}, ${dateRange}`);
-    
+  try {    
     // Try to load Glue summary data, but don't fail if it doesn't exist
     let summaryData = [];
     try {
       summaryData = await getSummaryData(dataSource, dateRange);
-      console.log(`[Summary] Loaded ${summaryData.length} rows from Glue results`);
     } catch (error) {
-      console.log('[Summary] No Glue summary data found, will use connectivity-only data');
+      console.error('[Summary] No Glue summary data found, will use connectivity-only data');
     }
     
     // Try to merge with connectivity results
@@ -236,7 +214,6 @@ export async function getSummaryDataWithConnectivity(dataSource, dateRange, citi
     
     // If still no data, create skeleton data from connectivity results only
     if (summaryData.length === 0) {
-      console.log('[Summary] Creating skeleton data from connectivity results');
       const connectivityResults = await loadConnectivityResults(dataSource, dateRange);
       
       if (connectivityResults.length === 0) {
@@ -255,11 +232,8 @@ export async function getSummaryDataWithConnectivity(dataSource, dateRange, citi
         speed: r.speed,
         latency: r.latency
       }));
-      
-      console.log(`[Summary] Created ${summaryData.length} skeleton rows from connectivity data`);
     }
-
-    console.log(`[Summary] Final data count: ${summaryData.length} rows`);
+    
     return summaryData;
   } catch (error) {
     console.error('[Summary] Error getting summary data with connectivity:', error);
@@ -308,8 +282,6 @@ export async function getMonthlyIndicators(dataSource, country, province, city, 
         );
 
         if (parquetFiles.length > 0) {
-          console.log(`Found ${parquetFiles.length} parquet files for ${month}`);
-          
           // Read the first parquet file
           try {
             const getCommand = new GetObjectCommand({
@@ -400,8 +372,6 @@ export async function getMonthlyIndicators(dataSource, country, province, city, 
         console.error(`Error loading data for month ${month}:`, error);
       }
     }
-
-    console.log(`Loaded ${monthlyData.length} months of data for ${city}`);
     return monthlyData;
   } catch (error) {
     console.error('Error getting monthly indicators:', error);
@@ -452,7 +422,6 @@ export async function triggerGlueJobWithParams(parameters) {
     });
 
     const result = await glueClient.send(command);
-    console.log('Started Glue job:', result.JobRunId);
     return result;
   } catch (error) {
     console.error('Error triggering Glue job:', error);
@@ -546,8 +515,6 @@ export async function loadConnectivityResults(dataSource, dateRange) {
   try {
     const prefix = `summary/${dateRange}/`;
     
-    console.log(`[Connectivity] Loading from: s3://${CONNECTIVITY_RESULT_BUCKET}/${prefix}`);
-    
     // List all CSV files in the date range folder
     const listCommand = new ListObjectsV2Command({
       Bucket: CONNECTIVITY_RESULT_BUCKET,
@@ -556,15 +523,10 @@ export async function loadConnectivityResults(dataSource, dateRange) {
 
     const result = await s3Client.send(listCommand);
     
-    console.log(`[Connectivity] S3 list returned ${(result.Contents || []).length} objects`);
-    
     // Filter for CSV.gz files
     const csvFiles = (result.Contents || []).filter(obj => 
       obj.Key.endsWith('.csv.gz') || obj.Key.endsWith('-connectivity.csv.gz')
     );
-
-    console.log(`[Connectivity] Found ${csvFiles.length} connectivity CSV files:`);
-    csvFiles.forEach(file => console.log(`  - ${file.Key} (${file.Size} bytes)`));
 
     if (csvFiles.length === 0) {
       console.warn(`[Connectivity] No CSV files found in ${prefix}`);
@@ -575,9 +537,7 @@ export async function loadConnectivityResults(dataSource, dateRange) {
     let allData = [];
     for (const file of csvFiles) {
       try {
-        console.log(`[Connectivity] Reading file: ${file.Key}`);
         const data = await readGzippedCsv(CONNECTIVITY_RESULT_BUCKET, file.Key);
-        console.log(`[Connectivity] File contained ${data.length} rows`);
         
         // Validate and normalize the data
         const validData = data
@@ -598,22 +558,16 @@ export async function loadConnectivityResults(dataSource, dateRange) {
             coverage: parseFloat(row.coverage) || 0 // Include coverage field
           }));
         
-        console.log(`[Connectivity] After validation: ${validData.length} valid rows`);
         allData = allData.concat(validData);
       } catch (error) {
         console.error(`[Connectivity] Error reading file ${file.Key}:`, error);
       }
     }
 
-    console.log(`[Connectivity] Total loaded: ${allData.length} connectivity results`);
-    if (allData.length > 0) {
-      console.log(`[Connectivity] Sample data:`, allData.slice(0, 3));
-    }
     return allData;
     
   } catch (error) {
     if (error.name === 'NoSuchKey' || error.Code === 'NoSuchKey') {
-      console.log(`[Connectivity] No connectivity results found for ${dateRange}`);
       return [];
     }
     console.error('[Connectivity] Error loading connectivity results:', error);
@@ -627,8 +581,6 @@ export async function loadConnectivityResults(dataSource, dateRange) {
 export async function mergeSummaryWithConnectivity(summaryData, dataSource, dateRange) {
   try {
     const connectivityResults = await loadConnectivityResults(dataSource, dateRange);
-    
-    console.log(`[Connectivity] Performing full join: ${summaryData.length} summary rows + ${connectivityResults.length} connectivity rows`);
     
     // Create lookup map for connectivity data
     const connectivityMap = new Map();
@@ -661,13 +613,10 @@ export async function mergeSummaryWithConnectivity(summaryData, dataSource, date
       keys.forEach(key => connectivityMap.set(key, connectivityValue));
     }
 
-    console.log(`[Connectivity] Created ${connectivityMap.size} lookup entries`);
-
     // Track which connectivity entries were merged
     const mergedConnectivityKeys = new Set();
 
     // Merge connectivity data into summary data
-    let mergedCount = 0;
     const mergedData = summaryData.map(row => {
       const city = String(row.city || '').toLowerCase().trim();
       const province = String(row.province || '').toLowerCase().trim();
@@ -696,35 +645,29 @@ export async function mergeSummaryWithConnectivity(summaryData, dataSource, date
       }
 
       if (connectivity) {
-        mergedCount++;
         mergedConnectivityKeys.add(matchedKey);
-        console.log(`[Connectivity] ✓ Merged data for ${row.city}: speed=${connectivity.speed.toFixed(2)}, latency=${connectivity.latency.toFixed(2)}, coverage=${connectivity.coverage.toFixed(2)}`);
         return { 
           ...row, 
           speed: connectivity.speed, 
           latency: connectivity.latency,
-          coverage: connectivity.coverage // Override with connectivity coverage
+          coverage: connectivity.coverage
         };
       } else {
-        console.log(`[Connectivity] ✗ No connectivity match for ${row.city}, keeping row with existing coverage`);
         return {
           ...row,
           speed: null,
           latency: null,
-          coverage: row.coverage || null // Keep existing coverage if available
+          coverage: row.coverage || null
         };
       }
     });
     
-    // Add connectivity-only rows (those not in summary data)
+    // Add connectivity-only rows
     const connectivityOnlyRows = [];
     for (const [key, connectivity] of connectivityMap.entries()) {
       if (!mergedConnectivityKeys.has(key)) {
-        // This connectivity result wasn't matched with any summary row
-        // Only add it once per unique city (skip alternative key formats)
         const primaryKey = `${connectivity.city.toLowerCase().trim()}|${String(connectivity.province || '').toLowerCase().trim()}|${connectivity.country.toLowerCase().trim()}`;
         if (key === primaryKey) {
-          console.log(`[Connectivity] Adding connectivity-only row for ${connectivity.city}`);
           connectivityOnlyRows.push({
             city: connectivity.city,
             province: connectivity.province || '',
@@ -732,7 +675,7 @@ export async function mergeSummaryWithConnectivity(summaryData, dataSource, date
             out_at_night: null,
             leisure_dwell_time: null,
             cultural_visits: null,
-            coverage: connectivity.coverage, // Use coverage from connectivity
+            coverage: connectivity.coverage,
             speed: connectivity.speed,
             latency: connectivity.latency
           });
@@ -741,12 +684,6 @@ export async function mergeSummaryWithConnectivity(summaryData, dataSource, date
     }
     
     const finalData = [...mergedData, ...connectivityOnlyRows];
-    
-    console.log(`[Connectivity] Full join complete:`);
-    console.log(`  - Summary rows with connectivity: ${mergedCount}`);
-    console.log(`  - Summary rows without connectivity: ${summaryData.length - mergedCount}`);
-    console.log(`  - Connectivity-only rows: ${connectivityOnlyRows.length}`);
-    console.log(`  - Total rows: ${finalData.length}`);
     
     return finalData;
   } catch (error) {
@@ -759,16 +696,7 @@ export async function mergeSummaryWithConnectivity(summaryData, dataSource, date
  * Get monthly indicator data for a specific city and indicator
  */
 export async function getMonthlyIndicatorData(dataSource, country, province, city, indicatorKey, dateRange) {
-  try {
-    console.log(`[TimeSeries] Starting monthly data fetch:`, {
-      dataSource,
-      country,
-      province,
-      city,
-      indicatorKey,
-      dateRange
-    });
-    
+  try {    
     const [startDate, endDate] = dateRange.split('_to_');
     const months = generateMonthRange(startDate, endDate);
     
@@ -784,8 +712,6 @@ export async function getMonthlyIndicatorData(dataSource, country, province, cit
           ? `${dataSource}/results/country=${normalizedCountry}/province=${normalizedProvince}/city=${normalizedCity}/month=${month}/`
           : `${dataSource}/results/country=${normalizedCountry}/city=${normalizedCity}/month=${month}/`;
 
-        console.log(`[TimeSeries] Searching path: s3://${RESULT_BUCKET}/${prefix}`);
-
         const command = new ListObjectsV2Command({
           Bucket: RESULT_BUCKET,
           Prefix: prefix
@@ -796,15 +722,12 @@ export async function getMonthlyIndicatorData(dataSource, country, province, cit
           obj.Key.endsWith('.parquet') || obj.Key.endsWith('.snappy.parquet')
         );
 
-        console.log(`[TimeSeries] Found ${parquetFiles.length} parquet files for ${month}`);
-
         if (parquetFiles.length > 0) {
           const getCommand = new GetObjectCommand({
             Bucket: RESULT_BUCKET,
             Key: parquetFiles[0].Key
           });
 
-          console.log(`[TimeSeries] Reading file: ${parquetFiles[0].Key}`);
           const response = await s3Client.send(getCommand);
           let buffer;
           
@@ -830,8 +753,6 @@ export async function getMonthlyIndicatorData(dataSource, country, province, cit
             }
           }
 
-          console.log(`[TimeSeries] Buffer size: ${buffer.length} bytes`);
-
           // Initialize parquet-wasm if needed
           const parquetWasm = await import('parquet-wasm');
           if (!window.parquetWasmInitialized) {
@@ -848,14 +769,10 @@ export async function getMonthlyIndicatorData(dataSource, country, province, cit
           const arrowTable = tableFromIPC(ipcBytes);
           
           const numRows = arrowTable.numRows;
-          const numCols = arrowTable.numCols;
-          
-          console.log(`[TimeSeries] Parquet has ${numRows} rows, ${numCols} columns`);
           
           if (numRows > 0) {
             const schema = arrowTable.schema;
             const fieldNames = schema.fields.map(f => f.name);
-            console.log(`[TimeSeries] Column names:`, fieldNames);
             
             const fieldIndex = schema.fields.findIndex(f => f.name === indicatorKey);
             
@@ -864,16 +781,11 @@ export async function getMonthlyIndicatorData(dataSource, country, province, cit
               continue;
             }
             
-            console.log(`[TimeSeries] Found column '${indicatorKey}' at index ${fieldIndex}`);
-            
             const column = arrowTable.getChildAt(fieldIndex);
             const value = column.get(0);
             
-            console.log(`[TimeSeries] Raw value for ${month}:`, value, `(type: ${typeof value})`);
-            
             if (value != null && !isNaN(value)) {
               const numericValue = typeof value === 'bigint' ? Number(value) : parseFloat(value);
-              console.log(`[TimeSeries] ✓ Added value for ${month}: ${numericValue}`);
               monthlyData.push({
                 month,
                 value: numericValue
@@ -887,9 +799,6 @@ export async function getMonthlyIndicatorData(dataSource, country, province, cit
         console.error(`[TimeSeries] Error loading data for month ${month}:`, monthError);
       }
     }
-
-    console.log(`[TimeSeries] ✓ Loaded ${monthlyData.length} months of ${indicatorKey} data for ${city}`);
-    console.log(`[TimeSeries] Data:`, monthlyData);
     return monthlyData;
   } catch (error) {
     console.error('[TimeSeries] Error getting monthly indicator data:', error);
@@ -901,15 +810,7 @@ export async function getMonthlyIndicatorData(dataSource, country, province, cit
  * Get quarterly connectivity data for a specific city and indicator
  */
 export async function getQuarterlyConnectivityData(country, province, city, indicatorKey, dateRange) {
-  try {
-    console.log(`[TimeSeries] Starting quarterly connectivity data fetch:`, {
-      country,
-      province,
-      city,
-      indicatorKey,
-      dateRange
-    });
-    
+  try {    
     const [startDate, endDate] = dateRange.split('_to_');
     const months = generateMonthRange(startDate, endDate);
     const quarters = getQuarters(months);
@@ -926,8 +827,6 @@ export async function getQuarterlyConnectivityData(country, province, city, indi
           ? `results/country=${normalizedCountry}/province=${normalizedProvince}/city=${normalizedCity}/quarter=${quarter}/`
           : `results/country=${normalizedCountry}/city=${normalizedCity}/quarter=${quarter}/`;
 
-        console.log(`[TimeSeries] Searching path: s3://${CONNECTIVITY_RESULT_BUCKET}/${prefix}`);
-
         const command = new ListObjectsV2Command({
           Bucket: CONNECTIVITY_RESULT_BUCKET,
           Prefix: prefix
@@ -938,15 +837,12 @@ export async function getQuarterlyConnectivityData(country, province, city, indi
           obj.Key.endsWith('.parquet') || obj.Key.endsWith('.snappy.parquet')
         );
 
-        console.log(`[TimeSeries] Found ${parquetFiles.length} parquet files for ${quarter}`);
-
         if (parquetFiles.length > 0) {
           const getCommand = new GetObjectCommand({
             Bucket: CONNECTIVITY_RESULT_BUCKET,
             Key: parquetFiles[0].Key
           });
 
-          console.log(`[TimeSeries] Reading file: ${parquetFiles[0].Key}`);
           const response = await s3Client.send(getCommand);
           let buffer;
           
@@ -972,8 +868,6 @@ export async function getQuarterlyConnectivityData(country, province, city, indi
             }
           }
 
-          console.log(`[TimeSeries] Buffer size: ${buffer.length} bytes`);
-
           // Initialize parquet-wasm if needed
           const parquetWasm = await import('parquet-wasm');
           if (!window.parquetWasmInitialized) {
@@ -990,14 +884,10 @@ export async function getQuarterlyConnectivityData(country, province, city, indi
           const arrowTable = tableFromIPC(ipcBytes);
           
           const numRows = arrowTable.numRows;
-          const numCols = arrowTable.numCols;
-          
-          console.log(`[TimeSeries] Parquet has ${numRows} rows, ${numCols} columns`);
           
           if (numRows > 0) {
             const schema = arrowTable.schema;
             const fieldNames = schema.fields.map(f => f.name);
-            console.log(`[TimeSeries] Column names:`, fieldNames);
             
             const fieldIndex = schema.fields.findIndex(f => f.name === indicatorKey);
             
@@ -1006,16 +896,11 @@ export async function getQuarterlyConnectivityData(country, province, city, indi
               continue;
             }
             
-            console.log(`[TimeSeries] Found column '${indicatorKey}' at index ${fieldIndex}`);
-            
             const column = arrowTable.getChildAt(fieldIndex);
             const value = column.get(0);
             
-            console.log(`[TimeSeries] Raw value for ${quarter}:`, value, `(type: ${typeof value})`);
-            
             if (value != null && !isNaN(value)) {
               const numericValue = typeof value === 'bigint' ? Number(value) : parseFloat(value);
-              console.log(`[TimeSeries] ✓ Added value for ${quarter}: ${numericValue}`);
               quarterlyData.push({
                 quarter,
                 value: numericValue
@@ -1029,9 +914,6 @@ export async function getQuarterlyConnectivityData(country, province, city, indi
         console.error(`[TimeSeries] Error loading data for quarter ${quarter}:`, quarterError);
       }
     }
-
-    console.log(`[TimeSeries] ✓ Loaded ${quarterlyData.length} quarters of ${indicatorKey} data for ${city}`);
-    console.log(`[TimeSeries] Data:`, quarterlyData);
     return quarterlyData;
   } catch (error) {
     console.error('[TimeSeries] Error getting quarterly connectivity data:', error);
@@ -1058,8 +940,6 @@ export function getQuarters(months) {
  */
 export async function getCityCalculationStatus(city, province, country, dateRange, dataSource) {
   try {
-    console.log(`[Status] Checking calculation status for ${city}, ${province}, ${country} in ${dateRange}`);
-
     // Check for mobile ping data (Glue results)
     let hasMobilePingData = false;
     try {
@@ -1096,13 +976,12 @@ export async function getCityCalculationStatus(city, province, country, dateRang
           
           hasMobilePingData = hasOutAtNight || hasLeisure || hasCultural;
           if (hasMobilePingData) {
-            console.log(`[Status] Found mobile ping data for ${city}`);
             break;
           }
         }
       }
     } catch (error) {
-      console.log(`[Status] No mobile ping data found for ${city}:`, error.message);
+      console.error(`[Status] No mobile ping data found for ${city}:`, error.message);
     }
 
     // Check for connectivity data
@@ -1142,27 +1021,22 @@ export async function getCityCalculationStatus(city, province, country, dateRang
           
           hasConnectivityData = hasSpeed || hasLatency;
           if (hasConnectivityData) {
-            console.log(`[Status] Found connectivity data for ${city}`);
             break;
           }
         }
       }
     } catch (error) {
-      console.log(`[Status] No connectivity data found for ${city}:`, error.message);
+      console.error(`[Status] No connectivity data found for ${city}:`, error.message);
     }
 
     // Determine status based on what was found
     if (hasMobilePingData && hasConnectivityData) {
-      console.log(`[Status] ${city}: calculated (both)`);
       return 'calculated';
     } else if (hasConnectivityData) {
-      console.log(`[Status] ${city}: connectivity_only`);
       return 'connectivity_only';
     } else if (hasMobilePingData) {
-      console.log(`[Status] ${city}: mobile_ping_only`);
       return 'mobile_ping_only';
     } else {
-      console.log(`[Status] ${city}: not_calculated`);
       return 'not_calculated';
     }
   } catch (error) {
@@ -1176,9 +1050,7 @@ export async function getCityCalculationStatus(city, province, country, dateRang
  * More efficient than checking each city individually
  */
 export async function batchCheckCityCalculationStatus(cities, dateRange, dataSource) {
-  try {
-    console.log(`[Status] Batch checking calculation status for ${cities.length} cities in ${dateRange}`);
-    
+  try {    
     const statusMap = new Map();
     
     // Initialize all cities as not_calculated
@@ -1202,10 +1074,8 @@ export async function batchCheckCityCalculationStatus(cities, dateRange, dataSou
         const data = await readGzippedCsv(RESULT_BUCKET, file.Key);
         mobilePingSummary = mobilePingSummary.concat(data);
       }
-      
-      console.log(`[Status] Loaded ${mobilePingSummary.length} rows of mobile ping summary data`);
     } catch (error) {
-      console.log(`[Status] No mobile ping summary data found:`, error.message);
+      console.error(`[Status] No mobile ping summary data found:`, error.message);
     }
 
     // Load all connectivity data once
@@ -1227,9 +1097,8 @@ export async function batchCheckCityCalculationStatus(cities, dateRange, dataSou
         connectivitySummary = connectivitySummary.concat(data);
       }
       
-      console.log(`[Status] Loaded ${connectivitySummary.length} rows of connectivity summary data`);
     } catch (error) {
-      console.log(`[Status] No connectivity summary data found:`, error.message);
+      console.error(`[Status] No connectivity summary data found:`, error.message);
     }
 
     // Check each city against the loaded data
@@ -1292,7 +1161,6 @@ export async function batchCheckCityCalculationStatus(cities, dateRange, dataSou
       }
 
       statusMap.set(cityObj.name.toLowerCase(), status);
-      console.log(`[Status] ${cityObj.name}: ${status}`);
     });
 
     return statusMap;

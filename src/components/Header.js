@@ -53,7 +53,6 @@ const Header = ({
     
     // Block selection if the city is processing in the CURRENT data source
     if (isProcessing) {
-      console.log('Cannot select city - currently processing in', dataSource, 'data source:', city.name);
       return;
     }
     

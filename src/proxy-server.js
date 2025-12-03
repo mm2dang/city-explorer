@@ -16,9 +16,6 @@ app.get('/api/worldbank/:countryCode', async (req, res) => {
     try {
       const apiUrl = `https://api.worldbank.org/v2/country/${countryCode}/indicator/IT.CEL.SETS.P2?format=json&per_page=50&date=2000:2023`;
       
-      console.log(`Fetching World Bank data for ${countryCode}...`);
-      console.log(`URL: ${apiUrl}`);
-      
       const response = await fetch(apiUrl, {
         headers: {
           'Accept': 'application/json',
@@ -47,12 +44,10 @@ app.get('/api/worldbank/:countryCode', async (req, res) => {
       }
   
       if (!data || !Array.isArray(data) || data.length < 2 || !Array.isArray(data[1])) {
-        console.log('No data available in response structure');
         return res.json({ countryCode, value: 0, values: [], message: 'No data available' });
       }
   
       const records = data[1];
-      console.log(`Found ${records.length} records`);
       
       // Get all valid values for historical chart
       const allValues = records
@@ -71,12 +66,9 @@ app.get('/api/worldbank/:countryCode', async (req, res) => {
         if (record.value !== null && !isNaN(record.value)) {
           mostRecentValue = parseFloat(record.value);
           mostRecentYear = record.date;
-          console.log(`✓ Most recent value: ${mostRecentValue} for year ${mostRecentYear}`);
           break;
         }
       }
-  
-      console.log(`✓ Returning most recent: ${mostRecentValue}%, historical: ${allValues.length} values`);
       
       res.json({
         countryCode,
@@ -96,11 +88,4 @@ app.get('/api/worldbank/:countryCode', async (req, res) => {
 // Health check endpoint
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
-});
-
-app.listen(PORT, () => {
-  console.log(`✓ Proxy server running on http://localhost:${PORT}`);
-  console.log(`  Proxying World Bank API requests`);
-  console.log(`  Example: http://localhost:${PORT}/api/worldbank/USA`);
-  console.log(`  Health check: http://localhost:${PORT}/health`);
 });

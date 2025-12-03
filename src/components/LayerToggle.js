@@ -65,13 +65,11 @@ const LayerToggle = ({
   };
 
   const handleExportClick = (format) => {
-    console.log(`Export clicked for layer ${layer.name} with format: ${format}`);
     setShowExportMenu(false);
     onExport(format);
   };
 
   const handleDeleteClick = () => {
-    console.log(`Delete clicked for layer: ${layer.name}`);
     onDelete();
   };
 
@@ -107,7 +105,6 @@ const LayerToggle = ({
           className="inline-action-btn"
           onClick={(e) => {
             e.stopPropagation();
-            console.log('Edit button clicked for layer:', layer.name);
             onEdit();
           }}
           title="Edit"

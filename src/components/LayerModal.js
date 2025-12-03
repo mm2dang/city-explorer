@@ -206,7 +206,6 @@ const LayerModal = ({
   }, [step]);
 
   useEffect(() => {
-    console.log('LayerModal received mapView prop:', mapView);
   }, [mapView]);
 
   useEffect(() => {
@@ -230,7 +229,6 @@ const LayerModal = ({
         try {
           const features = await getAllFeatures();
           setAllCityFeatures(features);
-          console.log(`Loaded ${features.length} total features across ALL domains for duplicate checking`);
         } catch (error) {
           console.error('Error loading all features:', error);
           setAllCityFeatures([]);
@@ -382,7 +380,6 @@ const LayerModal = ({
       // Check if feature intersects boundary at all
       const intersects = turf.booleanIntersects(turfFeature, boundaryFeature);
       if (!intersects) {
-        console.log('Feature does not intersect boundary');
         return null;
       }
       
@@ -392,27 +389,21 @@ const LayerModal = ({
         
       } else if (feature.geometry.type === 'LineString') {
         try {
-          console.log('Processing LineString with', feature.geometry.coordinates.length, 'points');
-          
           // Check if completely within
           const isFullyWithin = turf.booleanWithin(turfFeature, boundaryFeature);
           
-          // CRITICAL: Even if booleanWithin returns true, check if line intersects boundary edge
+          // Even if booleanWithin returns true, check if line intersects boundary edge
           let lineIntersectsBoundary = false;
           try {
             const intersections = turf.lineIntersect(turfFeature, boundaryFeature);
             lineIntersectsBoundary = intersections.features.length > 0;
-            console.log('Line intersects boundary edge?', lineIntersectsBoundary);
           } catch (intersectError) {
             console.warn('Error checking line intersection with boundary:', intersectError);
           }
           
           if (isFullyWithin && !lineIntersectsBoundary) {
-            console.log('LineString is fully within boundary (verified - no edge crossings)');
             return feature;
           }
-          
-          console.log('LineString crosses boundary - clipping needed');
           
           // Line crosses boundary - need to clip it segment by segment
           const coords = feature.geometry.coordinates;
@@ -444,9 +435,7 @@ const LayerModal = ({
                 }
                 currentSegment.push(point2);
               } else {
-                // Segment goes outside and comes back in - need to split
-                console.log('Segment appears inside but crosses boundary - splitting');
-                
+                // Segment goes outside and comes back in - need to split                
                 if (currentSegment.length === 0) {
                   currentSegment.push(point1);
                 }
@@ -483,7 +472,6 @@ const LayerModal = ({
                   // Add the intersection point (exit point)
                   const exitPoint = intersections.features[0].geometry.coordinates;
                   currentSegment.push(exitPoint);
-                  console.log('Found exit point:', exitPoint);
                 }
               } catch (err) {
                 console.warn('Error finding exit intersection:', err);
@@ -492,7 +480,6 @@ const LayerModal = ({
               // Save this segment
               if (currentSegment.length >= 2) {
                 clippedSegments.push([...currentSegment]);
-                console.log('Saved segment with', currentSegment.length, 'points (exiting boundary)');
               }
               currentSegment = [];
               
@@ -505,7 +492,6 @@ const LayerModal = ({
                   // Start new segment with entry point
                   const entryPoint = intersections.features[0].geometry.coordinates;
                   currentSegment = [entryPoint, point2];
-                  console.log('Found entry point:', entryPoint);
                 } else {
                   // No intersection found, start with p2
                   currentSegment = [point2];
@@ -526,7 +512,6 @@ const LayerModal = ({
                   const entry = intersections.features[0].geometry.coordinates;
                   const exit = intersections.features[1].geometry.coordinates;
                   clippedSegments.push([entry, exit]);
-                  console.log('Segment crosses through boundary - keeping middle part');
                 }
               } catch (err) {
                 console.warn('Error checking segment crossing:', err);
@@ -538,16 +523,11 @@ const LayerModal = ({
           // Don't forget the last segment if we were building one
           if (currentSegment.length >= 2) {
             clippedSegments.push(currentSegment);
-            console.log('Saved final segment with', currentSegment.length, 'points');
           }
           
-          console.log('LineString clipping resulted in', clippedSegments.length, 'segments');
-          
           if (clippedSegments.length === 0) {
-            console.log('No segments inside boundary');
             return null;
           } else if (clippedSegments.length === 1) {
-            console.log('Single segment inside boundary with', clippedSegments[0].length, 'points');
             return {
               ...feature,
               geometry: {
@@ -556,7 +536,6 @@ const LayerModal = ({
               }
             };
           } else {
-            console.log('Multiple segments inside boundary:', clippedSegments.map(s => s.length));
             return {
               ...feature,
               geometry: {
@@ -572,7 +551,6 @@ const LayerModal = ({
         
       } else if (feature.geometry.type === 'MultiLineString') {
         try {
-          console.log('Processing MultiLineString with', feature.geometry.coordinates.length, 'lines');
           const allClippedSegments = [];
           
           for (const lineCoords of feature.geometry.coordinates) {
@@ -590,12 +568,11 @@ const LayerModal = ({
             // Check if completely within
             const isFullyWithin = turf.booleanWithin(lineFeature, boundaryFeature);
             
-            // CRITICAL: Even if booleanWithin returns true, check if line intersects boundary edge
+            // Even if booleanWithin returns true, check if line intersects boundary edge
             let lineIntersectsBoundary = false;
             try {
               const intersections = turf.lineIntersect(lineFeature, boundaryFeature);
               lineIntersectsBoundary = intersections.features.length > 0;
-              console.log('MultiLineString component intersects boundary edge?', lineIntersectsBoundary);
             } catch (intersectError) {
               console.warn('Error checking line intersection with boundary:', intersectError);
             }
@@ -633,9 +610,7 @@ const LayerModal = ({
                   }
                   currentSegment.push(point2);
                 } else {
-                  // Segment goes outside and comes back in - need to split
-                  console.log('MultiLineString segment appears inside but crosses boundary - splitting');
-                  
+                  // Segment goes outside and comes back in - need to split                  
                   if (currentSegment.length === 0) {
                     currentSegment.push(point1);
                   }
@@ -716,8 +691,6 @@ const LayerModal = ({
             }
           }
           
-          console.log('MultiLineString clipping resulted in', allClippedSegments.length, 'segments');
-          
           if (allClippedSegments.length === 0) {
             return null;
           } else if (allClippedSegments.length === 1) {
@@ -776,8 +749,6 @@ const LayerModal = ({
     const seenCoordinates = new Set();
     const seenGeometries = new Set();
     
-    console.log(`Checking ${newFeatures.length} new features against ${allCityFeatures.length} existing features in domain`);
-    
     // Helper function to get coordinate key from a feature
     const getCoordinateKey = (feature) => {
       if (!feature.geometry || !feature.geometry.coordinates) {
@@ -828,8 +799,6 @@ const LayerModal = ({
       }
     });
     
-    console.log(`Added ${seenCoordinates.size} existing feature coordinates and ${seenGeometries.size} geometries to duplicate check`);
-    
     // Then process new features
     let duplicatesFound = 0;
     let geometryDuplicatesFound = 0;
@@ -847,14 +816,12 @@ const LayerModal = ({
       // Check if this coordinate already exists
       if (coordKey && seenCoordinates.has(coordKey)) {
         duplicatesFound++;
-        console.log(`Duplicate coordinate found at index ${index}: ${coordKey} already exists`);
         return;
       }
       
       // Check if this exact geometry already exists
       if (geomHash && seenGeometries.has(geomHash)) {
         geometryDuplicatesFound++;
-        console.log(`Duplicate geometry found at index ${index}`);
         return;
       }
       
@@ -866,17 +833,13 @@ const LayerModal = ({
     
     const totalDuplicates = duplicatesFound + geometryDuplicatesFound;
     
-    if (totalDuplicates > 0) {
-      console.log(`Removed ${duplicatesFound} coordinate duplicates and ${geometryDuplicatesFound} geometry duplicates`);
-      
+    if (totalDuplicates > 0) {      
       alert(
         `${totalDuplicates} duplicate feature${totalDuplicates > 1 ? 's were' : ' was'} removed.\n` +
         `(${duplicatesFound} coordinate duplicates, ${geometryDuplicatesFound} geometry duplicates)\n` +
         `These features already exist in the ${selectedDomain} domain.`
       );
     }
-    
-    console.log(`Final result: ${uniqueFeatures.length} unique features out of ${newFeatures.length} total`);
     return uniqueFeatures;
   }, [allCityFeatures, editingLayer, selectedDomain]);
 
@@ -921,11 +884,9 @@ const LayerModal = ({
       };
       if (validateFeature(newFeature, featureIndex)) {
         newFeatures.push(newFeature);
-        console.log(`Updated feature at index ${featureIndex}:`, newFeature);
       }
     });
     setFeatures(newFeatures);
-    console.log('Updated features from map:', newFeatures);
   }, [layerName, customLayerName, isCustomLayer, selectedDomain, features]);
 
   const updateReviewFeaturesFromMap = useCallback(() => {
@@ -1046,7 +1007,6 @@ const LayerModal = ({
       const layerDef = domainLayers.find(l => l.name === layerName);
       
       if (layerDef && layerDef.tags) {
-        console.log('Found layer definition with tags:', layerDef);
         // Convert tags object to array format
         const tagArray = [];
         Object.entries(layerDef.tags).forEach(([key, value]) => {
@@ -1061,12 +1021,9 @@ const LayerModal = ({
           }
         });
         
-        console.log('Setting OSM tags:', tagArray);
         if (tagArray.length > 0) {
           setOsmTags(tagArray);
         }
-      } else {
-        console.log('No layer definition found for:', layerName);
       }
     } else if (isCustomLayer) {
       // Reset to empty tags for custom layers
@@ -1095,15 +1052,13 @@ const LayerModal = ({
   
         if (predefinedLayer) {
           // It's a predefined layer - select it in the dropdown
-          console.log('Editing predefined layer:', editingLayer.name);
           setIsCustomLayer(false);
           setLayerName(editingLayer.name);
-          setLayerIcon(predefinedLayer.icon); // Use icon from definition
+          setLayerIcon(predefinedLayer.icon);
           setCustomLayerName('');
           setCustomLayerIcon('fas fa-map-marker-alt');
         } else {
           // It's a custom layer
-          console.log('Editing custom layer:', editingLayer.name);
           setIsCustomLayer(true);
           setCustomLayerName(editingLayer.name);
           setCustomLayerIcon(editingLayer.icon);
@@ -1162,7 +1117,6 @@ const LayerModal = ({
     }
     const finalLayerName = isCustomLayer ? customLayerName : layerName;
     const finalLayerIcon = isCustomLayer ? customLayerIcon : layerIcon;
-    console.log('Initializing drawing map');
     const initializeMap = () => {
       if (!mapRef.current) {
         console.error('mapRef.current is null, cannot initialize map');
@@ -1184,7 +1138,6 @@ const LayerModal = ({
       }).addTo(map);
       setTimeout(() => {
         map.invalidateSize();
-        console.log('Drawing map initialized:', map);
       }, 100);
       let boundaryLayer = null;
       if (cityBoundary) {
@@ -1204,7 +1157,6 @@ const LayerModal = ({
             }
           });
           boundaryLayer.addTo(map);
-          console.log('City boundary added to drawing map');
         } catch (error) {
           console.error('Could not display city boundary:', error);
         }
@@ -1304,7 +1256,6 @@ const LayerModal = ({
               maxWidth: 400
             });
             drawnItems.addLayer(marker);
-            console.log(`Drawing map: Added point feature at index ${index}:`, feature);
           } else {
             const geoJsonLayer = L.geoJSON(feature.geometry, {
               style: {
@@ -1323,7 +1274,6 @@ const LayerModal = ({
             geoJsonLayer.eachLayer(l => {
               drawnItems.addLayer(l);
             });
-            console.log(`Drawing map: Added non-point feature at index ${index}:`, feature);
             try {
               const tempLayer = L.geoJSON(feature.geometry);
               const bounds = tempLayer.getBounds();
@@ -1358,7 +1308,6 @@ const LayerModal = ({
                   className: 'feature-marker-popup'
                 });
                 centroidGroup.addLayer(centroidMarker);
-                console.log(`Drawing map: Added centroid for feature at index ${index}`);
               }
             } catch (error) {
               console.error(`Drawing map: Error adding centroid at index ${index}:`, error);
@@ -1463,7 +1412,6 @@ const LayerModal = ({
           
           // Update features state
           setFeatures(prev => [...prev, croppedFeature]);
-          console.log('Feature created in drawing map and cropped:', croppedFeature);
           
           // Add popup to the cropped layer
           const popupContent = createPopupContent(
@@ -1531,7 +1479,6 @@ const LayerModal = ({
                   className: 'feature-marker-popup'
                 });
                 centroidGroup.addLayer(centroidMarker);
-                console.log(`Drawing map: Added centroid for cropped feature at index ${featureIndex}`);
               }
             } catch (error) {
               console.error(`Drawing map: Error adding centroid at index ${featureIndex}:`, error);
@@ -1555,11 +1502,9 @@ const LayerModal = ({
         }
       });
       map.on(L.Draw.Event.EDITED, () => {
-        console.log('Features edited in drawing map');
         updateFeaturesFromMap(drawnItemsRef.current);
       });
       map.on(L.Draw.Event.DELETED, () => {
-        console.log('Features deleted in drawing map');
         updateFeaturesFromMap(drawnItemsRef.current);
       });
       mapInstanceRef.current = map;
@@ -1569,7 +1514,6 @@ const LayerModal = ({
       if (mapInstanceRef.current) {
         mapInstanceRef.current.remove();
         mapInstanceRef.current = null;
-        console.log('Drawing map cleaned up');
       }
     };
   }, [step, dataSource, cityBoundary, currentDomainColor, layerIcon, layerName, selectedDomain, isLoadingExisting, features, updateFeaturesFromMap, isCustomLayer, customLayerIcon, customLayerName, cropFeatureByBoundary, createPopupContent, mapView]);
@@ -1585,7 +1529,6 @@ const LayerModal = ({
     }
     const finalLayerName = isCustomLayer ? customLayerName : layerName;
     const finalLayerIcon = isCustomLayer ? customLayerIcon : layerIcon;
-    console.log('Initializing review map');
     const initializeReviewMap = () => {
       if (!reviewMapRef.current) {
         console.error('reviewMapRef.current is null, cannot initialize review map');
@@ -1607,7 +1550,6 @@ const LayerModal = ({
       }).addTo(map);
       setTimeout(() => {
         map.invalidateSize();
-        console.log('Review map initialized:', map);
       }, 100);
       let reviewBoundaryLayer = null;
       if (cityBoundary) {
@@ -1627,7 +1569,6 @@ const LayerModal = ({
             }
           });
           reviewBoundaryLayer.addTo(map);
-          console.log('City boundary added to review map');
         } catch (error) {
           console.error('Could not display city boundary:', error);
         }
@@ -1727,7 +1668,6 @@ const LayerModal = ({
               maxWidth: 400
             });
             drawnItems.addLayer(marker);
-            console.log(`Review map: Added point feature at index ${index}:`, feature);
           } else {
             const geoJsonLayer = L.geoJSON(feature.geometry, {
               style: {
@@ -1746,7 +1686,6 @@ const LayerModal = ({
             geoJsonLayer.eachLayer(l => {
               drawnItems.addLayer(l);
             });
-            console.log(`Review map: Added non-point feature at index ${index}:`, feature);
             try {
               const tempLayer = L.geoJSON(feature.geometry);
               const bounds = tempLayer.getBounds();
@@ -1781,7 +1720,6 @@ const LayerModal = ({
                   className: 'feature-marker-popup'
                 });
                 centroidGroup.addLayer(centroidMarker);
-                console.log(`Review map: Added centroid for feature at index ${index}`);
               }
             } catch (error) {
               console.error(`Review map: Error adding centroid at index ${index}:`, error);
@@ -1883,7 +1821,6 @@ const LayerModal = ({
           }
           
           setFeatures(prev => [...prev, croppedFeature]);
-          console.log('Feature created in review map and cropped:', croppedFeature);
           
           const popupContent = createPopupContent(
             croppedFeature, 
@@ -1964,11 +1901,9 @@ const LayerModal = ({
         }
       });
       map.on(L.Draw.Event.EDITED, () => {
-        console.log('Features edited in review map');
         updateReviewFeaturesFromMap();
       });
       map.on(L.Draw.Event.DELETED, () => {
-        console.log('Features deleted in review map');
         updateReviewFeaturesFromMap();
       });
       reviewMapInstanceRef.current = map;
@@ -1978,7 +1913,6 @@ const LayerModal = ({
       if (reviewMapInstanceRef.current) {
         reviewMapInstanceRef.current.remove();
         reviewMapInstanceRef.current = null;
-        console.log('Review map cleaned up');
       }
     };
   }, [step, cityBoundary, currentDomainColor, layerIcon, layerName, selectedDomain, features, updateReviewFeaturesFromMap, isCustomLayer, customLayerIcon, customLayerName, cropFeatureByBoundary, mapView, createPopupContent]);
@@ -2090,25 +2024,14 @@ const LayerModal = ({
         const bounds = reviewDrawnItemsRef.current.getBounds();
         reviewMapInstanceRef.current.fitBounds(bounds, { padding: [50, 50] });
       }
-      console.log('Review map refreshed with updated features:', features.length);
     }
   }, [features, step, currentDomainColor, layerIcon, layerName, selectedDomain, isCustomLayer, customLayerIcon, customLayerName, createPopupContent]);
 
   // Update tile layer when mapView changes (Drawing Map)
-useEffect(() => {
-  console.log('Drawing map mapView effect check:', { 
-    hasMap: !!mapInstanceRef.current, 
-    step, 
-    dataSource, 
-    mapView,
-    shouldRun: mapInstanceRef.current && step === 3 && dataSource === 'draw'
-  });
-  
+useEffect(() => {  
   if (!mapInstanceRef.current || step !== 3 || dataSource !== 'draw') {
     return;
   }
-
-  console.log('Drawing map mapView effect RUNNING - switching to:', mapView);
 
   // Find and remove all existing tile layers
   const tileLayers = [];
@@ -2117,8 +2040,6 @@ useEffect(() => {
       tileLayers.push(layer);
     }
   });
-
-  console.log(`Found ${tileLayers.length} tile layers to remove`);
   
   tileLayers.forEach(layer => {
     mapInstanceRef.current.removeLayer(layer);
@@ -2127,7 +2048,6 @@ useEffect(() => {
   // Create and add new tile layer
   let newTileLayer;
   if (mapView === 'satellite') {
-    console.log('Creating satellite tile layer');
     newTileLayer = L.tileLayer(
       'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
       {
@@ -2135,7 +2055,6 @@ useEffect(() => {
       }
     );
   } else {
-    console.log('Creating street tile layer');
     newTileLayer = L.tileLayer(
       'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
       {
@@ -2153,24 +2072,13 @@ useEffect(() => {
       mapInstanceRef.current.invalidateSize();
     }
   }, 100);
-  
-  console.log('Drawing map tile layer switched to:', mapView);
 }, [mapView, step, dataSource]);
 
 // Update tile layer when mapView changes (Review Map)
-useEffect(() => {
-  console.log('Review map mapView effect check:', { 
-    hasMap: !!reviewMapInstanceRef.current, 
-    step, 
-    mapView,
-    shouldRun: reviewMapInstanceRef.current && step === 4
-  });
-  
+useEffect(() => {  
   if (!reviewMapInstanceRef.current || step !== 4) {
     return;
   }
-
-  console.log('Review map mapView effect RUNNING - switching to:', mapView);
 
   // Find and remove all existing tile layers
   const tileLayers = [];
@@ -2179,8 +2087,6 @@ useEffect(() => {
       tileLayers.push(layer);
     }
   });
-
-  console.log(`Found ${tileLayers.length} tile layers to remove`);
   
   tileLayers.forEach(layer => {
     reviewMapInstanceRef.current.removeLayer(layer);
@@ -2189,7 +2095,6 @@ useEffect(() => {
   // Create and add new tile layer
   let newTileLayer;
   if (mapView === 'satellite') {
-    console.log('Creating satellite tile layer');
     newTileLayer = L.tileLayer(
       'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
       {
@@ -2197,7 +2102,6 @@ useEffect(() => {
       }
     );
   } else {
-    console.log('Creating street tile layer');
     newTileLayer = L.tileLayer(
       'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
       {
@@ -2215,8 +2119,6 @@ useEffect(() => {
       reviewMapInstanceRef.current.invalidateSize();
     }
   }, 100);
-  
-  console.log('Review map tile layer switched to:', mapView);
 }, [mapView, step]);
 
   const updateFeatureName = () => {
@@ -2268,7 +2170,6 @@ useEffect(() => {
     };
     refreshPopups(drawnItemsRef.current, centroidGroupRef.current);
     refreshPopups(reviewDrawnItemsRef.current, reviewCentroidGroupRef.current);
-    console.log('Feature name updated:', updatedFeatures[editingFeatureName]);
   };
 
   const handleAddOsmTag = () => {
@@ -2339,8 +2240,6 @@ useEffect(() => {
         out geom;
       `;
   
-      console.log('Fetching from Overpass API with query:', query);
-  
       const response = await fetch('https://overpass-api.de/api/interpreter', {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -2352,7 +2251,6 @@ useEffect(() => {
       }
   
       const data = await response.json();
-      console.log('Received OSM data:', data);
   
       if (!data.elements || data.elements.length === 0) {
         alert('No features found with these tags in the city boundary');
@@ -2452,8 +2350,6 @@ useEffect(() => {
         return;
       }
   
-      console.log(`Fetched ${newFeatures.length} features from OSM`);
-  
       // Combine with existing features or replace
       const combined = appendMode ? [...features, ...newFeatures] : newFeatures;
       const unique = removeDuplicateFeatures(combined);
@@ -2544,7 +2440,6 @@ useEffect(() => {
     if (getAllFeatures && selectedCity) {
       try {
         allFeaturesForCheck = await getAllFeatures();
-        console.log(`Loaded ${allFeaturesForCheck.length} features across ALL domains for duplicate checking during upload`);
       } catch (error) {
         console.error('Error loading all features:', error);
       }
@@ -2586,19 +2481,12 @@ useEffect(() => {
     };
     
     const processFeaturesWithDuplicateCheck = (parsedFeatures, totalParsedCount) => {
-      console.log(`\n=== Processing ${parsedFeatures.length} parsed features ===`);
-      
       // Step 1: Crop by boundary
-      console.log('Step 1: Cropping features by city boundary...');
       const boundaryFiltered = parsedFeatures
         .map(f => cropFeatureByBoundary(f, cityBoundary))
         .filter(f => f !== null);
       const croppedOutCount = parsedFeatures.length - boundaryFiltered.length;
-      console.log(`After boundary crop: ${boundaryFiltered.length} features (${croppedOutCount} removed)`);
-
-      console.log('Step 1.5: Splitting multi-geometries...');
       const splitFeatures = splitMultiGeometries(boundaryFiltered);
-      console.log(`After splitting: ${splitFeatures.length} features (${splitFeatures.length - boundaryFiltered.length} new from splits)`);
 
       if (splitFeatures.length === 0) {
         alert(
@@ -2615,12 +2503,9 @@ useEffect(() => {
       
       // Step 2: Combine with existing features if append mode
       const combined = appendMode ? [...features, ...splitFeatures] : boundaryFiltered;
-      console.log(`Step 2: ${appendMode ? 'Append' : 'Replace'} mode - ${combined.length} total features to check`);
-      
-      // Step 3: Remove duplicates based on coordinates across ALL domains
-      console.log('Step 3: Removing duplicates based on lat/lon coordinates across ALL domains...');
-      
-      // Build set of existing coordinates from ALL domains (excluding current layer if editing)
+
+      // Step 3: Remove duplicates based on coordinates across all domains      
+      // Build set of existing coordinates from all domains (excluding current layer if editing)
       const seenCoordinates = new Set();
       allFeaturesForCheck.forEach(feature => {
         if (!editingLayer || feature.properties?.layer_name !== finalLayerName) {
@@ -2630,8 +2515,6 @@ useEffect(() => {
           }
         }
       });
-      
-      console.log(`Found ${seenCoordinates.size} existing coordinates across ALL domains`);
       
       // Filter out duplicates
       const uniqueFeatures = [];
@@ -2648,21 +2531,13 @@ useEffect(() => {
         
         if (seenCoordinates.has(coordKey)) {
           duplicatesFound++;
-          console.log(`Duplicate found at index ${index}: coordinate ${coordKey} already exists`);
           return;
         }
         
         seenCoordinates.add(coordKey);
         uniqueFeatures.push(feature);
       });
-      
-      console.log(`After duplicate removal: ${uniqueFeatures.length} unique features (${duplicatesFound} duplicates removed)`);
-      console.log(`=== Final Summary ===`);
-      console.log(`- Parsed: ${totalParsedCount}`);
-      console.log(`- Outside boundary: ${croppedOutCount}`);
-      console.log(`- Duplicates across ALL domains: ${duplicatesFound}`);
-      console.log(`- Final unique: ${uniqueFeatures.length}`);
-      
+
       if (uniqueFeatures.length === 0) {
         const reasons = [];
         if (croppedOutCount > 0) {
@@ -2754,7 +2629,6 @@ useEffect(() => {
                 };
               }).filter(f => f !== null);
               totalParsed = parsedFeatures.length;
-              console.log(`CSV: Parsed ${totalParsed} features`);
               processFeaturesWithDuplicateCheck(parsedFeatures, totalParsed);
             }
           });
@@ -2803,7 +2677,6 @@ useEffect(() => {
             };
           }).filter(f => f !== null);
           totalParsed = parsedFeatures.length;
-          console.log(`Parquet: Parsed ${totalParsed} features`);
           newFeatures = parsedFeatures;
         } else if (fileExt === 'geojson' || fileExt === 'json') {
           const text = await file.text();
@@ -2827,7 +2700,6 @@ useEffect(() => {
             })
             .filter(f => f !== null);
           totalParsed = validFeatures.length;
-          console.log(`GeoJSON: Parsed ${totalParsed} features`);
           newFeatures = validFeatures;
         } else if (fileExt === 'zip') {
           const arrayBuffer = await file.arrayBuffer();
@@ -2861,7 +2733,6 @@ useEffect(() => {
             })
             .filter(f => f !== null);
           totalParsed = validFeatures.length;
-          console.log(`Shapefile (zip): Parsed ${totalParsed} features`);
           newFeatures = validFeatures;
         } else if (fileExt === 'shp') {
           try {
@@ -2896,7 +2767,6 @@ useEffect(() => {
               })
               .filter(f => f !== null);
             totalParsed = validFeatures.length;
-            console.log(`Shapefile (shp): Parsed ${totalParsed} features`);
             newFeatures = validFeatures;
           } catch (shpError) {
             console.warn('Single .shp file processing failed:', shpError);
@@ -3037,8 +2907,6 @@ useEffect(() => {
           }
           return;
         }
-        
-        console.log(`Multiple files: Parsed ${totalParsed} features total`);
         processFeaturesWithDuplicateCheck(newFeatures, totalParsed);
       }
       
@@ -3076,14 +2944,12 @@ useEffect(() => {
     setIsProcessing(true);
     
     try {
-      // Load all features across ALL domains for duplicate checking
-      console.log('Loading ALL features across ALL domains for final duplicate check...');
+      // Load all features across all domains for duplicate checking
       let allFeaturesForCheck = [];
       
       if (getAllFeatures && selectedCity) {
         try {
           allFeaturesForCheck = await getAllFeatures();
-          console.log(`Loaded ${allFeaturesForCheck.length} features across ALL domains for duplicate check`);
         } catch (error) {
           console.error('Error loading all features for duplicate check:', error);
         }
@@ -3141,8 +3007,6 @@ useEffect(() => {
         }
       });
       
-      console.log(`Found ${seenCoordinates.size} existing coordinates across ALL domains`);
-      
       // Filter out duplicates
       const uniqueFeatures = [];
       let duplicatesFound = 0;
@@ -3158,15 +3022,12 @@ useEffect(() => {
         
         if (seenCoordinates.has(coordKey)) {
           duplicatesFound++;
-          console.log(`Duplicate found at index ${index}: coordinate ${coordKey} already exists in domain`);
           return;
         }
         
         seenCoordinates.add(coordKey);
         uniqueFeatures.push(feature);
       });
-      
-      console.log(`Duplicate check complete: ${uniqueFeatures.length} unique out of ${features.length} total`);
       
       if (duplicatesFound > 0) {
         const proceed = window.confirm(
@@ -3203,14 +3064,6 @@ useEffect(() => {
         originalName: originalLayerName,
         originalDomain: originalDomain
       });
-      
-      console.log('Layer saved:', { 
-        name: finalLayerName, 
-        icon: finalLayerIcon, 
-        domain: selectedDomain, 
-        features: uniqueFeatures,
-        changes: { layerNameChanged, domainChanged }
-      });
     } catch (error) {
       console.error('Error saving layer:', error);
       alert(`Error saving layer: ${error.message}`);
@@ -3222,12 +3075,10 @@ useEffect(() => {
     if (mapInstanceRef.current) {
       mapInstanceRef.current.remove();
       mapInstanceRef.current = null;
-      console.log('Drawing map closed');
     }
     if (reviewMapInstanceRef.current) {
       reviewMapInstanceRef.current.remove();
       reviewMapInstanceRef.current = null;
-      console.log('Review map closed');
     }
     setStep(1);
     setLayerName('');
@@ -3882,7 +3733,6 @@ useEffect(() => {
                       if (reviewMapInstanceRef.current) {
                         reviewMapInstanceRef.current.remove();
                         reviewMapInstanceRef.current = null;
-                        console.log('Review map closed on back navigation');
                       }
                       setDataSource('upload');
                       setStep(3);

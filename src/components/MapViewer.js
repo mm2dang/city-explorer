@@ -141,8 +141,6 @@ const MapViewer = ({
   // Initialize map
   useEffect(() => {
     if (!mapRef.current || mapInstanceRef.current) return;
-  
-    console.log('MapViewer: Initializing map');
     
     const map = L.map(mapRef.current, {
       zoomControl: true,
@@ -248,7 +246,6 @@ const MapViewer = ({
     }
 
     return () => {
-      console.log('MapViewer: Cleaning up map');
       resizeObserver.disconnect();
       if (mapInstanceRef.current) {
         mapInstanceRef.current.remove();
@@ -274,14 +271,8 @@ const MapViewer = ({
   // Update tile layer when mapView changes
   useEffect(() => {
     if (!mapInstanceRef.current || !tileLayerRef.current) {
-      console.log('MapViewer: Cannot change map view - map not initialized', {
-        hasMap: !!mapInstanceRef.current,
-        hasTileLayer: !!tileLayerRef.current
-      });
       return;
     }
-
-    console.log('MapViewer: Changing map view to:', mapView);
 
     // Remove current tile layer
     mapInstanceRef.current.removeLayer(tileLayerRef.current);
@@ -304,17 +295,11 @@ const MapViewer = ({
     // Force tile layer to back
     newTileLayer.bringToBack();
 
-    console.log('MapViewer: New tile layer added, waiting to re-add overlays...');
-
     // Re-add all overlays after a short delay
-    setTimeout(() => {
-      console.log('MapViewer: Re-adding overlays');
-      
+    setTimeout(() => {      
       // Re-add cluster groups
       Object.entries(clusterGroupsRef.current).forEach(([layerName, clusterGroup]) => {
         if (clusterGroup) {
-          const markerCount = clusterGroup.getLayers().length;
-          console.log(`MapViewer: Re-adding cluster group for ${layerName} with ${markerCount} markers`);
           
           if (mapInstanceRef.current.hasLayer(clusterGroup)) {
             mapInstanceRef.current.removeLayer(clusterGroup);
@@ -330,7 +315,6 @@ const MapViewer = ({
 
       // Re-add boundary layer
       if (boundaryLayerRef.current) {
-        console.log('MapViewer: Re-adding boundary layer');
         if (mapInstanceRef.current.hasLayer(boundaryLayerRef.current)) {
           mapInstanceRef.current.removeLayer(boundaryLayerRef.current);
         }
@@ -340,7 +324,6 @@ const MapViewer = ({
 
       // Re-add non-point layer
       if (nonPointLayerRef.current) {
-        console.log('MapViewer: Re-adding non-point layer');
         if (mapInstanceRef.current.hasLayer(nonPointLayerRef.current)) {
           mapInstanceRef.current.removeLayer(nonPointLayerRef.current);
         }
@@ -353,8 +336,6 @@ const MapViewer = ({
       
       // Bring tile layer to back one more time
       newTileLayer.bringToBack();
-      
-      console.log('MapViewer: Overlays re-added successfully');
     }, 200);
   }, [mapView]);
 
@@ -373,8 +354,6 @@ const MapViewer = ({
   
     // Only show city markers when no city is selected
     if (selectedCity || cities.length === 0) return;
-  
-    console.log('MapViewer: Displaying city markers for world view');
   
     const cityMarkersGroup = L.layerGroup();
   
@@ -494,10 +473,8 @@ const MapViewer = ({
         // Click handler to select city
         marker.on('click', function(e) {
           if (isProcessing) {
-            console.log('MapViewer: City marker click blocked - city is processing:', city.name);
             return;
           }
-          console.log('MapViewer: City marker clicked:', city.name);
           onCitySelect(city);
         });
   
@@ -510,7 +487,6 @@ const MapViewer = ({
     if (cityMarkersGroup.getLayers().length > 0) {
       cityMarkersGroup.addTo(mapInstanceRef.current);
       cityMarkersLayerRef.current = cityMarkersGroup;
-      console.log(`MapViewer: Added ${cityMarkersGroup.getLayers().length} city markers`);
     }
   }, [cities, selectedCity, onCitySelect, processingProgress, dataSource]);
 
@@ -521,7 +497,6 @@ const MapViewer = ({
   // Clear all markers and layers
   const clearAllLayers = useCallback(() => {
     if (!mapInstanceRef.current || !mapInstanceRef.current.getContainer()) {
-      console.log('MapViewer: Cannot clear layers - map instance invalid');
       return;
     }
     if (!mapInstanceRef.current) return;
@@ -568,22 +543,17 @@ const MapViewer = ({
       return;
     }
     
-    console.log(`Incrementally loading layer: ${layerName}`);
-    
     try {
       const singleLayerActive = { [layerName]: true };
       const features = await loadCityFeatures(selectedCity.name, singleLayerActive);
       
       if (features.length === 0) {
-        console.log(`No features for layer ${layerName}`);
         markLayerAsLoaded(layerName);
         return;
       }
       
       // Create global cluster group if it doesn't exist
-      if (!clusterGroupsRef.current['__global__']) {
-        console.log('Creating global cluster group in loadLayerIncremental');
-        
+      if (!clusterGroupsRef.current['__global__']) {        
         const globalClusterGroup = L.markerClusterGroup({
           maxClusterRadius: 80,
           spiderfyOnMaxZoom: true,
@@ -935,7 +905,6 @@ const MapViewer = ({
       
       if (addedCount > 0) {
         globalClusterGroup.refreshClusters();
-        console.log(`Added ${addedCount} features for layer ${layerName}`);
       }
       
       markLayerAsLoaded(layerName);
@@ -949,8 +918,6 @@ const MapViewer = ({
     const globalClusterGroup = clusterGroupsRef.current['__global__'];
     
     if (!globalClusterGroup) return;
-    
-    console.log(`Incrementally removing layer: ${layerName}`);
     
     const layers = globalClusterGroup.getLayers();
     let removedCount = 0;
@@ -978,8 +945,6 @@ const MapViewer = ({
       const newSet = new Set(loadedLayersRef.current);
       newSet.delete(layerName);
       loadedLayersRef.current = newSet;
-      
-      console.log(`Removed ${removedCount} features for layer ${layerName}`);
     }
   }, []);
 
@@ -992,7 +957,6 @@ const MapViewer = ({
     previousActiveLayersRef.current = new Set();
     
     if (activeLayerNames.length > 0) {
-      console.log('Loading initial layers for new city:', activeLayerNames);
       setIsLoadingData(true);
       
       previousActiveLayersRef.current = new Set(activeLayerNames);
@@ -1033,8 +997,6 @@ const MapViewer = ({
     
     const addedLayers = [...currentActive].filter(layer => !previousActive.has(layer));
     const removedLayers = [...previousActive].filter(layer => !currentActive.has(layer));
-    
-    console.log('Layer changes detected:', { addedLayers, removedLayers });
     
     // Remove layers that were turned off
     removedLayers.forEach(layerName => {
@@ -1099,8 +1061,6 @@ const MapViewer = ({
     }
   
     try {
-      console.log('MapViewer: Updating map for city:', selectedCity.name);
-      
       // Clear existing cluster group when switching cities
       if (clusterGroupsRef.current['__global__']) {
         const globalCluster = clusterGroupsRef.current['__global__'];
@@ -1155,7 +1115,6 @@ const MapViewer = ({
   // Cleanup effect when selectedCity changes to null
   useEffect(() => {
     if (!selectedCity && abortControllerRef.current) {
-      console.log('MapViewer: City deselected, aborting any ongoing loading operations');
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
       
@@ -1182,19 +1141,8 @@ const MapViewer = ({
     const isProcessing = progress && progress.status === 'processing' && progress.dataSource === dataSource;
     
     if (isProcessing) {
-      console.log('MapViewer: Skipping map update - city is currently processing:', selectedCity.name, 'in', dataSource);
       return;
     }
-  
-    console.log('MapViewer: Selected city changed, updating display');
-    console.log('MapViewer: City data:', {
-      name: selectedCity.name,
-      lat: selectedCity.latitude,
-      lon: selectedCity.longitude,
-      population: selectedCity.population,
-      size: selectedCity.size,
-      boundaryLength: selectedCity.boundary?.length
-    });
   
     // Update stored coordinates in map container
     const mapContainer = mapInstanceRef.current.getContainer();
@@ -1208,15 +1156,12 @@ const MapViewer = ({
       try {
         // Remove old boundary if it exists
         if (boundaryLayerRef.current && mapInstanceRef.current.hasLayer(boundaryLayerRef.current)) {
-          console.log('MapViewer: Removing old boundary layer');
           mapInstanceRef.current.removeLayer(boundaryLayerRef.current);
           boundaryLayerRef.current = null;
         }
   
         // Parse and add new boundary
         const boundary = JSON.parse(selectedCity.boundary);
-        console.log('MapViewer: Parsed boundary type:', boundary.type);
-        console.log('MapViewer: Boundary coordinates sample:', boundary.coordinates?.[0]?.[0]);
   
         const boundaryLayer = L.geoJSON(boundary, {
           style: {
@@ -1232,16 +1177,12 @@ const MapViewer = ({
   
         const bounds = boundaryLayer.getBounds();
         if (bounds.isValid()) {
-          console.log('MapViewer: Fitting map to new boundary');
           mapInstanceRef.current.fitBounds(bounds, { padding: [50, 50] });
         }
-  
-        console.log('MapViewer: Boundary updated successfully');
       } catch (error) {
         console.error('MapViewer: Error updating boundary:', error);
       }
     } else if (selectedCity.latitude && selectedCity.longitude) {
-      console.log('MapViewer: No boundary, centering on coordinates');
       mapInstanceRef.current.setView([selectedCity.latitude, selectedCity.longitude], 12);
     }
   }, [selectedCity, processingProgress, dataSource]);

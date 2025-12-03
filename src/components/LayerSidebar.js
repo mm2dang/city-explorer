@@ -157,9 +157,6 @@ const LayerSidebar = ({
     Object.entries(layerDefinitions).forEach(([domain, layers]) => {
       const availableDomainLayers = layers.filter(layer => {
         const isAvailable = availableLayers[layer.name];
-        if (!isAvailable) {
-          console.warn(`Layer ${layer.name} not found in availableLayers`);
-        }
         return isAvailable;
       });
       layersByDomain[domain] = availableDomainLayers;
@@ -188,7 +185,6 @@ const LayerSidebar = ({
         console.warn(`Invalid layer data for ${layerName}:`, layer);
       }
     });
-    console.log('Computed availableLayersByDomain:', layersByDomain);
     return layersByDomain;
   }, [layerDefinitions, availableLayers]);
 
@@ -263,8 +259,6 @@ const LayerSidebar = ({
       alert('Cannot edit layer: missing parameters');
       return;
     }
-    
-    console.log(`Editing layer: domain="${domain}", layerName="${layer.name}"`);
     setSelectedDomain(domain);
     setEditingLayer(layer);
     setIsAddLayerModalOpen(true);
@@ -294,7 +288,6 @@ const LayerSidebar = ({
       // Check if this was the last layer - if so, notify parent to update city status
       const remainingLayers = Object.keys(availableLayers).filter(name => name !== layerName);
       if (remainingLayers.length === 0 && onCityStatusChange) {
-        console.log('Last layer deleted - updating city status to pending');
         onCityStatusChange(selectedCity.name, false);
       }
     } catch (error) {
@@ -325,7 +318,6 @@ const LayerSidebar = ({
         });
         
         if (remainingDomains.length === 0 && onCityStatusChange) {
-          console.log('All layers deleted - updating city status to pending');
           onCityStatusChange(selectedCity.name, false);
         }
         
@@ -350,7 +342,6 @@ const LayerSidebar = ({
     }
     
     try {
-      console.log(`Exporting layer: domain="${domain}", layer="${layerName}", format="${format}"`);
       setExportingLayer(layerName);
       
       // Load features using the existing loadLayerForEditing function
@@ -359,8 +350,6 @@ const LayerSidebar = ({
       if (!features || features.length === 0) {
         throw new Error(`No features found for layer "${layerName}"`);
       }
-      
-      console.log(`Loaded ${features.length} features for export`);
       
       // Convert GeoJSON features to the format expected by export functions
       const exportData = features.map(feature => ({
@@ -386,8 +375,6 @@ const LayerSidebar = ({
       
       // Pass preloaded data to exportLayer (5th parameter)
       await exportLayer(selectedCity.name, domain, layerName, format, exportData);
-      
-      console.log('Export completed successfully');
     } catch (error) {
       console.error('Export failed:', error);
       alert(`Failed to export layer: ${error.message}`);
@@ -399,19 +386,9 @@ const LayerSidebar = ({
   const handleModalSave = async (layerData) => {
     try {
       // Check if this is an edit with changes
-      if (layerData.isEdit && (layerData.layerNameChanged || layerData.domainChanged)) {
-        console.log('Layer edited with changes:', {
-          layerNameChanged: layerData.layerNameChanged,
-          domainChanged: layerData.domainChanged,
-          originalName: layerData.originalName,
-          originalDomain: layerData.originalDomain,
-          newName: layerData.name,
-          newDomain: layerData.domain
-        });
-        
+      if (layerData.isEdit && (layerData.layerNameChanged || layerData.domainChanged)) {        
         // Delete the old layer
         await onLayerDelete(layerData.originalDomain, layerData.originalName, { silent: true });
-        console.log(`Deleted old layer: ${layerData.originalDomain}/${layerData.originalName}`);
       }
       
       // Save the layer (either new or with new name/domain)
@@ -420,7 +397,6 @@ const LayerSidebar = ({
       // Automatically toggle the layer ON
       setTimeout(() => {
         onLayerToggle(layerData.name, true);
-        console.log(`Automatically enabled layer: ${layerData.name}`);
       }, 0);
       
       // Close modal and reset
@@ -485,7 +461,6 @@ const LayerSidebar = ({
         
         // Update city status to pending
         if (onCityStatusChange) {
-          console.log('All layers deleted - updating city status to pending');
           onCityStatusChange(selectedCity.name, false);
         }
         
@@ -502,8 +477,6 @@ const LayerSidebar = ({
     
     // Determine the new state: if all are active, turn all off; otherwise turn all on
     const newState = !allActive;
-    
-    console.log(`Toggling domain ${domain}: ${layers.length} layers to ${newState}`);
     
     // Toggle all layers in the domain to the new state
     layers.forEach((layer) => {
@@ -561,8 +534,6 @@ const LayerSidebar = ({
         throw new Error('Invalid city name format');
       }
   
-      console.log('Starting OSM import for:', { city, province, country, targetDataSource, processingKey });
-  
       // Calculate total layers for progress tracking
       const layerDefinitions = {
         mobility: 8,
@@ -595,7 +566,6 @@ const LayerSidebar = ({
         province,
         city,
         (cityName, progress) => {
-          console.log('Import progress:', cityName, 'in', targetDataSource, progress);
           // Update progress through parent callback
           if (onImportComplete) {
             onImportComplete(cityName, {
@@ -621,8 +591,6 @@ const LayerSidebar = ({
           newSet.delete(processingKey);
           return newSet;
         });
-        
-        console.log(`OSM import completed successfully for ${cityToImport.name} in data source: ${targetDataSource}`);
       }).catch(error => {
         console.error('Error importing from OSM:', error);
         
@@ -676,12 +644,8 @@ const LayerSidebar = ({
     
     const allFeatures = [];
     
-    console.log('Collecting ALL features from ALL domains for duplicate checking');
-    
     for (const [domainName, domainLayers] of Object.entries(availableLayersByDomain)) {
       if (domainLayers.length === 0) continue;
-      
-      console.log(`Checking domain: ${domainName} with ${domainLayers.length} layers`);
       
       for (const layer of domainLayers) {
         try {
@@ -693,15 +657,12 @@ const LayerSidebar = ({
           
           if (features && features.length > 0) {
             allFeatures.push(...features);
-            console.log(`Loaded ${features.length} features from ${domainName}/${layer.name}`);
           }
         } catch (error) {
           console.warn(`Could not load features from ${domainName}/${layer.name}:`, error);
         }
       }
     }
-    
-    console.log(`Total features across ALL domains: ${allFeatures.length}`);
     return allFeatures;
   }, [selectedCity, availableLayersByDomain]);
 

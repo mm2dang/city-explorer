@@ -144,15 +144,6 @@ const IndicatorsSidebar = ({
           const hasCoverage = row.coverage != null && !isNaN(row.coverage);
           const hasAnyConnectivity = hasConnectivity || hasCoverage;
           
-          console.log(`[Stats] ${row.city}: mobilePing=${hasMobilePing}, connectivity=${hasAnyConnectivity}`, {
-            out_at_night: row.out_at_night,
-            leisure_dwell_time: row.leisure_dwell_time,
-            cultural_visits: row.cultural_visits,
-            speed: row.speed,
-            latency: row.latency,
-            coverage: row.coverage
-          });
-          
           if (hasMobilePing && hasAnyConnectivity) {
             calculated++;
           } else if (hasAnyConnectivity) {
@@ -171,8 +162,6 @@ const IndicatorsSidebar = ({
           mobilePingOnly,
           total: filteredData.length
         };
-        
-        console.log(`[Stats] Range ${range}:`, stats[range]);
       } catch (error) {
         console.error(`Error loading stats for ${range}:`, error);
         stats[range] = {
@@ -324,7 +313,6 @@ const IndicatorsSidebar = ({
 
   useEffect(() => {
     const handleConnectivityProgress = (e) => {
-      console.log('Connectivity progress event received:', e.detail);
       // Update the connectivity progress state from the event
       if (e.detail && onConnectivityProgressUpdate) {
         onConnectivityProgressUpdate(e.detail);
@@ -332,7 +320,6 @@ const IndicatorsSidebar = ({
     };
 
     const handleConnectivityComplete = () => {
-      console.log('Connectivity complete event received');
       // Clear connectivity calculation state
       if (onConnectivityStateChange) {
         onConnectivityStateChange(false);
@@ -461,7 +448,6 @@ const IndicatorsSidebar = ({
         link.click();
         document.body.removeChild(link);
         URL.revokeObjectURL(url);
-        console.log('CSV export completed');
       } else if (format === 'json') {
         // Export as JSON
         const jsonContent = JSON.stringify(dataToExport, null, 2);
@@ -475,7 +461,6 @@ const IndicatorsSidebar = ({
         link.click();
         document.body.removeChild(link);
         URL.revokeObjectURL(url);
-        console.log('JSON export completed');
       } else if (format === 'parquet') {
         // Export as Parquet using parquet-wasm
         const { default: init } = await import('parquet-wasm');
@@ -512,7 +497,6 @@ const IndicatorsSidebar = ({
         link.click();
         document.body.removeChild(link);
         URL.revokeObjectURL(url);
-        console.log('Parquet export completed');
       }
     } catch (error) {
       console.error('Export failed:', error);
@@ -833,7 +817,6 @@ const IndicatorsSidebar = ({
       }
   
       const proxyUrl = `http://localhost:3001/api/worldbank/${countryCode}`;
-      console.log(`[Coverage] Fetching historical data for ${country} (${countryCode})...`);
       
       const response = await fetch(proxyUrl);
       const data = await response.json();
@@ -857,7 +840,6 @@ const IndicatorsSidebar = ({
       }
   
       if (!wbData || !Array.isArray(wbData) || wbData.length < 2 || !Array.isArray(wbData[1])) {
-        console.log('No historical data available');
         return [];
       }
   
@@ -869,8 +851,6 @@ const IndicatorsSidebar = ({
           value: parseFloat(record.value)
         }))
         .sort((a, b) => a.year - b.year);
-  
-      console.log(`[Coverage] Found ${historicalData.length} historical data points`);
       return historicalData;
     } catch (error) {
       console.error('[Coverage] Error fetching historical data:', error);
@@ -902,9 +882,7 @@ const IndicatorsSidebar = ({
       
       // Special handling for coverage indicator
       if (indicatorKey === 'coverage') {
-        console.log(`[Coverage] Fetching historical data for ${country}...`);
         data = await fetchHistoricalCoverage(country);
-        console.log('[Coverage] Historical data:', data);
       } else if (indicator.type === 'mobile_ping') {
         data = await getMonthlyIndicatorData(
           dataSource,
