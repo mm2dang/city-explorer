@@ -115,6 +115,30 @@
   font-weight: 700;
 }
 
+/* Support for international characters */
+.wizard-container input,
+.wizard-container select,
+.wizard-container textarea {
+  font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', 
+               Roboto, 'Helvetica Neue', Arial, 'Noto Sans', sans-serif, 
+               'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 
+               'Noto Color Emoji', 'Noto Sans Arabic', 'Arabic Typesetting';
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Ensure proper text direction for RTL languages */
+.wizard-container input[type="text"],
+.wizard-container textarea {
+  unicode-bidi: plaintext;
+}
+
+/* Leaflet popup content support */
+.leaflet-popup-content {
+  font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', 
+               Roboto, 'Helvetica Neue', Arial, 'Noto Sans', sans-serif;
+}
+
 /* Form elements */
 .form-group {
   margin-bottom: 20px;

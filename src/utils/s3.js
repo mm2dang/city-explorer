@@ -209,10 +209,16 @@ const buildCredentials = () => {
   return credentials;
 };
 
-const s3Client = new S3Client({
-  region: process.env.REACT_APP_AWS_REGION || 'us-east-1',
-  credentials: buildCredentials(),
-});
+let s3Client = null;
+
+const getS3Client = () => {
+  // Always create a new client with fresh credentials from environment
+  s3Client = new S3Client({
+    region: process.env.REACT_APP_AWS_REGION || 'us-east-1',
+    credentials: buildCredentials(),
+  });
+  return s3Client;
+};
 
 const BUCKET_NAME = process.env.REACT_APP_S3_BUCKET_NAME;
 let DATA_SOURCE_PREFIX = 'city';
@@ -338,7 +344,7 @@ const scanS3Directory = async (prefix, targetFileName = null) => {
       MaxKeys: 1000,
     });
     
-    const response = await s3Client.send(command);
+    const response = await getS3Client().send(command);
     
     if (response.Contents) {
       for (const obj of response.Contents) {
@@ -477,7 +483,7 @@ const getCityData = async (country, province, city) => {
         IfModifiedSince: new Date(0),
       });
       
-      const fileResponse = await s3Client.send(getCommand);
+      const fileResponse = await getS3Client().send(getCommand);
       
       // Convert stream to ArrayBuffer for browser environment
       const arrayBuffer = await streamToArrayBuffer(fileResponse.Body);
@@ -504,6 +510,8 @@ const getCityData = async (country, province, city) => {
           population: row.population ? parseInt(row.population) : null,
           size: row.size ? parseFloat(row.size) : null,
           sdg_region: row.sdg_region,
+          neighbourhoods: row.neighbourhoods || null,
+          neighbourhood_names: row.neighbourhood_names || null
         };
         
         if (cityData) {
@@ -615,6 +623,8 @@ export const saveCityData = async (cityData, country, province, city) => {
       population: populationValue,
       size: sizeValue,
       sdg_region: cityData.sdg_region ? String(cityData.sdg_region) : null,
+      neighbourhoods: cityData.neighbourhoods || null,
+      neighbourhood_names: cityData.neighbourhood_names || null
     }];
 
     // Create Table and write parquet file with Snappy compression
@@ -632,7 +642,7 @@ export const saveCityData = async (cityData, country, province, city) => {
       ContentType: 'application/octet-stream',
     });
 
-    await s3Client.send(command);
+    await getS3Client().send(command);
     
     // Invalidate cache again after successful save to be extra sure
     invalidateCityCache(cityName);
@@ -665,7 +675,7 @@ export const getCityDataFresh = async (country, province, city) => {
         IfModifiedSince: new Date(0), // Force S3 to return fresh data
       });
       
-      const fileResponse = await s3Client.send(getCommand);
+      const fileResponse = await getS3Client().send(getCommand);
       
       // Convert stream to ArrayBuffer for browser environment
       const arrayBuffer = await streamToArrayBuffer(fileResponse.Body);
@@ -692,6 +702,8 @@ export const getCityDataFresh = async (country, province, city) => {
           population: row.population ? parseInt(row.population) : null,
           size: row.size ? parseFloat(row.size) : null,
           sdg_region: row.sdg_region,
+          neighbourhoods: row.neighbourhoods || null,
+          neighbourhood_names: row.neighbourhood_names || null
         };
         
         return cityData;
@@ -739,7 +751,7 @@ export const moveCityData = async (oldCountry, oldProvince, oldCity, newCountry,
         ContinuationToken: continuationToken,
       });
       
-      const response = await s3Client.send(listCommand);
+      const response = await getS3Client().send(listCommand);
       
       if (response.Contents && response.Contents.length > 0) {
         for (const obj of response.Contents) {
@@ -770,7 +782,7 @@ export const moveCityData = async (oldCountry, oldProvince, oldCity, newCountry,
           Key: oldKey,
         });
         
-        const getResponse = await s3Client.send(getCommand);
+        const getResponse = await getS3Client().send(getCommand);
         
         // Convert stream to buffer using shared helper function
         const arrayBuffer = await streamToArrayBuffer(getResponse.Body);
@@ -784,7 +796,7 @@ export const moveCityData = async (oldCountry, oldProvince, oldCity, newCountry,
           ContentType: getResponse.ContentType || 'application/octet-stream',
         });
         
-        await s3Client.send(putCommand);        
+        await getS3Client().send(putCommand);        
       } catch (copyError) {
         console.error(`Error copying ${oldKey}:`, copyError.message);
         console.error(`Full error:`, copyError);
@@ -807,7 +819,7 @@ export const moveCityData = async (oldCountry, oldProvince, oldCity, newCountry,
           },
         });
         
-        await s3Client.send(deleteCommand);
+        await getS3Client().send(deleteCommand);
       }
     }
 
@@ -853,7 +865,7 @@ export const getAvailableLayersForCity = async (cityName) => {
         ContinuationToken: continuationToken,
       });
       
-      const response = await s3Client.send(listCommand);
+      const response = await getS3Client().send(listCommand);
       
       if (response.Contents) {
         for (const obj of response.Contents) {
@@ -945,7 +957,7 @@ const loadSingleLayerCached = async (cityName, country, province, city, domain, 
       MaxKeys: 1,
     });
     
-    const listResponse = await s3Client.send(listCommand);
+    const listResponse = await getS3Client().send(listCommand);
     
     if (!listResponse.Contents || listResponse.Contents.length === 0) {
       return [];
@@ -958,7 +970,7 @@ const loadSingleLayerCached = async (cityName, country, province, city, domain, 
       IfModifiedSince: new Date(0), // Force fresh data
     });
     
-    const response = await s3Client.send(command);
+    const response = await getS3Client().send(command);
     
     if (!response.Body) {
       console.error(`=== S3: No body in response for ${key} ===`);
@@ -1097,7 +1109,7 @@ export const loadCityFeatures = async (cityName, activeLayers) => {
           ContinuationToken: continuationToken,
         });
         
-        const response = await s3Client.send(listCommand);
+        const response = await getS3Client().send(listCommand);
         
         if (response.Contents) {
           for (const obj of response.Contents) {
@@ -2030,7 +2042,7 @@ export const saveLayerFeatures = async (features, country, province, city, domai
       ContentType: 'application/octet-stream',
     });
 
-    await s3Client.send(command);
+    await getS3Client().send(command);
 
     // Invalidate cache after successful save
     const cityName = province ? `${city}, ${province}, ${country}` : `${city}, ${country}`;
@@ -2121,7 +2133,7 @@ export const deleteLayer = async (cityName, domain, layerName) => {
       },
     });
 
-    const response = await s3Client.send(deleteCommand);
+    const response = await getS3Client().send(deleteCommand);
     
     if (response.Deleted && response.Deleted.length > 0) {
       // Invalidate cache after successful delete
@@ -2164,7 +2176,7 @@ export const loadLayerForEditing = async (cityName, domain, layerName) => {
       Key: key,
     });
 
-    const response = await s3Client.send(command);
+    const response = await getS3Client().send(command);
     const arrayBuffer = await streamToArrayBuffer(response.Body);
     const uint8Array = new Uint8Array(arrayBuffer);
 
@@ -2569,7 +2581,7 @@ export const deleteCityData = async (cityName) => {
         Prefix: populationPrefix,
         ContinuationToken: populationContinuationToken,
       });
-      const populationResponse = await s3Client.send(populationListCommand);
+      const populationResponse = await getS3Client().send(populationListCommand);
       
       if (populationResponse.Contents && populationResponse.Contents.length > 0) {
         populationResponse.Contents.forEach(obj => {
@@ -2590,7 +2602,7 @@ export const deleteCityData = async (cityName) => {
         Prefix: dataPrefix,
         ContinuationToken: dataContinuationToken,
       });
-      const dataResponse = await s3Client.send(dataListCommand);
+      const dataResponse = await getS3Client().send(dataListCommand);
       
       if (dataResponse.Contents && dataResponse.Contents.length > 0) {
         dataResponse.Contents.forEach(obj => {
@@ -2616,7 +2628,7 @@ export const deleteCityData = async (cityName) => {
           },
         });
         
-        const deleteResponse = await s3Client.send(deleteCommand);
+        const deleteResponse = await getS3Client().send(deleteCommand);
         
         if (deleteResponse.Errors && deleteResponse.Errors.length > 0) {
           console.error('Errors during deletion:', deleteResponse.Errors);
@@ -2651,7 +2663,7 @@ export const deleteCityMetadata = async (country, province, city) => {
         Prefix: populationPrefix,
         ContinuationToken: populationContinuationToken,
       });
-      const populationResponse = await s3Client.send(populationListCommand);
+      const populationResponse = await getS3Client().send(populationListCommand);
       
       if (populationResponse.Contents && populationResponse.Contents.length > 0) {
         populationResponse.Contents.forEach(obj => {
@@ -2671,7 +2683,7 @@ export const deleteCityMetadata = async (country, province, city) => {
         },
       });
       
-      const deleteResponse = await s3Client.send(deleteCommand);
+      const deleteResponse = await getS3Client().send(deleteCommand);
       
       if (deleteResponse.Errors && deleteResponse.Errors.length > 0) {
         console.error('Errors during metadata deletion:', deleteResponse.Errors);
@@ -2719,7 +2731,7 @@ export const checkCityExists = async (country, province, city) => {
         MaxKeys: 1,
       });
       
-      const response = await s3Client.send(listCommand);
+      const response = await getS3Client().send(listCommand);
       const exists = response.Contents && response.Contents.length > 0;
       return exists;
     } catch (error) {
@@ -2756,7 +2768,7 @@ export const cityHasDataLayers = async (cityName) => {
       MaxKeys: 1,
     });
     
-    const response = await s3Client.send(command);
+    const response = await getS3Client().send(command);
     return response.Contents && response.Contents.length > 0;
   } catch (error) {
     console.warn(`Error checking if city has data layers: ${cityName}`, error);

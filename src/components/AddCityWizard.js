@@ -11,39 +11,45 @@ import { getSDGRegion } from '../utils/regions';
 import 'leaflet-draw/dist/leaflet.draw.css';
 import '../styles/AddCityWizard.css';
 import JSZip from 'jszip';
+import * as turf from '@turf/turf';
 
 const MapController = ({ center, boundary, onBoundaryLoad }) => {
   const map = useMap();
 
   useEffect(() => {
-    if (boundary) {
-      try {
-        const geoJsonLayer = L.geoJSON(boundary);
-        const bounds = geoJsonLayer.getBounds();
-        if (bounds.isValid()) {
-          map.fitBounds(bounds, { 
-            padding: [50, 50],
-            maxZoom: 15
-          });
-        } else {
-          console.warn('MapController: Invalid bounds, using center');
+    if (!map) return;
+    
+    // Wait for map to be ready before manipulating it
+    map.whenReady(() => {
+      if (boundary) {
+        try {
+          const geoJsonLayer = L.geoJSON(boundary);
+          const bounds = geoJsonLayer.getBounds();
+          if (bounds.isValid()) {
+            map.fitBounds(bounds, { 
+              padding: [50, 50],
+              maxZoom: 15
+            });
+          } else {
+            console.warn('MapController: Invalid bounds, using center');
+            map.setView(center || [51.505, -0.09], 12);
+          }
+        } catch (error) {
+          console.error('MapController: Error fitting bounds:', error);
           map.setView(center || [51.505, -0.09], 12);
         }
-      } catch (error) {
-        console.error('MapController: Error fitting bounds:', error);
-        map.setView(center || [51.505, -0.09], 12);
+      } else if (center && center[0] && center[1]) {
+        map.setView(center, 12);
       }
-    } else if (center && center[0] && center[1]) {
-      map.setView(center, 12);
-    }
 
-    // Store boundary in map container for center control
-    const mapContainer = map.getContainer();
-    if (boundary) {
-      mapContainer.dataset.boundary = JSON.stringify(boundary);
-    } else {
-      delete mapContainer.dataset.boundary;
-    }
+      // Store boundary in map container for center control
+      const mapContainer = map.getContainer();
+      if (mapContainer && boundary) {
+        mapContainer.dataset.boundary = JSON.stringify(boundary);
+      } else if (mapContainer) {
+        delete mapContainer.dataset.boundary;
+      }
+    });
     
     // Add center map control if it doesn't exist
     if (!map._centerControl) {
@@ -54,8 +60,12 @@ const MapController = ({ center, boundary, onBoundaryLoad }) => {
   }, [center, boundary, map]);
 
   useEffect(() => {
+    if (!map) return;
+    
     if (boundary && onBoundaryLoad) {
-      onBoundaryLoad(map);
+      map.whenReady(() => {
+        onBoundaryLoad(map);
+      });
     }
   }, [boundary, onBoundaryLoad, map]);
 
@@ -234,6 +244,275 @@ const CenterMapControl = L.Control.extend({
   }
 });
 
+const BoundaryLayer = ({ boundary }) => {
+  const map = useMap();
+  
+  useEffect(() => {
+    if (!map) return;
+    
+    // Wait for map to be ready
+    map.whenReady(() => {
+      // Always remove existing boundary layer first
+      if (map._cityBoundaryLayer) {
+        try {
+          map.removeLayer(map._cityBoundaryLayer);
+        } catch (error) {
+          console.warn('Error removing old boundary layer:', error);
+        }
+        delete map._cityBoundaryLayer;
+      }
+      
+      // Only add new boundary if it exists
+      if (boundary) {
+        try {
+          const boundaryLayer = L.geoJSON({
+            type: 'Feature',
+            geometry: boundary,
+            properties: {}
+          }, {
+            style: {
+              color: '#0891b2',
+              weight: 2,
+              fillOpacity: 0,
+              dashArray: '5, 5'
+            }
+          });
+          
+          boundaryLayer.addTo(map);
+          map._cityBoundaryLayer = boundaryLayer;
+          
+          // Fit map to boundary
+          const bounds = boundaryLayer.getBounds();
+          if (bounds.isValid()) {
+            map.fitBounds(bounds, { 
+              padding: [50, 50],
+              maxZoom: 15 
+            });
+          }
+        } catch (error) {
+          console.error('Error adding boundary layer:', error);
+        }
+      }
+    });
+    
+    // Cleanup function
+    return () => {
+      if (map._cityBoundaryLayer) {
+        map.removeLayer(map._cityBoundaryLayer);
+        delete map._cityBoundaryLayer;
+      }
+      if (map._neighbourhoodCentroids) {
+        map.removeLayer(map._neighbourhoodCentroids);
+        delete map._neighbourhoodCentroids;
+      }
+      map.off('popupopen');
+    };
+  }, [boundary, map]);
+  
+  return null;
+};
+
+const NeighbourhoodMapSync = ({ 
+  mapRef, 
+  boundary, 
+  neighbourhoods, 
+  neighbourhoodDrawRef,
+  neighbourhoodNames,
+  createNeighbourhoodPopupContent,
+  onEditNeighbourhoodName
+}) => {
+  const map = useMap();
+  
+  useEffect(() => {
+    if (mapRef) {
+      mapRef.current = map;
+    }
+  }, [map, mapRef]);
+  
+  useEffect(() => {
+    if (!map) return;
+    
+    // Remove existing boundary layer
+    if (map._cityBoundaryLayer) {
+      map.removeLayer(map._cityBoundaryLayer);
+      delete map._cityBoundaryLayer;
+    }
+    
+    // Add boundary only if it exists
+    if (boundary) {
+      const boundaryLayer = L.geoJSON({
+        type: 'Feature',
+        geometry: boundary,
+        properties: {}
+      }, {
+        style: {
+          color: '#0891b2',
+          weight: 2,
+          fillOpacity: 0,
+          dashArray: '5, 5'
+        }
+      });
+      
+      boundaryLayer.addTo(map);
+      map._cityBoundaryLayer = boundaryLayer;
+      
+      // Fit to boundary
+      const bounds = boundaryLayer.getBounds();
+      if (bounds.isValid()) {
+        map.fitBounds(bounds, { 
+          padding: [50, 50],
+          maxZoom: 15 
+        });
+      }
+    }
+
+    // Initialize centroid layer group if not exists
+    if (!map._neighbourhoodCentroids) {
+      map._neighbourhoodCentroids = new L.FeatureGroup();
+      map.addLayer(map._neighbourhoodCentroids);
+    }
+    
+    return () => {
+      if (map._cityBoundaryLayer) {
+        map.removeLayer(map._cityBoundaryLayer);
+        delete map._cityBoundaryLayer;
+      }
+      if (map._neighbourhoodCentroids) {
+        map.removeLayer(map._neighbourhoodCentroids);
+        delete map._neighbourhoodCentroids;
+      }
+    };
+  }, [boundary, map]);
+
+  // Render neighbourhoods when they change
+  useEffect(() => {
+    if (!map || !neighbourhoodDrawRef.current || !neighbourhoods || neighbourhoods.length === 0) {
+      return;
+    }
+    
+    const timer = setTimeout(() => {
+      console.log('NeighbourhoodMapSync: Rendering neighbourhoods');
+      
+      if (!map || !map.getContainer()) {
+        console.warn('Map not ready yet');
+        return;
+      }
+      
+      neighbourhoodDrawRef.current.clearLayers();
+      
+      // Clear existing centroid markers
+      if (map._neighbourhoodCentroids) {
+        map._neighbourhoodCentroids.clearLayers();
+      } else {
+        map._neighbourhoodCentroids = new L.FeatureGroup();
+        map.addLayer(map._neighbourhoodCentroids);
+      }
+      
+      neighbourhoods.forEach((neighbourhood, index) => {
+        try {
+          const feature = {
+            type: 'Feature',
+            geometry: neighbourhood,
+            properties: {}
+          };
+          
+          // Add the polygon layer
+          const geoJsonLayer = L.geoJSON(feature, {
+            style: {
+              color: '#06b6d4',
+              weight: 2,
+              fillColor: '#06b6d4',
+              fillOpacity: 0.2
+            }
+          });
+          
+          geoJsonLayer.eachLayer((layer) => {
+            if (layer.setStyle) {
+              layer.setStyle({
+                color: '#06b6d4',
+                weight: 2,
+                fillColor: '#06b6d4',
+                fillOpacity: 0.2
+              });
+            }
+            
+            layer._neighbourhoodIndex = index;
+            neighbourhoodDrawRef.current.addLayer(layer);
+          });
+          
+          // Add centroid marker
+          try {
+            const turfFeature = {
+              type: 'Feature',
+              geometry: neighbourhood,
+              properties: {}
+            };
+            
+            const centroid = turf.centroid(turfFeature);
+            const [lon, lat] = centroid.geometry.coordinates;
+            
+            const neighbourhoodName = neighbourhoodNames[index] || `Neighbourhood ${index + 1}`;
+            
+            const centroidMarker = L.marker([lat, lon], {
+              icon: L.divIcon({
+                className: 'custom-marker-icon',
+                html: `<div style="
+                  background-color: #06b6d4;
+                  width: 30px;
+                  height: 30px;
+                  border-radius: 50%;
+                  border: 2px solid white;
+                  box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+                  display: flex;
+                  align-items: center;
+                  justify-content: center;
+                  color: white;
+                  font-size: 12px;
+                  z-index: 1000;
+                ">
+                  <i class="fas fa-map-marked-alt"></i>
+                </div>`,
+                iconSize: [28, 28],
+                iconAnchor: [14, 14]
+              })
+            });
+            
+            const popupContent = createNeighbourhoodPopupContent(index, neighbourhoodName);
+            centroidMarker.bindPopup(popupContent, {
+              closeButton: true,
+              className: 'feature-marker-popup',
+              maxWidth: 400
+            });
+            
+            centroidMarker.on('popupopen', (e) => {
+              const popup = e.popup;
+              const editButton = popup._contentNode?.querySelector('.edit-neighbourhood-name-btn');
+              if (editButton) {
+                editButton.addEventListener('click', (evt) => {
+                  evt.stopPropagation();
+                  const neighbourhoodIndex = parseInt(editButton.dataset.neighbourhoodIndex);
+                  onEditNeighbourhoodName(neighbourhoodIndex);
+                });
+              }
+            });
+            
+            map._neighbourhoodCentroids.addLayer(centroidMarker);
+          } catch (centroidError) {
+            console.error(`Error adding centroid for neighbourhood ${index}:`, centroidError);
+          }
+          
+        } catch (error) {
+          console.error(`Error adding neighbourhood ${index}:`, error);
+        }
+      });
+    }, 300);
+    
+    return () => clearTimeout(timer);
+  }, [neighbourhoods, neighbourhoodNames, createNeighbourhoodPopupContent, neighbourhoodDrawRef, map, onEditNeighbourhoodName]);
+  
+  return null;
+};
+
 const AddCityWizard = ({ editingCity, onComplete, onCancel, dataSource = 'city', processingProgress = {} }) => {
   const [step, setStep] = useState(1);
   const [cityName, setCityName] = useState('');
@@ -256,6 +535,18 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel, dataSource = 'city',
   const [manualLat, setManualLat] = useState('');
   const [manualLon, setManualLon] = useState('');
   const wizardContentRef = useRef(null);
+  const [shouldAddNeighbourhoods, setShouldAddNeighbourhoods] = useState(false);
+  const [neighbourhoods, setNeighbourhoods] = useState([]);
+  const neighbourhoodDrawRef = useRef(null);
+  const neighbourhoodMapRef = useRef(null);
+  const [neighbourhoodError, setNeighbourhoodError] = useState('');
+  const [neighbourhoodNames, setNeighbourhoodNames] = useState([]);
+  const [editingNeighbourhoodName, setEditingNeighbourhoodName] = useState(null);
+  const [neighbourhoodNameInput, setNeighbourhoodNameInput] = useState('');
+  const [neighbourhoodMapKey, setNeighbourhoodMapKey] = useState(0);
+  const [neighbourhoodPropertyColumns, setNeighbourhoodPropertyColumns] = useState([]);
+  const [selectedPropertyColumn, setSelectedPropertyColumn] = useState('');
+  const [neighbourhoodFeatureProperties, setNeighbourhoodFeatureProperties] = useState([]);
 
   useEffect(() => {
     if (wizardContentRef.current) {
@@ -265,6 +556,106 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel, dataSource = 'city',
       });
     }
   }, [step]);
+
+  useEffect(() => {
+    const loadFreshCityData = async () => {
+      if (editingCity) {
+        try {
+          const { getCityDataFresh } = await import('../utils/s3');
+          const parsed = parseCityName(editingCity.name);
+          const freshData = await getCityDataFresh(
+            parsed.country,
+            parsed.province,
+            parsed.city
+          );
+          
+          if (freshData) {
+            if (freshData.boundary) {
+              const parsedBoundary = JSON.parse(freshData.boundary);
+              setBoundary(parsedBoundary);
+              setOriginalBoundary(parsedBoundary);
+            }
+            
+            if (freshData.neighbourhoods) {
+              try {
+                const parsedNeighbourhoods = JSON.parse(freshData.neighbourhoods);
+                // Only set neighbourhoods if they're not null and have data
+                if (parsedNeighbourhoods && parsedNeighbourhoods.length > 0) {
+                  setNeighbourhoods(parsedNeighbourhoods);
+                  setShouldAddNeighbourhoods(true);
+                  
+                  // Load neighbourhood names
+                  if (freshData.neighbourhood_names) {
+                    try {
+                      const parsedNames = JSON.parse(freshData.neighbourhood_names);
+                      setNeighbourhoodNames(parsedNames);
+                    } catch (error) {
+                      console.error('Error parsing neighbourhood names:', error);
+                      setNeighbourhoodNames(
+                        parsedNeighbourhoods.map((_, i) => `Neighbourhood ${i + 1}`)
+                      );
+                    }
+                  } else {
+                    setNeighbourhoodNames(
+                      parsedNeighbourhoods.map((_, i) => `Neighbourhood ${i + 1}`)
+                    );
+                  }
+                } else {
+                  // No neighbourhoods or empty array - keep checkbox unchecked
+                  setNeighbourhoods([]);
+                  setNeighbourhoodNames([]);
+                  setShouldAddNeighbourhoods(false);
+                }
+              } catch (error) {
+                console.error('Error parsing neighbourhoods:', error);
+                setNeighbourhoods([]);
+                setNeighbourhoodNames([]);
+                setShouldAddNeighbourhoods(false);
+              }
+            } else {
+              // No neighbourhoods field - keep checkbox unchecked
+              setNeighbourhoods([]);
+              setNeighbourhoodNames([]);
+              setShouldAddNeighbourhoods(false);
+            }
+          }
+        } catch (error) {
+          console.error('Error loading fresh city data:', error);
+        }
+      }
+    };
+    
+    loadFreshCityData();
+  }, [editingCity, editingCity?.name]);
+
+  useEffect(() => {
+    // Force neighbourhood map to remount when opening edit mode
+    setNeighbourhoodMapKey(prev => prev + 1);
+  }, [editingCity]);
+
+  const handleEditNeighbourhoodName = useCallback((index) => {
+    const currentName = neighbourhoodNames[index] || `Neighbourhood ${index + 1}`;
+    setEditingNeighbourhoodName(index);
+    setNeighbourhoodNameInput(currentName);
+  }, [neighbourhoodNames]);
+
+  // Clear neighbourhoods when checkbox is unchecked
+  useEffect(() => {
+    if (!shouldAddNeighbourhoods && (neighbourhoods.length > 0 || neighbourhoodNames.length > 0)) {
+      setNeighbourhoods([]);
+      setNeighbourhoodNames([]);
+      
+      // Clear the draw layers if they exist
+      if (neighbourhoodDrawRef.current) {
+        neighbourhoodDrawRef.current.clearLayers();
+      }
+      
+      // Clear centroid markers if they exist
+      if (neighbourhoodMapRef.current && neighbourhoodMapRef.current._neighbourhoodCentroids) {
+        neighbourhoodMapRef.current._neighbourhoodCentroids.clearLayers();
+      }
+    }
+  }, [shouldAddNeighbourhoods, neighbourhoods.length, neighbourhoodNames.length]);
 
   // Parse city name parts properly handling 4+ parts
   const parseCityName = (displayName) => {
@@ -296,6 +687,33 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel, dataSource = 'city',
     }
   };
 
+  const extractNeighbourhoodName = (feature, index) => {
+    if (!feature.properties) {
+      return `Neighbourhood ${index + 1}`;
+    }
+    
+    // Search terms to look for in property keys (case-insensitive)
+    const searchTerms = [
+      'name', 'neighbourhood', 'neighborhood', 'area', 'district', 'zone', 'govern'
+    ];
+    
+    // Find any property key that contains one of the search terms
+    for (const key of Object.keys(feature.properties)) {
+      const lowerKey = key.toLowerCase();
+      
+      // Check if this key contains any of our search terms
+      if (searchTerms.some(term => lowerKey.includes(term))) {
+        const value = String(feature.properties[key]).trim();
+        if (value.length > 0) {
+          return value;
+        }
+      }
+    }
+    
+    // Default name if no matching property found
+    return `Neighbourhood ${index + 1}`;
+  };
+
   useEffect(() => {
     if (editingCity) {
       // Existing logic for editing cities remains
@@ -317,15 +735,43 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel, dataSource = 'city',
         setCityName(parsed.city);
         setProvince(parsed.province);
         setCountry(parsed.country);
+        
         if (editingCity.boundary) {
           const parsedBoundary = JSON.parse(editingCity.boundary);
           setBoundary(parsedBoundary);
           setOriginalBoundary(parsedBoundary);
         }
+        
+        if (editingCity.neighbourhoods) {
+          try {
+            const parsedNeighbourhoods = JSON.parse(editingCity.neighbourhoods);
+            if (parsedNeighbourhoods && parsedNeighbourhoods.length > 0) {
+              setNeighbourhoods(parsedNeighbourhoods);
+              setShouldAddNeighbourhoods(true);
+              
+              // Load neighbourhood names...
+            } else {
+              setNeighbourhoods([]);
+              setNeighbourhoodNames([]);
+              setShouldAddNeighbourhoods(false);
+            }
+          } catch (error) {
+            console.error('Error parsing neighbourhoods:', error);
+            setNeighbourhoods([]);
+            setNeighbourhoodNames([]);
+            setShouldAddNeighbourhoods(false);
+          }
+        } else {
+          setNeighbourhoods([]);
+          setNeighbourhoodNames([]);
+          setShouldAddNeighbourhoods(false);
+        }
+        
         setWikiData({
           population: editingCity.population,
           size: editingCity.size
         });
+        
         setSelectedCity({
           display_name: editingCity.name,
           lat: editingCity.latitude,
@@ -337,7 +783,6 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel, dataSource = 'city',
           const hasFeatures = Object.keys(layers).length > 0;
           setHasExistingFeatures(hasFeatures);
           
-          // If no features exist and data source is OSM, default to checked
           if (!hasFeatures && dataSource === 'osm') {
             setShouldProcessFeatures(true);
           }
@@ -345,7 +790,6 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel, dataSource = 'city',
           console.error('Error checking for existing features:', error);
           setHasExistingFeatures(false);
           
-          // If error checking features and data source is OSM, default to checked
           if (dataSource === 'osm') {
             setShouldProcessFeatures(true);
           }
@@ -650,6 +1094,40 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel, dataSource = 'city',
       }
     }
   }, [boundary]);
+
+  const createNeighbourhoodPopupContent = useCallback((index, name) => {
+    return `
+      <div style="font-family: Inter, sans-serif;">
+        <h4 style="margin: 0 0 8px 0; color: #1a202c; font-size: 14px;">
+          ${name}
+        </h4>
+        <p style="margin: 0; color: #64748b; font-size: 12px;">
+          <strong>Neighbourhood ${index + 1}</strong>
+        </p>
+        <button class="edit-neighbourhood-name-btn" data-neighbourhood-index="${index}"
+          style="margin-top: 8px; padding: 4px 8px; background: #0891b2; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px;">
+          <i class="fas fa-edit"></i> Edit Name
+        </button>
+      </div>
+    `;
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      // Clean up map references when component unmounts
+      if (neighbourhoodMapRef.current) {
+        if (neighbourhoodMapRef.current._neighbourhoodCentroids) {
+          neighbourhoodMapRef.current.removeLayer(neighbourhoodMapRef.current._neighbourhoodCentroids);
+          delete neighbourhoodMapRef.current._neighbourhoodCentroids;
+        }
+        if (neighbourhoodMapRef.current._cityBoundaryLayer) {
+          neighbourhoodMapRef.current.removeLayer(neighbourhoodMapRef.current._cityBoundaryLayer);
+          delete neighbourhoodMapRef.current._cityBoundaryLayer;
+        }
+      }
+      neighbourhoodMapRef.current = null;
+    };
+  }, []);
 
   const validateBoundary = (geometry) => {
     if (!geometry || !geometry.coordinates) {
@@ -977,13 +1455,15 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel, dataSource = 'city',
       setUploadError('Error reading GeoJSON file');
       setIsProcessing(false);
     };
-    reader.readAsText(geojsonFile);
+    reader.readAsText(geojsonFile, 'UTF-8');
   };
   
   // Helper function to process Shapefile
   const processShapefile = async (shpBuffer, dbfBuffer, prjWkt) => {
     try {
-      const geojson = await shp.read(shpBuffer, dbfBuffer);
+      const geojson = await shp.read(shpBuffer, dbfBuffer, {
+        encoding: 'utf-8'
+      });
       
       if (!geojson || !geojson.features || geojson.features.length === 0) {
         setUploadError('Shapefile is empty or invalid');
@@ -1092,6 +1572,941 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel, dataSource = 'city',
     }
   };
 
+  useEffect(() => {
+    // When neighbourhood checkbox is toggled on and we have a boundary
+    if (shouldAddNeighbourhoods && boundary) {
+      // Wait a bit for the map to fully initialize
+      const timer = setTimeout(() => {
+        if (neighbourhoodMapRef.current) {
+          const map = neighbourhoodMapRef.current;
+          
+          // Remove existing boundary layer if any
+          if (map._cityBoundaryLayer) {
+            map.removeLayer(map._cityBoundaryLayer);
+          }
+          
+          // Create and add boundary layer
+          const boundaryLayer = L.geoJSON({
+            type: 'Feature',
+            geometry: boundary,
+            properties: {}
+          }, {
+            style: {
+              color: '#0891b2',
+              weight: 2,
+              fillOpacity: 0,
+              dashArray: '5, 5'
+            }
+          });
+          
+          boundaryLayer.addTo(map);
+          map._cityBoundaryLayer = boundaryLayer;
+          
+          // Fit map to boundary
+          const bounds = boundaryLayer.getBounds();
+          if (bounds.isValid()) {
+            map.fitBounds(bounds, { 
+              padding: [50, 50],
+              maxZoom: 15 
+            });
+          }
+        }
+      }, 100); // Small delay to ensure map is ready
+      
+      return () => clearTimeout(timer);
+    }
+  }, [shouldAddNeighbourhoods, boundary]);
+
+  useEffect(() => {
+    // When boundary is deleted, clear all neighbourhoods
+    if (!boundary && neighbourhoods.length > 0) {
+      if (window.confirm('The city boundary has been deleted. All neighbourhoods will be cleared. Continue?')) {
+        setNeighbourhoods([]);
+        if (neighbourhoodDrawRef.current) {
+          neighbourhoodDrawRef.current.clearLayers();
+        }
+      }
+    }
+  }, [boundary, neighbourhoods.length]);
+
+  const handleNeighbourhoodDrawCreated = (e) => {
+    if (!boundary) {
+      setNeighbourhoodError('Please define a city boundary before adding neighbourhoods');
+      const layer = e.layer;
+      if (neighbourhoodDrawRef.current) {
+        neighbourhoodDrawRef.current.removeLayer(layer);
+      }
+      return;
+    }
+    
+    const layer = e.layer;
+    let newGeometry = layer.toGeoJSON().geometry;
+    
+    const validation = validateBoundary(newGeometry);
+    if (!validation.valid) {
+      setNeighbourhoodError(`Invalid neighbourhood: ${validation.error}`);
+      return;
+    }
+
+    // Add to neighbourhoods array and generate default name
+    const newIndex = neighbourhoods.length;
+    const defaultName = `Neighbourhood ${newIndex + 1}`;
+    
+    if (boundary) {
+      try {
+        const neighbourhoodFeature = {
+          type: 'Feature',
+          geometry: newGeometry,
+          properties: {}
+        };
+        
+        const boundaryFeature = {
+          type: 'Feature',
+          geometry: boundary,
+          properties: {}
+        };
+        
+        const intersection = turf.intersect(neighbourhoodFeature, boundaryFeature);
+        
+        if (!intersection) {
+          setNeighbourhoodError('Neighbourhood does not intersect with city boundary');
+          if (neighbourhoodDrawRef.current) {
+            neighbourhoodDrawRef.current.removeLayer(layer);
+          }
+          return;
+        }
+        
+        newGeometry = intersection.geometry;
+        
+        if (neighbourhoodDrawRef.current) {
+          neighbourhoodDrawRef.current.removeLayer(layer);
+          
+          const croppedLayer = L.geoJSON({
+            type: 'Feature',
+            geometry: newGeometry,
+            properties: {}
+          }, {
+            style: {
+              color: '#06b6d4',
+              weight: 2,
+              fillColor: '#06b6d4',
+              fillOpacity: 0.2
+            }
+          });
+          
+          croppedLayer.eachLayer((l) => {
+            neighbourhoodDrawRef.current.addLayer(l);
+          });
+          
+          // Add centroid marker for the new neighbourhood
+          try {
+            const turfFeature = {
+              type: 'Feature',
+              geometry: newGeometry,
+              properties: {}
+            };
+            
+            const centroid = turf.centroid(turfFeature);
+            const [lon, lat] = centroid.geometry.coordinates;
+            
+            const neighbourhoodName = `Neighbourhood ${newIndex + 1}`;
+            
+            const centroidMarker = L.marker([lat, lon], {
+              icon: L.divIcon({
+                className: 'custom-marker-icon',
+                html: `<div style="
+                  background-color: #06b6d4;
+                  width: 30px;
+                  height: 30px;
+                  border-radius: 50%;
+                  border: 2px solid white;
+                  box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+                  display: flex;
+                  align-items: center;
+                  justify-content: center;
+                  color: white;
+                  font-size: 12px;
+                  z-index: 1000;
+                ">
+                  <i class="fas fa-map-marked-alt"></i>
+                </div>`,
+                iconSize: [28, 28],
+                iconAnchor: [14, 14]
+              })
+            });
+            
+            const popupContent = createNeighbourhoodPopupContent(newIndex, neighbourhoodName);
+            centroidMarker.bindPopup(popupContent, {
+              closeButton: true,
+              className: 'feature-marker-popup',
+              maxWidth: 400
+            });
+            
+            if (neighbourhoodMapRef.current && neighbourhoodMapRef.current._neighbourhoodCentroids) {
+              neighbourhoodMapRef.current._neighbourhoodCentroids.addLayer(centroidMarker);
+            }
+          } catch (centroidError) {
+            console.error(`Error adding centroid for new neighbourhood:`, centroidError);
+          }
+        }
+        
+      } catch (error) {
+        console.error('Error cropping neighbourhood:', error);
+        setNeighbourhoodError('Error processing neighbourhood bounds');
+        return;
+      }
+    }
+    
+    setNeighbourhoods(prev => [...prev, newGeometry]);
+    setNeighbourhoodNames(prev => [...prev, defaultName]);
+    setNeighbourhoodError('');
+
+    // Auto-open name editor for the new neighbourhood with prefilled default name
+    setEditingNeighbourhoodName(newIndex);
+    setNeighbourhoodNameInput(defaultName);
+  };
+
+  // Clear neighbourhood error when boundary changes or neighbourhoods section is toggled
+  useEffect(() => {
+    if (!shouldAddNeighbourhoods) {
+      setNeighbourhoodError('');
+    }
+  }, [shouldAddNeighbourhoods]);
+
+  useEffect(() => {
+    setNeighbourhoodError('');
+  }, [boundary]);
+  
+  const handleNeighbourhoodDrawEdited = (e) => {
+    const layers = e.layers;
+    const updatedNeighbourhoods = [];
+    
+    layers.eachLayer((layer) => {
+      const geometry = layer.toGeoJSON().geometry;
+      
+      // Validate boundary
+      const validation = validateBoundary(geometry);
+      if (!validation.valid) {
+        setNeighbourhoodError(`Invalid neighbourhood after edit: ${validation.error}`);
+        return;
+      }
+      
+      // Check if within city boundary
+      if (boundary) {
+        try {
+          const neighbourhoodFeature = {
+            type: 'Feature',
+            geometry: geometry,
+            properties: {}
+          };
+          
+          const boundaryFeature = {
+            type: 'Feature',
+            geometry: boundary,
+            properties: {}
+          };
+          
+          const isWithin = turf.booleanWithin(neighbourhoodFeature, boundaryFeature);
+          
+          if (!isWithin) {
+            setNeighbourhoodError('Neighbourhood must remain within the city boundary');
+            return;
+          }
+        } catch (error) {
+          console.error('Error checking neighbourhood bounds:', error);
+          return;
+        }
+      }
+      
+      updatedNeighbourhoods.push(geometry);
+    });
+    
+    if (updatedNeighbourhoods.length > 0) {
+      setNeighbourhoods(updatedNeighbourhoods);
+      setNeighbourhoodError('');
+    }
+  };
+  
+  const handleNeighbourhoodDrawDeleted = (e) => {
+    const remainingNeighbourhoods = [];
+    const remainingNames = [];
+    
+    if (neighbourhoodDrawRef.current) {
+      neighbourhoodDrawRef.current.eachLayer((layer, index) => {
+        const geometry = layer.toGeoJSON().geometry;
+        remainingNeighbourhoods.push(geometry);
+        // Keep corresponding name
+        if (index < neighbourhoodNames.length) {
+          remainingNames.push(neighbourhoodNames[index]);
+        } else {
+          remainingNames.push(`Neighbourhood ${index + 1}`);
+        }
+      });
+    }
+    
+    setNeighbourhoods(remainingNeighbourhoods);
+    setNeighbourhoodNames(remainingNames);
+    setNeighbourhoodError('');
+  };
+
+  const updateNeighbourhoodName = () => {
+    if (editingNeighbourhoodName === null) return;
+    
+    const updatedNames = [...neighbourhoodNames];
+    updatedNames[editingNeighbourhoodName] = neighbourhoodNameInput;
+    setNeighbourhoodNames(updatedNames);
+    
+    // Force map refresh by triggering re-render
+    if (neighbourhoodMapRef.current && neighbourhoodMapRef.current._neighbourhoodCentroids) {
+      neighbourhoodMapRef.current._neighbourhoodCentroids.clearLayers();
+      
+      neighbourhoods.forEach((neighbourhood, index) => {
+        try {
+          const turfFeature = {
+            type: 'Feature',
+            geometry: neighbourhood,
+            properties: {}
+          };
+          
+          const centroid = turf.centroid(turfFeature);
+          const [lon, lat] = centroid.geometry.coordinates;
+          
+          const neighbourhoodName = updatedNames[index] || `Neighbourhood ${index + 1}`;
+          
+          const centroidMarker = L.marker([lat, lon], {
+            icon: L.divIcon({
+              className: 'custom-marker-icon',
+              html: `<div style="
+                background-color: #06b6d4;
+                width: 30px;
+                height: 30px;
+                border-radius: 50%;
+                border: 2px solid white;
+                box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                color: white;
+                font-size: 12px;
+                z-index: 1000;
+              ">
+                <i class="fas fa-map-marked-alt"></i>
+              </div>`,
+              iconSize: [28, 28],
+              iconAnchor: [14, 14]
+            })
+          });
+          
+          const popupContent = createNeighbourhoodPopupContent(index, neighbourhoodName);
+          centroidMarker.bindPopup(popupContent, {
+            closeButton: true,
+            className: 'feature-marker-popup',
+            maxWidth: 400
+          });
+          
+          neighbourhoodMapRef.current._neighbourhoodCentroids.addLayer(centroidMarker);
+        } catch (error) {
+          console.error(`Error updating centroid for neighbourhood ${index}:`, error);
+        }
+      });
+    }
+    
+    setEditingNeighbourhoodName(null);
+    setNeighbourhoodNameInput('');
+  };
+
+  const handleNeighbourhoodFileUpload = async (e) => {
+    const files = Array.from(e.target.files);
+    if (!files || files.length === 0) return;
+  
+    setNeighbourhoodError('');
+    setIsProcessing(true);
+  
+    try {
+      const zipFile = files.find(f => f.name.toLowerCase().endsWith('.zip'));
+      
+      if (zipFile) {
+        try {
+          const zip = await JSZip.loadAsync(zipFile);
+          
+          let shpBuffer = null;
+          let dbfBuffer = null;
+          let prjWkt = null;
+          
+          for (const [filename, zipEntry] of Object.entries(zip.files)) {
+            if (zipEntry.dir) continue;
+            
+            const lowerName = filename.toLowerCase();
+            
+            if (lowerName.endsWith('.shp')) {
+              shpBuffer = await zipEntry.async('arraybuffer');
+            } else if (lowerName.endsWith('.dbf')) {
+              dbfBuffer = await zipEntry.async('arraybuffer');
+            } else if (lowerName.endsWith('.prj')) {
+              prjWkt = await zipEntry.async('text');
+            }
+          }
+          
+          if (!shpBuffer) {
+            setNeighbourhoodError('ZIP file must contain a .shp file');
+            setIsProcessing(false);
+            return;
+          }
+          
+          if (!prjWkt) {
+            console.warn('No PRJ file found in ZIP - will assume WGS 1984 UTM Zone 19S (EPSG:32719)');
+          }
+          
+          await processNeighbourhoodShapefile(shpBuffer, dbfBuffer, prjWkt);
+          
+        } catch (zipError) {
+          console.error('Error processing ZIP file:', zipError);
+          setNeighbourhoodError(`Error processing ZIP file: ${zipError.message}`);
+          setIsProcessing(false);
+          return;
+        }
+      } else {
+        const geojsonFile = files.find(f => {
+          const name = f.name.toLowerCase();
+          return name.endsWith('.geojson') || name.endsWith('.json');
+        });
+        
+        const shpFile = files.find(f => f.name.toLowerCase().endsWith('.shp'));
+  
+        if (geojsonFile) {
+          await processNeighbourhoodGeoJSONFile(geojsonFile);
+        } else if (shpFile) {
+          const shpBuffer = await shpFile.arrayBuffer();
+          
+          let dbfBuffer = null;
+          const dbfFile = files.find(f => f.name.toLowerCase().endsWith('.dbf'));
+          if (dbfFile) {
+            dbfBuffer = await dbfFile.arrayBuffer();
+          }
+      
+          let prjWkt = null;
+          const prjFile = files.find(f => f.name.toLowerCase().endsWith('.prj'));
+          if (prjFile) {
+            prjWkt = await prjFile.text();
+          } else {
+            console.warn('No PRJ file found - will assume WGS 1984 UTM Zone 19S (EPSG:32719)');
+          }
+          
+          await processNeighbourhoodShapefile(shpBuffer, dbfBuffer, prjWkt);
+        } else {
+          const fileExtensions = files.map(f => f.name.toLowerCase().split('.').pop());
+          
+          if (fileExtensions.some(ext => ['shx', 'dbf', 'prj', 'cpg', 'qmd'].includes(ext))) {
+            setNeighbourhoodError(
+              'You selected Shapefile component files. Please also select the .shp file ' +
+              '(you can select multiple files at once) or upload them all in a .zip file.'
+            );
+          } else {
+            const uploadedExt = fileExtensions[0];
+            setNeighbourhoodError(
+              `Unsupported file format: .${uploadedExt}. ` +
+              'Please upload a GeoJSON (.geojson, .json), Shapefile (.shp with optional .dbf, .shx files), or ZIP file containing shapefiles.'
+            );
+          }
+          setIsProcessing(false);
+        }
+      }
+    } catch (error) {
+      console.error('Error processing neighbourhood file:', error);
+      setNeighbourhoodError(`Error processing file: ${error.message}`);
+      setIsProcessing(false);
+    }
+  
+    e.target.value = '';
+  };
+  
+  const processNeighbourhoodGeoJSONFile = async (geojsonFile) => {
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const geojson = JSON.parse(event.target.result);
+        let geometries = [];
+        let crsInfo = null;
+  
+        if (geojson.crs && geojson.crs.properties && geojson.crs.properties.name) {
+          const crsName = geojson.crs.properties.name;
+          if (crsName.includes('EPSG')) {
+            const epsgMatch = crsName.match(/EPSG[:\s]+(\d+)/i);
+            if (epsgMatch) {
+              crsInfo = `EPSG:${epsgMatch[1]}`;
+            }
+          }
+        }
+  
+        if (geojson.type === 'FeatureCollection') {
+          if (!geojson.features || geojson.features.length === 0) {
+            setNeighbourhoodError('FeatureCollection is empty');
+            setIsProcessing(false);
+            return;
+          }
+          geometries = geojson.features
+            .map(f => f.geometry)
+            .filter(g => ['Polygon', 'MultiPolygon'].includes(g.type));
+          
+          if (geometries.length === 0) {
+            setNeighbourhoodError('No Polygon or MultiPolygon geometries found in FeatureCollection');
+            setIsProcessing(false);
+            return;
+          }
+        } 
+        else if (geojson.type === 'Feature') {
+          if (!['Polygon', 'MultiPolygon'].includes(geojson.geometry.type)) {
+            setNeighbourhoodError('Feature must contain Polygon or MultiPolygon geometry');
+            setIsProcessing(false);
+            return;
+          }
+          geometries = [geojson.geometry];
+        } 
+        else if (['Polygon', 'MultiPolygon'].includes(geojson.type)) {
+          geometries = [geojson];
+        } else {
+          setNeighbourhoodError('Please upload a valid Polygon or MultiPolygon GeoJSON');
+          setIsProcessing(false);
+          return;
+        }
+  
+        // Validate each geometry
+        for (let i = 0; i < geometries.length; i++) {
+          if (!geometries[i].coordinates || geometries[i].coordinates.length === 0) {
+            setNeighbourhoodError(`Geometry ${i + 1} has invalid or empty coordinates`);
+            setIsProcessing(false);
+            return;
+          }
+  
+          const validation = validateBoundary(geometries[i]);
+          if (!validation.valid) {
+            setNeighbourhoodError(`Geometry ${i + 1}: ${validation.error}`);
+            setIsProcessing(false);
+            return;
+          }
+        }
+  
+        // Reproject if needed
+        if (crsInfo && crsInfo !== 'EPSG:4326') {
+          try {
+            geometries = geometries.map(geom => 
+              reprojectGeometry(geom, null, crsInfo)
+            );
+          } catch (reprojError) {
+            console.error('Reprojection error:', reprojError);
+            setNeighbourhoodError(`Error reprojecting coordinates: ${reprojError.message}`);
+            setIsProcessing(false);
+            return;
+          }
+        }
+  
+        // Strip Z coordinates and flatten MultiPolygons
+        const flattenedNeighbourhoods = [];
+        for (const geom of geometries) {
+          const stripped = stripZCoordinates(geom);
+          
+          if (stripped.type === 'Polygon') {
+            flattenedNeighbourhoods.push(stripped);
+          } else if (stripped.type === 'MultiPolygon') {
+            for (const polygonCoords of stripped.coordinates) {
+              flattenedNeighbourhoods.push({
+                type: 'Polygon',
+                coordinates: polygonCoords
+              });
+            }
+          }
+        }
+  
+        // Crop all neighbourhoods by boundary
+        const croppedNeighbourhoods = [];
+        if (boundary) {
+          const boundaryFeature = {
+            type: 'Feature',
+            geometry: boundary,
+            properties: {}
+          };
+  
+          for (let i = 0; i < flattenedNeighbourhoods.length; i++) {
+            const neighbourhoodFeature = {
+              type: 'Feature',
+              geometry: flattenedNeighbourhoods[i],
+              properties: {}
+            };
+  
+            try {
+              // Check if neighbourhood intersects with boundary
+              const intersects = turf.booleanIntersects(neighbourhoodFeature, boundaryFeature);
+              
+              if (!intersects) {
+                console.warn(`Neighbourhood ${i + 1} does not intersect with boundary, skipping`);
+                continue;
+              }
+              
+              // Check if fully within boundary
+              const isFullyWithin = turf.booleanWithin(neighbourhoodFeature, boundaryFeature);
+              
+              if (isFullyWithin) {
+                // Fully inside - keep as is
+                croppedNeighbourhoods.push(flattenedNeighbourhoods[i]);
+              } else {
+                // Partially inside - crop it using turf.intersect
+                const intersection = turf.intersect(neighbourhoodFeature, boundaryFeature);
+                
+                if (intersection) {
+                  // Handle both Polygon and MultiPolygon results from intersection
+                  if (intersection.geometry.type === 'Polygon') {
+                    croppedNeighbourhoods.push(intersection.geometry);
+                  } else if (intersection.geometry.type === 'MultiPolygon') {
+                    // Split MultiPolygon into individual Polygons
+                    for (const polygonCoords of intersection.geometry.coordinates) {
+                      croppedNeighbourhoods.push({
+                        type: 'Polygon',
+                        coordinates: polygonCoords
+                      });
+                    }
+                  }
+                } else {
+                  console.warn(`Neighbourhood ${i + 1} intersection returned null, skipping`);
+                }
+              }
+            } catch (error) {
+              console.error(`Error processing neighbourhood ${i + 1}:`, error);
+              // On error, try to keep the original if it intersects
+              try {
+                const intersects = turf.booleanIntersects(neighbourhoodFeature, boundaryFeature);
+                if (intersects) {
+                  croppedNeighbourhoods.push(flattenedNeighbourhoods[i]);
+                }
+              } catch (fallbackError) {
+                console.error(`Fallback check also failed for neighbourhood ${i + 1}`);
+              }
+            }
+          }
+          
+          if (croppedNeighbourhoods.length === 0) {
+            setNeighbourhoodError('No neighbourhoods intersect with the city boundary');
+            setIsProcessing(false);
+            return;
+          }
+        } else {
+          // No boundary to crop by, use as-is
+          croppedNeighbourhoods.push(...flattenedNeighbourhoods);
+        }
+        
+        setNeighbourhoods(croppedNeighbourhoods);
+        
+        const extractedNames = croppedNeighbourhoods.map((_, index) => {
+          let matchedFeature = null;
+          
+          if (geojson.type === 'FeatureCollection') {
+            if (index < geojson.features.length) {
+              matchedFeature = geojson.features[index];
+            }
+          }
+          
+          return extractNeighbourhoodName(matchedFeature || {}, index);
+        });
+        setNeighbourhoodNames(extractedNames);
+
+        if (geojson.type === 'FeatureCollection' && geojson.features.length > 0) {
+          const allColumns = new Set();
+          const featureProps = [];
+          
+          geojson.features.forEach((feature) => {
+            if (feature.properties) {
+              Object.keys(feature.properties).forEach(key => allColumns.add(key));
+              featureProps.push(feature.properties);
+            } else {
+              featureProps.push({});
+            }
+          });
+          
+          setNeighbourhoodPropertyColumns(Array.from(allColumns).sort());
+          setNeighbourhoodFeatureProperties(featureProps);
+        } else {
+          setNeighbourhoodPropertyColumns([]);
+          setNeighbourhoodFeatureProperties([]);
+        }
+        
+        if (neighbourhoodDrawRef.current) {
+          neighbourhoodDrawRef.current.clearLayers();
+        }
+        
+        setIsProcessing(false);
+      } catch (error) {
+        console.error('Error parsing GeoJSON:', error);
+        setNeighbourhoodError('Invalid GeoJSON file. Please check the format.');
+        setIsProcessing(false);
+      }
+    };
+    reader.onerror = () => {
+      setNeighbourhoodError('Error reading GeoJSON file');
+      setIsProcessing(false);
+    };
+    reader.readAsText(geojsonFile, 'UTF-8');
+  };
+
+  const processNeighbourhoodShapefile = async (shpBuffer, dbfBuffer, prjWkt) => {
+    try {
+      const geojson = await shp.read(shpBuffer, dbfBuffer, {
+        encoding: 'utf-8'
+      });
+      
+      if (!geojson || !geojson.features || geojson.features.length === 0) {
+        setNeighbourhoodError('Shapefile is empty or invalid');
+        setIsProcessing(false);
+        return;
+      }
+  
+      let geometries = geojson.features
+        .map(f => f.geometry)
+        .filter(g => ['Polygon', 'MultiPolygon'].includes(g.type));
+      
+      if (geometries.length === 0) {
+        setNeighbourhoodError('Shapefile must contain at least one Polygon or MultiPolygon geometry');
+        setIsProcessing(false);
+        return;
+      }
+  
+      // Validate each geometry
+      for (let i = 0; i < geometries.length; i++) {
+        if (!geometries[i].coordinates || geometries[i].coordinates.length === 0) {
+          setNeighbourhoodError(`Geometry ${i + 1} has invalid or empty coordinates`);
+          setIsProcessing(false);
+          return;
+        }
+  
+        const validation = validateBoundary(geometries[i]);
+        if (!validation.valid) {
+          setNeighbourhoodError(`Geometry ${i + 1}: ${validation.error}`);
+          setIsProcessing(false);
+          return;
+        }
+      }
+      
+      // Reproject all geometries
+      try {
+        geometries = geometries.map(geom => 
+          reprojectGeometry(geom, prjWkt, null)
+        );
+      } catch (reprojError) {
+        console.error('Reprojection error:', reprojError);
+        setNeighbourhoodError(`Error reprojecting coordinates: ${reprojError.message}`);
+        setIsProcessing(false);
+        return;
+      }
+  
+      // Strip Z coordinates and flatten MultiPolygons
+      const flattenedNeighbourhoods = [];
+      for (const geom of geometries) {
+        const stripped = stripZCoordinates(geom);
+        
+        if (stripped.type === 'Polygon') {
+          flattenedNeighbourhoods.push(stripped);
+        } else if (stripped.type === 'MultiPolygon') {
+          for (const polygonCoords of stripped.coordinates) {
+            flattenedNeighbourhoods.push({
+              type: 'Polygon',
+              coordinates: polygonCoords
+            });
+          }
+        }
+      }
+  
+      // Crop all neighbourhoods by boundary
+      const croppedNeighbourhoods = [];
+      if (boundary) {
+        const boundaryFeature = {
+          type: 'Feature',
+          geometry: boundary,
+          properties: {}
+        };
+  
+        for (let i = 0; i < flattenedNeighbourhoods.length; i++) {
+          const neighbourhoodFeature = {
+            type: 'Feature',
+            geometry: flattenedNeighbourhoods[i],
+            properties: {}
+          };
+  
+          try {
+            // Check if neighbourhood intersects with boundary
+            const intersects = turf.booleanIntersects(neighbourhoodFeature, boundaryFeature);
+            
+            if (!intersects) {
+              console.warn(`Neighbourhood ${i + 1} does not intersect with boundary, skipping`);
+              continue;
+            }
+            
+            // Check if fully within boundary
+            const isFullyWithin = turf.booleanWithin(neighbourhoodFeature, boundaryFeature);
+            
+            if (isFullyWithin) {
+              // Fully inside - keep as is
+              croppedNeighbourhoods.push(flattenedNeighbourhoods[i]);
+            } else {
+              // Partially inside - crop it using turf.intersect
+              const intersection = turf.intersect(neighbourhoodFeature, boundaryFeature);
+              
+              if (intersection) {
+                // Handle both Polygon and MultiPolygon results from intersection
+                if (intersection.geometry.type === 'Polygon') {
+                  croppedNeighbourhoods.push(intersection.geometry);
+                } else if (intersection.geometry.type === 'MultiPolygon') {
+                  // Split MultiPolygon into individual Polygons
+                  for (const polygonCoords of intersection.geometry.coordinates) {
+                    croppedNeighbourhoods.push({
+                      type: 'Polygon',
+                      coordinates: polygonCoords
+                    });
+                  }
+                }
+              } else {
+                console.warn(`Neighbourhood ${i + 1} intersection returned null, skipping`);
+              }
+            }
+          } catch (error) {
+            console.error(`Error processing neighbourhood ${i + 1}:`, error);
+            // On error, try to keep the original if it intersects
+            try {
+              const intersects = turf.booleanIntersects(neighbourhoodFeature, boundaryFeature);
+              if (intersects) {
+                croppedNeighbourhoods.push(flattenedNeighbourhoods[i]);
+              }
+            } catch (fallbackError) {
+              console.error(`Fallback check also failed for neighbourhood ${i + 1}`);
+            }
+          }
+        }
+        
+        if (croppedNeighbourhoods.length === 0) {
+          setNeighbourhoodError('No neighbourhoods intersect with the city boundary');
+          setIsProcessing(false);
+          return;
+        }
+      } else {
+        // No boundary to crop by, use as-is
+        croppedNeighbourhoods.push(...flattenedNeighbourhoods);
+      }
+  
+      setNeighbourhoods(croppedNeighbourhoods);
+
+      const extractedNames = croppedNeighbourhoods.map((geom, index) => {
+        // Try to find original feature with matching geometry to extract properties
+        let matchedFeature = null;
+        
+        if (geojson.features && index < geojson.features.length) {
+          matchedFeature = geojson.features[index];
+        }
+        
+        return extractNeighbourhoodName(matchedFeature || { geometry: geom }, index);
+      });
+      setNeighbourhoodNames(extractedNames);
+
+      if (geojson.type === 'FeatureCollection' && geojson.features.length > 0) {
+        const allColumns = new Set();
+        const featureProps = [];
+        
+        geojson.features.forEach((feature) => {
+          if (feature.properties) {
+            Object.keys(feature.properties).forEach(key => allColumns.add(key));
+            featureProps.push(feature.properties);
+          } else {
+            featureProps.push({});
+          }
+        });
+        
+        setNeighbourhoodPropertyColumns(Array.from(allColumns).sort());
+        setNeighbourhoodFeatureProperties(featureProps);
+      } else {
+        setNeighbourhoodPropertyColumns([]);
+        setNeighbourhoodFeatureProperties([]);
+      }
+      
+      if (neighbourhoodDrawRef.current) {
+        neighbourhoodDrawRef.current.clearLayers();
+      }
+
+      setIsProcessing(false);
+    } catch (error) {
+      console.error('Error parsing Shapefile:', error);
+      setNeighbourhoodError(`Error parsing Shapefile: ${error.message}. Please ensure the file is valid.`);
+      setIsProcessing(false);
+    }
+  };
+
+  const handleRenameAllNeighbourhoods = () => {
+    if (!selectedPropertyColumn || neighbourhoodFeatureProperties.length === 0) {
+      return;
+    }
+  
+    const newNames = neighbourhoodFeatureProperties.map((props, index) => {
+      if (props && props[selectedPropertyColumn]) {
+        return String(props[selectedPropertyColumn]).trim();
+      }
+      return `Neighbourhood ${index + 1}`;
+    });
+  
+    setNeighbourhoodNames(newNames);
+    
+    // Update the map markers with new names
+    if (neighbourhoodMapRef.current && neighbourhoodMapRef.current._neighbourhoodCentroids) {
+      neighbourhoodMapRef.current._neighbourhoodCentroids.clearLayers();
+      
+      neighbourhoods.forEach((neighbourhood, index) => {
+        try {
+          const turfFeature = {
+            type: 'Feature',
+            geometry: neighbourhood,
+            properties: {}
+          };
+          
+          const centroid = turf.centroid(turfFeature);
+          const [lon, lat] = centroid.geometry.coordinates;
+          
+          const neighbourhoodName = newNames[index] || `Neighbourhood ${index + 1}`;
+          
+          const centroidMarker = L.marker([lat, lon], {
+            icon: L.divIcon({
+              className: 'custom-marker-icon',
+              html: `<div style="
+                background-color: #06b6d4;
+                width: 30px;
+                height: 30px;
+                border-radius: 50%;
+                border: 2px solid white;
+                box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                color: white;
+                font-size: 12px;
+                z-index: 1000;
+              ">
+                <i class="fas fa-map-marked-alt"></i>
+              </div>`,
+              iconSize: [28, 28],
+              iconAnchor: [14, 14]
+            })
+          });
+          
+          const popupContent = createNeighbourhoodPopupContent(index, neighbourhoodName);
+          centroidMarker.bindPopup(popupContent, {
+            closeButton: true,
+            className: 'feature-marker-popup',
+            maxWidth: 400
+          });
+          
+          neighbourhoodMapRef.current._neighbourhoodCentroids.addLayer(centroidMarker);
+        } catch (error) {
+          console.error(`Error updating centroid for neighbourhood ${index}:`, error);
+        }
+      });
+    }
+    
+    alert(`Successfully renamed ${newNames.length} neighbourhood(s) using property "${selectedPropertyColumn}"`);
+  };
+
   const handleSubmit = async () => {
     if (!cityName.trim() || !country.trim() || !boundary) {
       alert('Please complete all required fields: City name, Country, and Boundary');
@@ -1191,7 +2606,9 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel, dataSource = 'city',
         boundary: JSON.stringify(boundary),
         population: populationValue,
         size: sizeValue,
-        sdg_region: sdgRegion
+        sdg_region: sdgRegion,
+        neighbourhoods: shouldAddNeighbourhoods && neighbourhoods.length > 0 ? JSON.stringify(neighbourhoods) : null,
+        neighbourhood_names: shouldAddNeighbourhoods && neighbourhoodNames.length > 0 ? JSON.stringify(neighbourhoodNames) : null
       };
 
       if (editingCity) {
@@ -1801,8 +3218,7 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel, dataSource = 'city',
               </div>
             </div>
             <div className="map-container-wizard">
-              <MapContainer
-                ref={mapRef}
+            <MapContainer
                 center={mapCenter}
                 zoom={selectedCity ? 12 : 2}
                 style={{ height: '400px', width: '100%' }}
@@ -1817,30 +3233,30 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel, dataSource = 'city',
                   onBoundaryLoad={handleBoundaryLoad}
                 />
                 <FeatureGroup ref={drawRef}>
-                <EditControl
-                  position="topright"
-                  onCreated={handleDrawCreated}
-                  onEdited={handleDrawEdited}
-                  onDeleted={handleDrawDeleted}
-                  draw={{
-                    rectangle: false,
-                    circle: false,
-                    circlemarker: false,
-                    marker: false,
-                    polyline: false,
-                    polygon: {
-                      allowIntersection: false,
-                      drawError: {
-                        color: '#e74c3c',
-                        message: 'Overlapping polygons are not allowed'
+                  <EditControl
+                    position="topright"
+                    onCreated={handleDrawCreated}
+                    onEdited={handleDrawEdited}
+                    onDeleted={handleDrawDeleted}
+                    draw={{
+                      rectangle: false,
+                      circle: false,
+                      circlemarker: false,
+                      marker: false,
+                      polyline: false,
+                      polygon: {
+                        allowIntersection: false,
+                        drawError: {
+                          color: '#e74c3c',
+                          message: 'Overlapping polygons are not allowed'
+                        }
                       }
-                    }
-                  }}
-                  edit={{
-                    remove: true,
-                    edit: true
-                  }}
-                />
+                    }}
+                    edit={{
+                      remove: true,
+                      edit: true
+                    }}
+                  />
                 </FeatureGroup>
               </MapContainer>
             </div>
@@ -1879,6 +3295,289 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel, dataSource = 'city',
                 </a>
               </div>
             )}
+
+            {/* Neighbourhoods section */}
+            <div style={{ 
+              marginTop: '30px', 
+              paddingTop: '20px', 
+              borderTop: '2px solid #e5e7eb'
+            }}>
+              <div style={{ 
+                display: 'flex',
+                alignItems: 'center',
+                gap: '10px',
+                marginBottom: '20px'
+              }}>
+                <input
+                  type="checkbox"
+                  id="add-neighbourhoods"
+                  checked={shouldAddNeighbourhoods}
+                  onChange={(e) => setShouldAddNeighbourhoods(e.target.checked)}
+                  style={{ 
+                    cursor: 'pointer',
+                    width: '18px',
+                    height: '18px'
+                  }}
+                />
+                <label 
+                  htmlFor="add-neighbourhoods" 
+                  style={{ 
+                    fontSize: '16px', 
+                    fontWeight: '600',
+                    color: '#374151',
+                    cursor: 'pointer',
+                    margin: 0
+                  }}
+                >
+                  Add Neighbourhoods
+                </label>
+              </div>
+
+              {shouldAddNeighbourhoods && (
+                <>
+                  <div className="boundary-controls">
+                    <label className="upload-btn">
+                      <i className="fas fa-upload"></i>
+                      Upload Neighbourhoods
+                      <input
+                        type="file"
+                        accept=".geojson,.json,.shp,.shx,.dbf,.prj,.zip"
+                        onChange={handleNeighbourhoodFileUpload}
+                        multiple
+                        style={{ display: 'none' }}
+                      />
+                    </label>
+                    <span className="or-text">or draw on map below</span>
+                  </div>
+                  
+                  {/* Unified error/warning message display */}
+                  {(!boundary || neighbourhoodError) && (
+                    <div style={{
+                      padding: '12px',
+                      marginTop: '12px',
+                      marginBottom: '12px',
+                      backgroundColor: neighbourhoodError ? '#fee2e2' : '#fef3c7',
+                      border: `1px solid ${neighbourhoodError ? '#fca5a5' : '#fbbf24'}`,
+                      borderRadius: '6px',
+                      fontSize: '14px',
+                      color: neighbourhoodError ? '#991b1b' : '#92400e',
+                      display: 'flex',
+                      alignItems: 'flex-start',
+                      gap: '8px'
+                    }}>
+                      <i className={`fas ${neighbourhoodError ? 'fa-exclamation-circle' : 'fa-exclamation-triangle'}`} 
+                        style={{ marginTop: '2px', flexShrink: 0 }}></i>
+                      <span>
+                        {neighbourhoodError || 'No city boundary defined. Please define a city boundary first before adding neighbourhoods.'}
+                      </span>
+                      {neighbourhoodError && (
+                        <button
+                          onClick={() => setNeighbourhoodError('')}
+                          style={{
+                            marginLeft: 'auto',
+                            background: 'none',
+                            border: 'none',
+                            color: '#991b1b',
+                            cursor: 'pointer',
+                            padding: '0 4px',
+                            fontSize: '16px',
+                            flexShrink: 0
+                          }}
+                          title="Dismiss"
+                        >
+                          <i className="fas fa-times"></i>
+                        </button>
+                      )}
+                    </div>
+                  )}
+
+                  {neighbourhoods.length > 0 && neighbourhoodPropertyColumns.length > 0 && (
+                    <div style={{
+                      marginTop: '15px',
+                      padding: '15px',
+                      backgroundColor: '#f8fafc',
+                      borderRadius: '8px',
+                      border: '1px solid #e2e8f0'
+                    }}>
+                      <div style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '12px',
+                        flexWrap: 'wrap'
+                      }}>
+                        <label style={{
+                          fontSize: '14px',
+                          fontWeight: '600',
+                          color: '#374151',
+                          minWidth: 'fit-content'
+                        }}>
+                          Name Property:
+                        </label>
+                        <select
+                          value={selectedPropertyColumn}
+                          onChange={(e) => setSelectedPropertyColumn(e.target.value)}
+                          style={{
+                            padding: '8px 12px',
+                            border: '2px solid #e2e8f0',
+                            borderRadius: '6px',
+                            fontSize: '14px',
+                            color: '#374151',
+                            backgroundColor: 'white',
+                            cursor: 'pointer',
+                            flex: '1',
+                            minWidth: '200px',
+                            transition: 'all 0.2s'
+                          }}
+                          onFocus={(e) => {
+                            e.target.style.borderColor = '#0891b2';
+                            e.target.style.boxShadow = '0 0 0 3px rgba(8, 145, 178, 0.1)';
+                          }}
+                          onBlur={(e) => {
+                            e.target.style.borderColor = '#e2e8f0';
+                            e.target.style.boxShadow = 'none';
+                          }}
+                        >
+                          <option value="">Select a property column...</option>
+                          <option value="__default__">Create Default Names</option>
+                          <optgroup label="File Properties">
+                            {neighbourhoodPropertyColumns.map((col) => (
+                              <option key={col} value={col}>{col}</option>
+                            ))}
+                          </optgroup>
+                        </select>
+                        <button
+                          onClick={handleRenameAllNeighbourhoods}
+                          disabled={!selectedPropertyColumn}
+                          style={{
+                            padding: '8px 16px',
+                            background: selectedPropertyColumn 
+                              ? 'linear-gradient(135deg, #0891b2 0%, #06b6d4 100%)' 
+                              : '#e2e8f0',
+                            color: selectedPropertyColumn ? 'white' : '#94a3b8',
+                            border: 'none',
+                            borderRadius: '6px',
+                            cursor: selectedPropertyColumn ? 'pointer' : 'not-allowed',
+                            fontSize: '14px',
+                            fontWeight: '600',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                            transition: 'all 0.2s',
+                            whiteSpace: 'nowrap'
+                          }}
+                          onMouseOver={(e) => {
+                            if (selectedPropertyColumn) {
+                              e.currentTarget.style.background = 'linear-gradient(135deg, #0e7490 0%, #0891b2 100%)';
+                              e.currentTarget.style.transform = 'translateY(-1px)';
+                            }
+                          }}
+                          onMouseOut={(e) => {
+                            if (selectedPropertyColumn) {
+                              e.currentTarget.style.background = 'linear-gradient(135deg, #0891b2 0%, #06b6d4 100%)';
+                              e.currentTarget.style.transform = 'translateY(0)';
+                            }
+                          }}
+                        >
+                          <i className="fas fa-magic"></i>
+                          Apply Names
+                        </button>
+                      </div>
+                      <div style={{
+                        fontSize: '12px',
+                        color: '#64748b',
+                        marginTop: '8px'
+                      }}>
+                        <i className="fas fa-info-circle"></i> {selectedPropertyColumn === '__default__' 
+                          ? 'Create sequential default names for all neighbourhoods'
+                          : 'Select a property from your uploaded file to automatically name all neighbourhoods'}
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="map-container-wizard" style={{ marginTop: '15px' }}>
+                    <MapContainer
+                      key={`neighbourhood-map-${neighbourhoodMapKey}`}
+                      center={mapCenter}
+                      zoom={selectedCity ? 12 : 2}
+                      style={{ height: '400px', width: '100%' }}
+                    >
+                      <TileLayer
+                        url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                        attribution='&copy; OpenStreetMap contributors'
+                      />
+                      <NeighbourhoodMapSync 
+                        mapRef={neighbourhoodMapRef} 
+                        boundary={boundary}
+                        neighbourhoods={neighbourhoods}
+                        neighbourhoodDrawRef={neighbourhoodDrawRef}
+                        neighbourhoodNames={neighbourhoodNames}
+                        createNeighbourhoodPopupContent={createNeighbourhoodPopupContent}
+                        onEditNeighbourhoodName={handleEditNeighbourhoodName}
+                      />
+                      <MapController
+                        center={mapCenter}
+                        boundary={boundary}
+                      />
+                      <BoundaryLayer boundary={boundary} />
+                      
+                      <FeatureGroup ref={neighbourhoodDrawRef}>
+                        <EditControl
+                          position="topright"
+                          onCreated={handleNeighbourhoodDrawCreated}
+                          onEdited={handleNeighbourhoodDrawEdited}
+                          onDeleted={handleNeighbourhoodDrawDeleted}
+                          draw={{
+                            rectangle: false,
+                            circle: false,
+                            circlemarker: false,
+                            marker: false,
+                            polyline: false,
+                            polygon: {
+                              allowIntersection: false,
+                              drawError: {
+                                color: '#e74c3c',
+                                message: 'Overlapping polygons are not allowed'
+                              },
+                              shapeOptions: {
+                                color: '#06b6d4',
+                                weight: 2,
+                                fillColor: '#06b6d4',
+                                fillOpacity: 0.2
+                              }
+                            }
+                          }}
+                          edit={{
+                            remove: true,
+                            edit: true
+                          }}
+                        />
+                      </FeatureGroup>
+                    </MapContainer>
+                  </div>
+                  
+                  {neighbourhoods.length > 0 && (
+                    <div style={{ 
+                      marginTop: '10px',
+                      padding: '10px',
+                      backgroundColor: '#f0f9ff',
+                      borderRadius: '6px',
+                      fontSize: '14px',
+                      color: '#0c4a6e'
+                    }}>
+                      <i className="fas fa-check-circle"></i> {neighbourhoods.length} neighbourhood{neighbourhoods.length !== 1 ? 's' : ''} defined
+                      <div style={{ 
+                        fontSize: '12px', 
+                        color: '#0369a1', 
+                        marginTop: '4px',
+                        fontStyle: 'italic'
+                      }}>
+                        Click on neighbourhood markers on the map to edit names
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
             
             {/* Feature processing checkbox */}
             <div style={{ 
@@ -2014,6 +3713,128 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel, dataSource = 'city',
           )}
         </div>
       </div>
+
+      {editingNeighbourhoodName !== null && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: 'rgba(0, 0, 0, 0.5)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 10001
+        }}>
+          <div style={{
+            background: 'white',
+            padding: '20px',
+            borderRadius: '8px',
+            boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)',
+            minWidth: '300px',
+            maxWidth: '90vw'
+          }}>
+            <h4 style={{
+              margin: '0 0 12px',
+              fontSize: '16px',
+              fontWeight: '600',
+              color: '#1a202c'
+            }}>
+              Edit Neighbourhood Name
+            </h4>
+            <input
+              type="text"
+              value={neighbourhoodNameInput}
+              onChange={(e) => setNeighbourhoodNameInput(e.target.value)}
+              placeholder="Enter neighbourhood name"
+              autoFocus
+              style={{
+                width: '100%',
+                padding: '12px 16px',
+                marginBottom: '12px',
+                border: '2px solid #e2e8f0',
+                borderRadius: '8px',
+                fontSize: '14px',
+                transition: 'all 0.2s',
+                boxSizing: 'border-box',
+                fontFamily: 'Inter, system-ui, -apple-system, sans-serif'
+              }}
+              onFocus={(e) => {
+                e.target.style.borderColor = '#0891b2';
+                e.target.style.boxShadow = '0 0 0 3px rgba(8, 145, 178, 0.1)';
+              }}
+              onBlur={(e) => {
+                e.target.style.borderColor = '#e2e8f0';
+                e.target.style.boxShadow = 'none';
+              }}
+              onKeyPress={(e) => {
+                if (e.key === 'Enter') {
+                  updateNeighbourhoodName();
+                }
+              }}
+            />
+            <div style={{
+              display: 'flex',
+              gap: '8px',
+              justifyContent: 'flex-end'
+            }}>
+              <button
+                onClick={() => {
+                  setEditingNeighbourhoodName(null);
+                  setNeighbourhoodNameInput('');
+                }}
+                style={{
+                  padding: '10px 20px',
+                  background: 'white',
+                  color: '#64748b',
+                  border: '2px solid #e2e8f0',
+                  borderRadius: '8px',
+                  cursor: 'pointer',
+                  fontWeight: '600',
+                  fontSize: '14px',
+                  transition: 'all 0.2s'
+                }}
+                onMouseOver={(e) => {
+                  e.currentTarget.style.background = '#f8fafc';
+                  e.currentTarget.style.borderColor = '#cbd5e1';
+                }}
+                onMouseOut={(e) => {
+                  e.currentTarget.style.background = 'white';
+                  e.currentTarget.style.borderColor = '#e2e8f0';
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={updateNeighbourhoodName}
+                style={{
+                  padding: '10px 20px',
+                  background: 'linear-gradient(135deg, #0891b2 0%, #06b6d4 100%)',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '8px',
+                  cursor: 'pointer',
+                  fontWeight: '600',
+                  fontSize: '14px',
+                  transition: 'all 0.2s'
+                }}
+                onMouseOver={(e) => {
+                  e.currentTarget.style.background = 'linear-gradient(135deg, #0e7490 0%, #0891b2 100%)';
+                  e.currentTarget.style.transform = 'translateY(-1px)';
+                }}
+                onMouseOut={(e) => {
+                  e.currentTarget.style.background = 'linear-gradient(135deg, #0891b2 0%, #06b6d4 100%)';
+                  e.currentTarget.style.transform = 'translateY(0)';
+                }}
+              >
+                <i className="fas fa-check"></i> Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </motion.div>
   );
 };
