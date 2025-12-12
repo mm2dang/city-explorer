@@ -174,7 +174,7 @@
   border-bottom: 1px solid #e5e7eb;
   background: #fafafa;
   position: relative;
-  z-index: 1;
+  z-index: 50;
   flex-shrink: 0;
 }
 
@@ -423,6 +423,7 @@
 
 .date-range-dropdown-wrapper {
   position: relative;
+  z-index: 100;
 }
 
 .date-range-selector-btn {
@@ -472,7 +473,7 @@
   border: 1px solid #e2e8f0;
   max-height: 300px;
   overflow-y: auto;
-  z-index: 1000;
+  z-index: 9999;
 }
 
 .date-range-option {
