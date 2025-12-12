@@ -49,6 +49,7 @@ function App() {
   const [isCalculatingConnectivity, setIsCalculatingConnectivity] = useState(false);
   const [windowWidth, setWindowWidth] = useState(window.innerWidth);
   const [isDataSourceSwitching, setIsDataSourceSwitching] = useState(false);
+  const [showNeighbourhoods, setShowNeighbourhoods] = useState(false);
 
   // Initialize sidebar states based on screen size
   const [isLayerSidebarCollapsed, setIsLayerSidebarCollapsed] = useState(() => {
@@ -110,6 +111,10 @@ function App() {
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, [isLayerSidebarCollapsed, isIndicatorsSidebarCollapsed]);
+
+  useEffect(() => {
+    setShowNeighbourhoods(false);
+  }, [selectedCity]);
 
   // Handle sidebar toggle with mutual exclusion on small screens
   const handleSidebarToggle = (sidebar) => {
@@ -1116,6 +1121,8 @@ function App() {
         onCitySelect={handleCitySelect}
         isSidebarCollapsed={isLayerSidebarCollapsed}
         onToggleCollapse={() => handleSidebarToggle('layer')}
+        showNeighbourhoods={showNeighbourhoods}
+        onToggleNeighbourhoods={setShowNeighbourhoods}
       />
       <MapViewer
         selectedCity={selectedCity}
@@ -1128,6 +1135,7 @@ function App() {
         onCitySelect={handleCitySelect}
         processingProgress={processingProgress}
         dataSource={dataSource}
+        showNeighbourhoods={showNeighbourhoods}
       />
       <IndicatorsSidebar
         selectedCity={selectedCity}

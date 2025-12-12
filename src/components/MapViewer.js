@@ -5,6 +5,7 @@ import 'leaflet.markercluster/dist/MarkerCluster.css';
 import 'leaflet.markercluster/dist/MarkerCluster.Default.css';
 import 'leaflet.markercluster';
 import '../styles/MapViewer.css';
+import * as turf from '@turf/turf';
 
 delete L.Icon.Default.prototype._getIconUrl;
 L.Icon.Default.mergeOptions({
@@ -116,7 +117,8 @@ const MapViewer = ({
   cities = [],
   onCitySelect = () => {},
   processingProgress = {},
-  dataSource = 'osm'
+  dataSource = 'osm',
+  showNeighbourhoods = false
 }) => {
   const mapRef = useRef(null);
   const mapInstanceRef = useRef(null);
@@ -136,6 +138,7 @@ const MapViewer = ({
     return Object.keys(activeLayers).filter(layer => activeLayers[layer]);
   }, [activeLayers]);
   const loadedLayersRef = useRef(new Set());
+  const neighbourhoodLayersRef = useRef(null);
 
   const boundaryHash = useMemo(() => {
     if (!selectedCity?.boundary) return null;
@@ -495,6 +498,126 @@ const MapViewer = ({
       cityMarkersLayerRef.current = cityMarkersGroup;
     }
   }, [cities, selectedCity, onCitySelect, processingProgress, dataSource]);
+
+  useEffect(() => {
+    if (!mapInstanceRef.current || !selectedCity) return;
+    
+    // Remove existing neighbourhood layers
+    if (neighbourhoodLayersRef.current) {
+      neighbourhoodLayersRef.current.eachLayer((layer) => {
+        mapInstanceRef.current.removeLayer(layer);
+      });
+      neighbourhoodLayersRef.current = null;
+    }
+    
+    // Add neighbourhood layers if enabled and available
+    if (showNeighbourhoods && selectedCity.neighbourhoods) {
+      try {
+        const neighbourhoods = JSON.parse(selectedCity.neighbourhoods);
+        const neighbourhoodNames = selectedCity.neighbourhood_names 
+          ? JSON.parse(selectedCity.neighbourhood_names)
+          : [];
+        
+        if (neighbourhoods && neighbourhoods.length > 0) {
+          const neighbourhoodGroup = L.layerGroup();
+          
+          neighbourhoods.forEach((neighbourhood, index) => {
+            try {
+              const feature = {
+                type: 'Feature',
+                geometry: neighbourhood,
+                properties: {}
+              };
+              
+              // Create GeoJSON layer with dotted boundary style
+              const geoJsonLayer = L.geoJSON(feature, {
+                style: {
+                  color: '#06b6d4',
+                  weight: 2,
+                  fillOpacity: 0,
+                  dashArray: '5, 5'
+                }
+              });
+              
+              // Add to group
+              geoJsonLayer.eachLayer((layer) => {
+                neighbourhoodGroup.addLayer(layer);
+              });
+              
+              // Add centroid marker
+              const turfFeature = {
+                type: 'Feature',
+                geometry: neighbourhood,
+                properties: {}
+              };
+              
+              const centroid = turf.centroid(turfFeature);
+              const [lon, lat] = centroid.geometry.coordinates;
+              
+              const neighbourhoodName = neighbourhoodNames[index] || `Neighbourhood ${index + 1}`;
+              
+              const centroidMarker = L.marker([lat, lon], {
+                icon: L.divIcon({
+                  className: 'custom-marker-icon',
+                  html: `<div style="
+                    background-color: #06b6d4;
+                    width: 28px;
+                    height: 28px;
+                    border-radius: 50%;
+                    border: 2px solid white;
+                    box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    color: white;
+                    font-size: 12px;
+                    z-index: 1000;
+                  ">
+                    <i class="fas fa-map-marked-alt"></i>
+                  </div>`,
+                  iconSize: [28, 28],
+                  iconAnchor: [14, 14]
+                }),
+                zIndexOffset: 2000
+              });
+              
+              centroidMarker.bindTooltip(`
+                <div style="font-family: Inter, sans-serif;">
+                  <h4 style="margin: 0 0 4px 0; color: #1a202c; font-size: 14px;">
+                    ${neighbourhoodName}
+                  </h4>
+                  <p style="margin: 0; color: #64748b; font-size: 12px;">
+                    Neighbourhood ${index + 1}
+                  </p>
+                </div>
+              `, {
+                permanent: false,
+                direction: 'top',
+                offset: [0, -20],
+                opacity: 0.95,
+                className: 'feature-marker-tooltip'
+              });
+              
+              neighbourhoodGroup.addLayer(centroidMarker);
+              
+            } catch (error) {
+              console.error(`Error rendering neighbourhood ${index}:`, error);
+            }
+          });
+          
+          neighbourhoodGroup.addTo(mapInstanceRef.current);
+          neighbourhoodLayersRef.current = neighbourhoodGroup;
+          
+          // Bring tile layer to back
+          if (tileLayerRef.current) {
+            tileLayerRef.current.bringToBack();
+          }
+        }
+      } catch (error) {
+        console.error('Error parsing neighbourhoods:', error);
+      }
+    }
+  }, [showNeighbourhoods, selectedCity]);
 
   useEffect(() => {
     displayCityMarkers();
@@ -1059,6 +1182,15 @@ const MapViewer = ({
           mapInstanceRef.current.removeLayer(boundaryLayerRef.current);
         }
         boundaryLayerRef.current = null;
+      }
+
+      if (neighbourhoodLayersRef.current) {
+        neighbourhoodLayersRef.current.eachLayer((layer) => {
+          if (mapInstanceRef.current.hasLayer(layer)) {
+            mapInstanceRef.current.removeLayer(layer);
+          }
+        });
+        neighbourhoodLayersRef.current = null;
       }
       
       mapInstanceRef.current.setView([20, 0], 2);

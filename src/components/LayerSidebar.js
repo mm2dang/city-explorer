@@ -24,7 +24,9 @@ const LayerSidebar = ({
   cityDataStatus = {},
   processingProgress = {},
   isSidebarCollapsed,
-  onToggleCollapse
+  onToggleCollapse,
+  showNeighbourhoods,
+  onToggleNeighbourhoods
 }) => {
   const [expandedDomains, setExpandedDomains] = useState(new Set());
   const [isAddLayerModalOpen, setIsAddLayerModalOpen] = useState(false);
@@ -1020,6 +1022,36 @@ const LayerSidebar = ({
                     )}
                   </div>
                 </div>
+                {selectedCity && selectedCity.neighbourhoods && selectedCity.neighbourhoods !== 'null' && (
+                  <div style={{
+                    padding: '12px 16px',
+                    borderBottom: '1px solid #e5e7eb',
+                    backgroundColor: '#f8fafc'
+                  }}>
+                    <label style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '10px',
+                      cursor: 'pointer',
+                      fontSize: '14px',
+                      fontWeight: '500',
+                      color: '#374151'
+                    }}>
+                      <input
+                        type="checkbox"
+                        checked={showNeighbourhoods}
+                        onChange={(e) => onToggleNeighbourhoods(e.target.checked)}
+                        style={{
+                          width: '16px',
+                          height: '16px',
+                          cursor: 'pointer'
+                        }}
+                      />
+                      <i className="fas fa-map-marked-alt" style={{ color: '#06b6d4' }}></i>
+                      Show Neighbourhoods
+                    </label>
+                  </div>
+                )}
                 <div className="layers-scroll-wrapper">
                   <div className="layers-scroll-content">
                     {Object.keys(filteredAndSortedDomains).length === 0 ? (
