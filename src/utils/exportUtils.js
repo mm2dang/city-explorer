@@ -429,121 +429,243 @@ export const exportLayer = async (cityName, domain, layerName, format) => {
 };
 
 // Export all layers organized by city and domain
-export const exportAllLayers = async (cityName, availableLayersByDomain, format = 'all') => {
+export const exportAllLayers = async (cityData, availableLayersByDomain, format = 'all') => {
   try {    
     // Create main zip file
     const mainZip = new JSZip();
     
     // Use city name as folder name
-    const cityFolder = cityName;
-
+    const cityFolder = cityData.name;
+    
+    // Determine which formats to export
+    const formatsToExport = format === 'all' 
+      ? ['parquet', 'csv', 'geojson', 'shapefile'] 
+      : [format];
+    
+    // Export neighbourhoods if available
+    if (cityData && cityData.neighbourhoods && cityData.neighbourhood_names) {
+      try {        
+        // Parse the neighbourhoods data
+        let neighbourhoods;
+        try {
+          neighbourhoods = JSON.parse(cityData.neighbourhoods);
+          
+          let neighbourhoodFeatures;
+          
+          if (Array.isArray(neighbourhoods)) {
+            neighbourhoodFeatures = neighbourhoods;
+          } else if (neighbourhoods.type === 'FeatureCollection' && neighbourhoods.features) {
+            neighbourhoodFeatures = neighbourhoods.features.map(f => f.geometry);
+          } else {
+            console.warn('Unknown neighbourhood format:', neighbourhoods);
+            throw new Error('Unknown neighbourhood data format');
+          }
+          
+          const neighbourhoodNames = JSON.parse(cityData.neighbourhood_names);
+          
+          if (neighbourhoodFeatures && neighbourhoodFeatures.length > 0) {
+            
+            // Export each neighbourhood as a separate file
+            for (let i = 0; i < neighbourhoodFeatures.length; i++) {
+              const geometry = neighbourhoodFeatures[i];
+              const neighbourhoodName = neighbourhoodNames[i] || `neighbourhood_${i + 1}`;
+              const safeName = neighbourhoodName.replace(/[^a-zA-Z0-9_-]/g, '_');
+              
+              for (const exportFormat of formatsToExport) {
+                if (exportFormat === 'geojson') {
+                  const neighbourhoodGeoJSON = {
+                    type: 'FeatureCollection',
+                    features: [{
+                      type: 'Feature',
+                      geometry: geometry,
+                      properties: {
+                        name: neighbourhoodName,
+                        neighbourhood_id: i,
+                        feature_type: 'neighbourhood'
+                      }
+                    }]
+                  };
+                  const jsonContent = JSON.stringify(neighbourhoodGeoJSON, null, 2);
+                  mainZip.file(`${cityFolder}/Neighbourhoods/${safeName}.geojson`, jsonContent);
+                }
+                
+                if (exportFormat === 'shapefile') {
+                  try {
+                    const neighbourhoodFeature = {
+                      type: 'FeatureCollection',
+                      features: [{
+                        type: 'Feature',
+                        geometry: geometry,
+                        properties: {
+                          name: neighbourhoodName.substring(0, 10),
+                          id: i,
+                          type: 'neighbrhd'
+                        }
+                      }]
+                    };
+                    
+                    const shpData = shpwrite.zip(neighbourhoodFeature, {
+                      outputType: 'blob',
+                      compression: 'DEFLATE'
+                    });
+                    
+                    mainZip.file(`${cityFolder}/Neighbourhoods/${safeName}.zip`, shpData);
+                  } catch (shpError) {
+                    console.warn(`Could not create neighbourhood shapefile for ${neighbourhoodName}:`, shpError);
+                  }
+                }
+                
+                if (exportFormat === 'csv') {
+                  const wktString = JSON.stringify(geometry);
+                  const csvContent = `name,neighbourhood_id,geometry_type,geometry_wkt\n"${neighbourhoodName.replace(/"/g, '""')}",${i},"${geometry.type}","${wktString.replace(/"/g, '""')}"`;
+                  mainZip.file(`${cityFolder}/Neighbourhoods/${safeName}.csv`, csvContent);
+                }
+                
+                if (exportFormat === 'parquet') {
+                  try {
+                    const { default: init } = await import('parquet-wasm');
+                    await init();
+                    
+                    const neighbourhoodData = [{
+                      name: neighbourhoodName,
+                      neighbourhood_id: i,
+                      geometry_type: geometry.type,
+                      geometry_coordinates: JSON.stringify(geometry)
+                    }];
+                    
+                    const columns = {};
+                    Object.keys(neighbourhoodData[0]).forEach(key => {
+                      columns[key] = neighbourhoodData.map(row => row[key]);
+                    });
+                    
+                    const { tableFromArrays, tableToIPC } = await import('apache-arrow');
+                    const arrowTable = tableFromArrays(columns);
+                    const ipcBuffer = tableToIPC(arrowTable, 'stream');
+                    
+                    const { Table } = await import('parquet-wasm');
+                    const wasmTable = Table.fromIPCStream(ipcBuffer);
+                    
+                    const writerProperties = new WriterPropertiesBuilder()
+                      .setCompression(Compression.SNAPPY)
+                      .build();
+                    const buffer = writeParquet(wasmTable, writerProperties);
+                    
+                    mainZip.file(`${cityFolder}/Neighbourhoods/${safeName}.snappy.parquet`, buffer);
+                  } catch (parquetError) {
+                    console.warn(`Could not create neighbourhood parquet for ${neighbourhoodName}:`, parquetError);
+                  }
+                }
+              }
+            }
+          } else {
+            console.warn('No neighbourhood features found');
+          }
+        } catch (parseError) {
+          console.error('Error parsing neighbourhoods:', parseError);
+          console.error('Raw neighbourhoods data (first 200 chars):', 
+            cityData.neighbourhoods ? cityData.neighbourhoods.substring(0, 200) : 'null');
+          throw parseError;
+        }
+      } catch (neighbourhoodError) {
+        console.error('Error exporting neighbourhoods:', neighbourhoodError);
+        console.error('Stack:', neighbourhoodError.stack);
+        // Continue with other exports even if neighbourhood export fails
+      }
+    }
+    
     // Export city boundary if available
-    if (cityName && availableLayersByDomain) {
+    if (cityData && cityData.boundary) {
       try {
-        // Find the city object to get boundary
-        const city = window.citiesData?.find(c => c.name === cityName);
         
-        if (city && city.boundary) {          
-          // Parse boundary (it's stored as WKT string)
-          const boundaryGeometry = JSON.parse(city.boundary);
+        // Parse boundary
+        const boundaryGeometry = JSON.parse(cityData.boundary);
+        
+        // Export based on selected format(s)
+        for (const exportFormat of formatsToExport) {
+          if (exportFormat === 'geojson') {
+            // Create GeoJSON for boundary
+            const boundaryGeoJSON = {
+              type: 'FeatureCollection',
+              features: [{
+                type: 'Feature',
+                geometry: boundaryGeometry,
+                properties: {
+                  name: cityData.name,
+                  feature_type: 'city_boundary'
+                }
+              }]
+            };
+            const jsonContent = JSON.stringify(boundaryGeoJSON, null, 2);
+            mainZip.file(`${cityFolder}/city_boundary.geojson`, jsonContent);
+          }
           
-          // Format city name for folder
-          const cityFolder = cityName;
-          
-          // Export based on selected format(s)
-          const formatsToExport = format === 'all' 
-            ? ['parquet', 'csv', 'geojson', 'shapefile'] 
-            : [format];
-          
-          for (const exportFormat of formatsToExport) {
-            if (exportFormat === 'geojson') {
-              // Create GeoJSON for boundary
-              const boundaryGeoJSON = {
+          if (exportFormat === 'shapefile') {
+            // Create shapefile for boundary
+            try {
+              const boundaryFeature = {
                 type: 'FeatureCollection',
                 features: [{
                   type: 'Feature',
                   geometry: boundaryGeometry,
                   properties: {
-                    name: cityName,
-                    feature_type: 'city_boundary'
+                    name: cityData.name,
+                    type: 'boundary'
                   }
                 }]
               };
               
-              const jsonContent = JSON.stringify(boundaryGeoJSON, null, 2);
-              mainZip.file(`${cityFolder}/city_boundary.geojson`, jsonContent);
-            }
-            
-            if (exportFormat === 'shapefile') {
-              // Create shapefile for boundary
-              try {
-                const boundaryFeature = {
-                  type: 'FeatureCollection',
-                  features: [{
-                    type: 'Feature',
-                    geometry: boundaryGeometry,
-                    properties: {
-                      name: cityName,
-                      type: 'boundary'
-                    }
-                  }]
-                };
-                
-                const shpData = shpwrite.zip(boundaryFeature, {
-                  outputType: 'blob',
-                  compression: 'DEFLATE'
-                });
-                
-                mainZip.file(`${cityFolder}/city_boundary.zip`, shpData);
-              } catch (shpError) {
-                console.warn('Could not create boundary shapefile:', shpError);
-              }
-            }
-            
-            if (exportFormat === 'csv') {
-              // Create CSV with WKT representation
-              const wktString = JSON.stringify(boundaryGeometry);
-              const csvContent = `name,geometry_type,geometry_wkt\n"${cityName}","${boundaryGeometry.type}","${wktString.replace(/"/g, '""')}"`;
-              mainZip.file(`${cityFolder}/city_boundary.csv`, csvContent);
-            }
-            
-            if (exportFormat === 'parquet') {
-              // Create Parquet with boundary data
-              try {
-                const { default: init } = await import('parquet-wasm');
-                await init();
-                
-                const boundaryData = [{
-                  name: cityName,
-                  geometry_type: boundaryGeometry.type,
-                  geometry_coordinates: JSON.stringify(boundaryGeometry)
-                }];
-                
-                const columns = {};
-                Object.keys(boundaryData[0]).forEach(key => {
-                  columns[key] = boundaryData.map(row => row[key]);
-                });
-                
-                const { tableFromArrays, tableToIPC } = await import('apache-arrow');
-                const arrowTable = tableFromArrays(columns);
-                const ipcBuffer = tableToIPC(arrowTable, 'stream');
-                
-                const { Table } = await import('parquet-wasm');
-                const wasmTable = Table.fromIPCStream(ipcBuffer);
-                
-                const writerProperties = new WriterPropertiesBuilder()
-                  .setCompression(Compression.SNAPPY)
-                  .build();
-                const buffer = writeParquet(wasmTable, writerProperties);
-                
-                mainZip.file(`${cityFolder}/city_boundary.snappy.parquet`, buffer);
-              } catch (parquetError) {
-                console.warn('Could not create boundary parquet:', parquetError);
-              }
+              const shpData = shpwrite.zip(boundaryFeature, {
+                outputType: 'blob',
+                compression: 'DEFLATE'
+              });
+              
+              mainZip.file(`${cityFolder}/city_boundary.zip`, shpData);
+            } catch (shpError) {
+              console.warn('Could not create boundary shapefile:', shpError);
             }
           }
-        } else {
-          console.warn('No boundary available for city:', cityName);
+          
+          if (exportFormat === 'csv') {
+            // Create CSV with WKT representation
+            const wktString = JSON.stringify(boundaryGeometry);
+            const csvContent = `name,geometry_type,geometry_wkt\n"${cityData.name}","${boundaryGeometry.type}","${wktString.replace(/"/g, '""')}"`;
+            mainZip.file(`${cityFolder}/city_boundary.csv`, csvContent);
+          }
+          
+          if (exportFormat === 'parquet') {
+            // Create Parquet with boundary data
+            try {
+              const { default: init } = await import('parquet-wasm');
+              await init();
+              
+              const boundaryData = [{
+                name: cityData.name,
+                geometry_type: boundaryGeometry.type,
+                geometry_coordinates: JSON.stringify(boundaryGeometry)
+              }];
+              
+              const columns = {};
+              Object.keys(boundaryData[0]).forEach(key => {
+                columns[key] = boundaryData.map(row => row[key]);
+              });
+              
+              const { tableFromArrays, tableToIPC } = await import('apache-arrow');
+              const arrowTable = tableFromArrays(columns);
+              const ipcBuffer = tableToIPC(arrowTable, 'stream');
+              
+              const { Table } = await import('parquet-wasm');
+              const wasmTable = Table.fromIPCStream(ipcBuffer);
+              
+              const writerProperties = new WriterPropertiesBuilder()
+                .setCompression(Compression.SNAPPY)
+                .build();
+              const buffer = writeParquet(wasmTable, writerProperties);
+              
+              mainZip.file(`${cityFolder}/city_boundary.snappy.parquet`, buffer);
+            } catch (parquetError) {
+              console.warn('Could not create boundary parquet:', parquetError);
+            }
+          }
         }
       } catch (boundaryError) {
         console.error('Error exporting city boundary:', boundaryError);
@@ -563,10 +685,10 @@ export const exportAllLayers = async (cityName, availableLayersByDomain, format 
       for (const layer of layers) {
         try {          
           // Load data from S3
-          const data = await loadLayerData(cityName, domain, layer.name);
+          const data = await loadLayerData(cityData.name, domain, layer.name);
           
           if (!data || data.length === 0) {
-            console.warn(`No data found for layer ${layer.name}, skipping...`);
+            console.warn(`  No data found for layer ${layer.name}, skipping...`);
             continue;
           }
           
@@ -574,11 +696,8 @@ export const exportAllLayers = async (cityName, availableLayersByDomain, format 
           const formattedLayerName = formatLayerName(layer.name);
           
           // Export based on selected format or all formats
-          const formatsToExport = format === 'all' 
-            ? ['parquet', 'csv', 'geojson', 'shapefile'] 
-            : [format];
-          
           for (const exportFormat of formatsToExport) {
+            // 1. Parquet
             if (exportFormat === 'parquet') {
               try {
                 const { default: init } = await import('parquet-wasm');
@@ -679,7 +798,6 @@ export const exportAllLayers = async (cityName, availableLayersByDomain, format 
                     type: 'FeatureCollection',
                     features: features
                   };
-                  
                   const jsonContent = JSON.stringify(geojson, null, 2);
                   mainZip.file(`${domainPath}/${formattedLayerName}.geojson`, jsonContent);
                 }
@@ -767,7 +885,6 @@ export const exportAllLayers = async (cityName, availableLayersByDomain, format 
               }
             }
           }
-          
         } catch (layerError) {
           console.error(`Error processing layer ${layer.name}:`, layerError);
           // Continue with next layer
@@ -786,9 +903,13 @@ export const exportAllLayers = async (cityName, availableLayersByDomain, format 
     
     // Download with city name and format suffix
     const formatSuffix = format === 'all' ? 'all_formats' : format;
-    downloadFile(finalZip, `${cityName.replace(/,/g, '_')}_${formatSuffix}.zip`);
+    const filename = `${cityData.name.replace(/,/g, '_')}_${formatSuffix}.zip`;
+    
+    downloadFile(finalZip, filename);
+    
   } catch (error) {
     console.error('Error exporting all layers:', error);
+    console.error('Stack:', error.stack);
     throw new Error(`Failed to export all layers: ${error.message}`);
   }
 };

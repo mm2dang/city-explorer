@@ -416,7 +416,7 @@ const LayerSidebar = ({
     try {
       setExportingLayer('all');
       setShowExportAllMenu(false);
-      await exportAllLayers(selectedCity.name, availableLayersByDomain, format);
+      await exportAllLayers(selectedCity, availableLayersByDomain, format);
       alert('All layers exported successfully!');
     } catch (error) {
       alert(`Failed to export all layers: ${error.message}`);
@@ -435,7 +435,7 @@ const LayerSidebar = ({
       
       // Create a filtered version with only this domain
       const domainLayers = { [domain]: layers };
-      await exportAllLayers(selectedCity.name, domainLayers, format);
+      await exportAllLayers(selectedCity, domainLayers, format);
       alert(`${domainName} layers exported successfully!`);
     } catch (error) {
       alert(`Failed to export ${domainName} layers: ${error.message}`);
