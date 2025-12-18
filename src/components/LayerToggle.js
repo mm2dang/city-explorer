@@ -93,8 +93,18 @@ const LayerToggle = ({
           )}
         </motion.button>
         
-        <div className="layer-icon-inline" style={{ color: domainColor }}>
-          <i className={layer.icon}></i>
+        <div 
+          className="layer-icon-inline"
+          style={{
+            backgroundColor: isActive ? `${domainColor}15` : '#f1f5f9',
+          }}
+        >
+          <i 
+            className={layer.icon} 
+            style={{ 
+              color: isActive ? domainColor : '#94a3b8' 
+            }}
+          />
         </div>
         
         <span className="layer-name-inline">{formatLayerName(layer.name)}</span>

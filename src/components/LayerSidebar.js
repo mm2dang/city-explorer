@@ -5,6 +5,7 @@ import LayerModal from './LayerModal';
 import { exportLayer, exportAllLayers } from '../utils/exportUtils';
 import { loadLayerForEditing, processCityFeatures } from '../utils/s3';
 import '../styles/LayerSidebar.css';
+import * as turf from '@turf/turf';
 
 const LayerSidebar = ({
   selectedCity,
@@ -26,7 +27,9 @@ const LayerSidebar = ({
   isSidebarCollapsed,
   onToggleCollapse,
   showNeighbourhoods,
-  onToggleNeighbourhoods
+  onToggleNeighbourhoods,
+  selectedNeighbourhoods = [],
+  onSelectedNeighbourhoodsChange 
 }) => {
   const [expandedDomains, setExpandedDomains] = useState(new Set());
   const [isAddLayerModalOpen, setIsAddLayerModalOpen] = useState(false);
@@ -40,6 +43,10 @@ const LayerSidebar = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [importingCities, setImportingCities] = useState(new Set());
   const [dropdownPositions, setDropdownPositions] = useState({});
+  const [isNeighbourhoodDropdownOpen, setIsNeighbourhoodDropdownOpen] = useState(false);
+  const [neighbourhoodSearchQuery, setNeighbourhoodSearchQuery] = useState('');
+  const [neighbourhoodCountsCache, setNeighbourhoodCountsCache] = useState({});
+  const [isLoadingNeighbourhoodCounts, setIsLoadingNeighbourhoodCounts] = useState(false);
 
   // Close export menus when clicking outside
   useEffect(() => {
@@ -210,12 +217,17 @@ const LayerSidebar = ({
       if (layers.length === 0) return; // Skip domains with no layers
       
       const domainMatches = domain.toLowerCase().includes(query);
+      
+      // Check if the layer count matches the search query
+      const layerCountMatches = layers.length.toString().includes(query);
+      
       const matchingLayers = layers.filter(layer => 
-        layer.name.toLowerCase().includes(query) || domainMatches
+        layer.name.toLowerCase().includes(query) || domainMatches || layerCountMatches
       ).sort((a, b) => a.name.localeCompare(b.name));
       
-      if (matchingLayers.length > 0) {
-        filtered[domain] = matchingLayers;
+      if (domainMatches || layerCountMatches || matchingLayers.length > 0) {
+        // If domain or count matches, show all layers; otherwise show only matching layers
+        filtered[domain] = (domainMatches || layerCountMatches) ? layers.sort((a, b) => a.name.localeCompare(b.name)) : matchingLayers;
       }
     });
     
@@ -248,6 +260,240 @@ const LayerSidebar = ({
   const formatDomainName = (domain) => {
     return domain.charAt(0).toUpperCase() + domain.slice(1);
   };
+
+  const neighbourhoodNames = useMemo(() => {
+    if (!selectedCity?.neighbourhood_names) return [];
+    try {
+      const names = JSON.parse(selectedCity.neighbourhood_names);
+      return (names || []).sort((a, b) => a.localeCompare(b));
+    } catch (error) {
+      console.warn('Error parsing neighbourhood names:', error);
+      return [];
+    }
+  }, [selectedCity]);
+
+  const handleToggleAllNeighbourhoods = (checked) => {
+    if (checked) {
+      onSelectedNeighbourhoodsChange(neighbourhoodNames);
+    } else {
+      onSelectedNeighbourhoodsChange([]);
+    }
+  };
+  
+  const handleToggleNeighbourhood = (name) => {
+    onSelectedNeighbourhoodsChange(prev => {
+      if (prev.includes(name)) {
+        return prev.filter(n => n !== name);
+      } else {
+        return [...prev, name];
+      }
+    });
+  };
+
+  // Initialize all neighbourhoods as selected when show neighbourhoods is enabled
+  useEffect(() => {
+    if (showNeighbourhoods && neighbourhoodNames.length > 0) {
+      onSelectedNeighbourhoodsChange(neighbourhoodNames);
+    } else if (!showNeighbourhoods) {
+      onSelectedNeighbourhoodsChange([]);
+    }
+  }, [showNeighbourhoods, neighbourhoodNames, onSelectedNeighbourhoodsChange]);
+
+  const getNeighbourhoodCountsCacheKey = useCallback(() => {
+    if (!selectedCity) return null;
+    
+    // Create a key based on city name and available layers
+    const layerKeys = Object.entries(availableLayersByDomain)
+      .flatMap(([domain, layers]) => layers.map(l => `${domain}:${l.name}`))
+      .sort()
+      .join('|');
+    
+    return `${selectedCity.name}::${layerKeys}`;
+  }, [selectedCity, availableLayersByDomain]);
+  
+  // Get current counts from cache
+  const neighbourhoodFeatureCounts = useMemo(() => {
+    const cacheKey = getNeighbourhoodCountsCacheKey();
+    if (!cacheKey) return {};
+    
+    return neighbourhoodCountsCache[cacheKey] || {};
+  }, [neighbourhoodCountsCache, getNeighbourhoodCountsCacheKey]);
+  
+  // Check if counts need to be calculated
+  const needsCountCalculation = useMemo(() => {
+    const cacheKey = getNeighbourhoodCountsCacheKey();
+    if (!cacheKey) return false;
+    
+    return !neighbourhoodCountsCache[cacheKey];
+  }, [neighbourhoodCountsCache, getNeighbourhoodCountsCacheKey]);
+
+  const calculateNeighbourhoodCounts = useCallback(async () => {
+    if (!selectedCity?.neighbourhoods || neighbourhoodNames.length === 0) {
+      return;
+    }
+  
+    const cacheKey = getNeighbourhoodCountsCacheKey();
+    if (!cacheKey) return;
+  
+    // Don't recalculate if already cached
+    if (neighbourhoodCountsCache[cacheKey]) {
+      return;
+    }
+  
+    setIsLoadingNeighbourhoodCounts(true);
+  
+    try {
+      const counts = {};
+      neighbourhoodNames.forEach(name => {
+        counts[name] = 0;
+      });
+  
+      // Parse neighbourhoods geometry
+      const parsedNeighbourhoods = JSON.parse(selectedCity.neighbourhoods);
+  
+      // Load all features from all available layers
+      const allFeatures = [];
+      
+      for (const [domain, layers] of Object.entries(availableLayersByDomain)) {
+        if (layers.length === 0) continue;
+        
+        for (const layer of layers) {
+          try {
+            // Use the loadLayerForEditing function which actually loads features from S3
+            const features = await loadLayerForEditing(
+              selectedCity.name,
+              domain,
+              layer.name
+            );
+            
+            if (features && features.length > 0) {
+              allFeatures.push(...features);
+            }
+          } catch (error) {
+            console.warn(`Could not load features from ${domain}/${layer.name}:`, error);
+          }
+        }
+      }
+  
+      // Count features by neighbourhood
+      allFeatures.forEach(feature => {
+        if (!feature.geometry || !feature.geometry.coordinates) return;
+        
+        try {
+          let lat, lng;
+          
+          if (feature.geometry.type === 'Point') {
+            [lng, lat] = feature.geometry.coordinates;
+          } else {
+            // For non-point geometries, use centroid
+            const centroid = calculateCentroidSimple(feature.geometry);
+            lat = centroid.lat;
+            lng = centroid.lng;
+          }
+          
+          // Check which neighbourhood this point is in
+          const point = turf.point([lng, lat]);
+          
+          for (let i = 0; i < parsedNeighbourhoods.length; i++) {
+            const neighbourhood = parsedNeighbourhoods[i];
+            const neighbourhoodFeature = {
+              type: 'Feature',
+              geometry: neighbourhood,
+              properties: {}
+            };
+            
+            if (turf.booleanPointInPolygon(point, neighbourhoodFeature)) {
+              const name = neighbourhoodNames[i];
+              if (counts.hasOwnProperty(name)) {
+                counts[name]++;
+              }
+              break;
+            }
+          }
+        } catch (error) {
+          console.warn('Error checking neighbourhood for feature:', error);
+        }
+      });
+  
+      // Store in cache with the cache key
+      setNeighbourhoodCountsCache(prev => ({
+        ...prev,
+        [cacheKey]: counts
+      }));
+    } catch (error) {
+      console.error('Error calculating neighbourhood counts:', error);
+    } finally {
+      setIsLoadingNeighbourhoodCounts(false);
+    }
+  }, [selectedCity, neighbourhoodNames, availableLayersByDomain, getNeighbourhoodCountsCacheKey, neighbourhoodCountsCache]);
+  
+  // Helper function for centroid calculation
+  const calculateCentroidSimple = (geometry) => {
+    try {
+      if (geometry.type === 'Point') {
+        return { lat: geometry.coordinates[1], lng: geometry.coordinates[0] };
+      }
+  
+      let totalLat = 0;
+      let totalLng = 0;
+      let pointCount = 0;
+  
+      const processCoordinates = (coords) => {
+        if (Array.isArray(coords[0])) {
+          coords.forEach(c => processCoordinates(c));
+        } else {
+          totalLng += coords[0];
+          totalLat += coords[1];
+          pointCount++;
+        }
+      };
+  
+      processCoordinates(geometry.coordinates);
+  
+      if (pointCount === 0) {
+        return { lat: 0, lng: 0 };
+      }
+  
+      return {
+        lat: totalLat / pointCount,
+        lng: totalLng / pointCount
+      };
+    } catch (error) {
+      console.warn('Error calculating centroid:', error);
+      return { lat: 0, lng: 0 };
+    }
+  };
+  
+  // Add effect to calculate counts when neighbourhood dropdown is opened
+  useEffect(() => {
+    if (showNeighbourhoods && isNeighbourhoodDropdownOpen && needsCountCalculation) {
+      calculateNeighbourhoodCounts();
+    }
+  }, [showNeighbourhoods, isNeighbourhoodDropdownOpen, needsCountCalculation, calculateNeighbourhoodCounts]);
+
+  const filteredNeighbourhoodNames = useMemo(() => {
+    if (!neighbourhoodSearchQuery.trim()) {
+      return neighbourhoodNames;
+    }
+    
+    const query = neighbourhoodSearchQuery.toLowerCase().trim();
+    
+    return neighbourhoodNames.filter(name => {
+      // Search by neighbourhood name
+      const nameMatches = name.toLowerCase().includes(query);
+      
+      // Search by feature count (exact match or starts with)
+      const count = neighbourhoodFeatureCounts[name] || 0;
+      const countString = count.toString();
+      const countMatches = countString.includes(query);
+      
+      return nameMatches || countMatches;
+    });
+  }, [neighbourhoodNames, neighbourhoodSearchQuery, neighbourhoodFeatureCounts]);
+
+  useEffect(() => {
+    setNeighbourhoodSearchQuery('');
+  }, [selectedCity]);
 
   const handleAddLayer = (domain) => {
     setSelectedDomain(domain);
@@ -869,6 +1115,31 @@ const LayerSidebar = ({
         {isSidebarCollapsed ? (
           // Collapsed view - show icons only
           <div className="collapsed-layers-view">
+            {selectedCity && selectedCity.neighbourhoods && selectedCity.neighbourhoods !== 'null' && (
+              <motion.div
+                className={`collapsed-domain-icon ${showNeighbourhoods ? 'all-active' : ''}`}
+                title={`Neighbourhoods (${neighbourhoodNames.length}) - Click to toggle`}
+                onClick={() => onToggleNeighbourhoods(!showNeighbourhoods)}
+                whileHover={{ scale: 1.1 }}
+                whileTap={{ scale: 0.95 }}
+                style={{ 
+                  marginBottom: '8px', 
+                  paddingBottom: '8px'
+                }}
+              >
+                <div
+                  className="collapsed-icon-wrapper"
+                  style={{ backgroundColor: showNeighbourhoods ? '#06b6d415' : '#f1f5f9' }}
+                >
+                  <i
+                    className="fas fa-map-marked-alt"
+                    style={{ color: showNeighbourhoods ? '#06b6d4' : '#94a3b8' }}
+                  />
+                </div>
+                <span className="collapsed-count">{neighbourhoodNames.length}</span>
+              </motion.div>
+            )}
+            
             {Object.keys(domainsWithLayers).length > 0 && Object.entries(domainsWithLayers).map(([domain, layers]) => {
               const allActive = layers.every(layer => activeLayers[layer.name]);
               const someActive = layers.some(layer => activeLayers[layer.name]);
@@ -884,11 +1155,19 @@ const LayerSidebar = ({
                 >
                   <div
                     className="collapsed-icon-wrapper"
-                    style={{ backgroundColor: `${domainColors[domain]}15` }}
+                    style={{ 
+                      backgroundColor: (allActive || someActive) 
+                        ? `${domainColors[domain]}15` 
+                        : '#f1f5f9' 
+                    }}
                   >
                     <i
                       className={domainIcons[domain]}
-                      style={{ color: domainColors[domain] }}
+                      style={{ 
+                        color: (allActive || someActive) 
+                          ? domainColors[domain] 
+                          : '#94a3b8' 
+                      }}
                     />
                   </div>
                   <span className="collapsed-count">{layers.length}</span>
@@ -908,25 +1187,6 @@ const LayerSidebar = ({
             ) : (
               <>
                 <div className="layers-stats-section">
-                  <div className="search-container">
-                    <i className="fas fa-search search-icon"></i>
-                    <input
-                      type="text"
-                      className="search-input"
-                      placeholder="Search layers or domains..."
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                    />
-                    {searchQuery && (
-                      <button
-                        className="clear-search-btn"
-                        onClick={() => setSearchQuery('')}
-                        title="Clear search"
-                      >
-                        <i className="fas fa-times"></i>
-                      </button>
-                    )}
-                  </div>
                   <div className="layers-summary">
                     <div className="summary-item">
                       <span className="summary-label">Active</span>
@@ -1035,7 +1295,8 @@ const LayerSidebar = ({
                       cursor: 'pointer',
                       fontSize: '14px',
                       fontWeight: '500',
-                      color: '#374151'
+                      color: '#374151',
+                      marginBottom: '8px'
                     }}>
                       <input
                         type="checkbox"
@@ -1047,11 +1308,256 @@ const LayerSidebar = ({
                           cursor: 'pointer'
                         }}
                       />
-                      <i className="fas fa-map-marked-alt" style={{ color: '#06b6d4' }}></i>
+                      <div style={{
+                        width: '28px',
+                        height: '28px',
+                        borderRadius: '6px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        backgroundColor: showNeighbourhoods ? '#06b6d415' : '#f1f5f9'
+                      }}>
+                        <i 
+                          className="fas fa-map-marked-alt" 
+                          style={{ 
+                            color: showNeighbourhoods ? '#06b6d4' : '#94a3b8',
+                            fontSize: '14px'
+                          }}
+                        />
+                      </div>
                       Show Neighbourhoods
                     </label>
+                    
+                    {showNeighbourhoods && neighbourhoodNames.length > 0 && (
+                      <div style={{ marginTop: '8px' }}>
+                        <div
+                          style={{
+                            position: 'relative',
+                            border: '1px solid #d1d5db',
+                            borderRadius: '6px',
+                            backgroundColor: 'white',
+                            cursor: 'pointer'
+                          }}
+                        >
+                          <div
+                            onClick={() => {
+                              setIsNeighbourhoodDropdownOpen(!isNeighbourhoodDropdownOpen);
+                              if (isNeighbourhoodDropdownOpen) {
+                                // Clear search when closing
+                                setNeighbourhoodSearchQuery('');
+                              }
+                            }}
+                            style={{
+                              padding: '8px 12px',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              fontSize: '13px'
+                            }}
+                          >
+                            <span style={{ color: '#64748b' }}>
+                              {selectedNeighbourhoods.length === neighbourhoodNames.length
+                                ? `All neighbourhoods selected (${neighbourhoodNames.length})`
+                                : `${selectedNeighbourhoods.length} of ${neighbourhoodNames.length} selected`}
+                            </span>
+                            <i className={`fas fa-chevron-${isNeighbourhoodDropdownOpen ? 'up' : 'down'}`} style={{ fontSize: '12px', color: '#64748b' }}></i>
+                          </div>
+                          
+                          {isNeighbourhoodDropdownOpen && (
+                            <div style={{
+                              position: 'absolute',
+                              top: '100%',
+                              left: 0,
+                              right: 0,
+                              marginTop: '4px',
+                              backgroundColor: 'white',
+                              border: '1px solid #d1d5db',
+                              borderRadius: '6px',
+                              boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)',
+                              maxHeight: '250px',
+                              overflowY: 'auto',
+                              zIndex: 1000
+                            }}>
+                              {/* Search Input */}
+                              <div style={{
+                                padding: '8px',
+                                borderBottom: '1px solid #e5e7eb',
+                                position: 'sticky',
+                                top: 0,
+                                backgroundColor: 'white',
+                                zIndex: 1
+                              }}>
+                                <div style={{
+                                  position: 'relative',
+                                  display: 'flex',
+                                  alignItems: 'center'
+                                }}>
+                                  <i className="fas fa-search" style={{
+                                    position: 'absolute',
+                                    left: '10px',
+                                    color: '#94a3b8',
+                                    fontSize: '12px',
+                                    pointerEvents: 'none'
+                                  }}></i>
+                                  <input
+                                    type="text"
+                                    placeholder="Search neighbourhoods..."
+                                    value={neighbourhoodSearchQuery}
+                                    onChange={(e) => setNeighbourhoodSearchQuery(e.target.value)}
+                                    onClick={(e) => e.stopPropagation()}
+                                    style={{
+                                      width: '100%',
+                                      padding: '6px 10px 6px 30px',
+                                      border: '1px solid #d1d5db',
+                                      borderRadius: '4px',
+                                      fontSize: '13px',
+                                      outline: 'none',
+                                      transition: 'border-color 0.2s'
+                                    }}
+                                    onFocus={(e) => {
+                                      e.target.style.borderColor = '#0891b2';
+                                    }}
+                                    onBlur={(e) => {
+                                      e.target.style.borderColor = '#d1d5db';
+                                    }}
+                                  />
+                                  {neighbourhoodSearchQuery && (
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setNeighbourhoodSearchQuery('');
+                                      }}
+                                      style={{
+                                        position: 'absolute',
+                                        right: '8px',
+                                        background: 'none',
+                                        border: 'none',
+                                        color: '#94a3b8',
+                                        cursor: 'pointer',
+                                        padding: '4px',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center'
+                                      }}
+                                    >
+                                      <i className="fas fa-times" style={{ fontSize: '12px' }}></i>
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+
+                              {/* Select All */}
+                              <label style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                padding: '8px 12px',
+                                cursor: 'pointer',
+                                fontSize: '13px',
+                                fontWeight: '600',
+                                borderBottom: '1px solid #e5e7eb',
+                                backgroundColor: '#f9fafb',
+                                color: '#64748b'
+                              }}>
+                                <input
+                                  type="checkbox"
+                                  checked={selectedNeighbourhoods.length === neighbourhoodNames.length}
+                                  onChange={(e) => handleToggleAllNeighbourhoods(e.target.checked)}
+                                  style={{ marginRight: '8px', cursor: 'pointer' }}
+                                />
+                                Select All
+                              </label>
+                              
+                              {/* Neighbourhood List */}
+                              {filteredNeighbourhoodNames.length > 0 ? (
+                                filteredNeighbourhoodNames.map((name, index) => (
+                                  <label
+                                    key={name}
+                                    style={{
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      justifyContent: 'space-between',
+                                      padding: '8px 12px',
+                                      cursor: 'pointer',
+                                      fontSize: '13px',
+                                      borderBottom: index < filteredNeighbourhoodNames.length - 1 ? '1px solid #f3f4f6' : 'none',
+                                      backgroundColor: selectedNeighbourhoods.includes(name) ? '#f0f9ff' : 'white',
+                                      color: '#64748b'
+                                    }}
+                                    onMouseEnter={(e) => {
+                                      if (!selectedNeighbourhoods.includes(name)) {
+                                        e.currentTarget.style.backgroundColor = '#f9fafb';
+                                      }
+                                    }}
+                                    onMouseLeave={(e) => {
+                                      if (!selectedNeighbourhoods.includes(name)) {
+                                        e.currentTarget.style.backgroundColor = 'white';
+                                      }
+                                    }}
+                                  >
+                                    <div style={{ display: 'flex', alignItems: 'center' }}>
+                                      <input
+                                        type="checkbox"
+                                        checked={selectedNeighbourhoods.includes(name)}
+                                        onChange={() => handleToggleNeighbourhood(name)}
+                                        style={{ marginRight: '8px', cursor: 'pointer' }}
+                                      />
+                                      {name}
+                                    </div>
+                                    <span style={{
+                                      fontSize: '11px',
+                                      color: '#94a3b8',
+                                      backgroundColor: '#f1f5f9',
+                                      padding: '2px 6px',
+                                      borderRadius: '10px',
+                                      fontWeight: '500'
+                                    }}>
+                                      {isLoadingNeighbourhoodCounts ? (
+                                        <i className="fas fa-spinner fa-spin" style={{ fontSize: '10px' }}></i>
+                                      ) : (
+                                        neighbourhoodFeatureCounts[name] || 0
+                                      )}
+                                    </span>
+                                  </label>
+                                ))
+                              ) : (
+                                <div style={{
+                                  padding: '16px',
+                                  textAlign: 'center',
+                                  color: '#94a3b8',
+                                  fontSize: '13px'
+                                }}>
+                                  <i className="fas fa-search" style={{ marginBottom: '8px', fontSize: '24px', display: 'block' }}></i>
+                                  No neighbourhoods match "{neighbourhoodSearchQuery}"
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
+                <div className="search-section">
+                  <div className="search-container">
+                    <i className="fas fa-search search-icon"></i>
+                    <input
+                      type="text"
+                      className="search-input"
+                      placeholder="Search layers or domains..."
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                    />
+                    {searchQuery && (
+                      <button
+                        className="clear-search-btn"
+                        onClick={() => setSearchQuery('')}
+                        title="Clear search"
+                      >
+                        <i className="fas fa-times"></i>
+                      </button>
+                    )}
+                  </div>
+                </div>
                 <div className="layers-scroll-wrapper">
                   <div className="layers-scroll-content">
                     {Object.keys(filteredAndSortedDomains).length === 0 ? (
@@ -1110,15 +1616,23 @@ const LayerSidebar = ({
                                 </motion.button>
                                 
                                 <div className="domain-info">
-                                  <div
-                                    className="domain-icon-wrapper"
-                                    style={{ backgroundColor: `${domainColors[domain]}15` }}
-                                  >
-                                    <i
-                                      className={domainIcons[domain]}
-                                      style={{ color: domainColors[domain] }}
-                                    />
-                                  </div>
+                                <div
+                                  className="domain-icon-wrapper"
+                                  style={{ 
+                                    backgroundColor: (allActive || someActive) 
+                                      ? `${domainColors[domain]}15` 
+                                      : '#f1f5f9' 
+                                  }}
+                                >
+                                  <i
+                                    className={domainIcons[domain]}
+                                    style={{ 
+                                      color: (allActive || someActive) 
+                                        ? domainColors[domain] 
+                                        : '#94a3b8' 
+                                    }}
+                                  />
+                                </div>
                                   <span className="domain-name">{formatDomainName(domain)}</span>
                                   <span className="layer-count">{layers.length}</span>
                                 </div>

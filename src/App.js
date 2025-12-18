@@ -50,6 +50,7 @@ function App() {
   const [windowWidth, setWindowWidth] = useState(window.innerWidth);
   const [isDataSourceSwitching, setIsDataSourceSwitching] = useState(false);
   const [showNeighbourhoods, setShowNeighbourhoods] = useState(false);
+  const [selectedNeighbourhoods, setSelectedNeighbourhoods] = useState([]);
 
   // Initialize sidebar states based on screen size
   const [isLayerSidebarCollapsed, setIsLayerSidebarCollapsed] = useState(() => {
@@ -114,7 +115,14 @@ function App() {
 
   useEffect(() => {
     setShowNeighbourhoods(false);
+    setSelectedNeighbourhoods([]);
   }, [selectedCity]);
+
+  useEffect(() => {
+    if (!showNeighbourhoods) {
+      setSelectedNeighbourhoods([]);
+    }
+  }, [showNeighbourhoods]);
 
   // Handle sidebar toggle with mutual exclusion on small screens
   const handleSidebarToggle = (sidebar) => {
@@ -1123,6 +1131,8 @@ function App() {
         onToggleCollapse={() => handleSidebarToggle('layer')}
         showNeighbourhoods={showNeighbourhoods}
         onToggleNeighbourhoods={setShowNeighbourhoods}
+        selectedNeighbourhoods={selectedNeighbourhoods}
+        onSelectedNeighbourhoodsChange={setSelectedNeighbourhoods}
       />
       <MapViewer
         selectedCity={selectedCity}
@@ -1136,6 +1146,7 @@ function App() {
         processingProgress={processingProgress}
         dataSource={dataSource}
         showNeighbourhoods={showNeighbourhoods}
+        selectedNeighbourhoods={selectedNeighbourhoods}
       />
       <IndicatorsSidebar
         selectedCity={selectedCity}

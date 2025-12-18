@@ -155,7 +155,8 @@ const MapViewer = ({
   onCitySelect = () => {},
   processingProgress = {},
   dataSource = 'osm',
-  showNeighbourhoods = false
+  showNeighbourhoods = false,
+  selectedNeighbourhoods = []
 }) => {
   const mapRef = useRef(null);
   const mapInstanceRef = useRef(null);
@@ -176,6 +177,8 @@ const MapViewer = ({
   }, [activeLayers]);
   const loadedLayersRef = useRef(new Set());
   const neighbourhoodLayersRef = useRef(null);
+  const neighbourhoodChangeInProgressRef = useRef(false);
+  const cancelLoadingRef = useRef(false);
 
   const boundaryHash = useMemo(() => {
     if (!selectedCity?.boundary) return null;
@@ -253,7 +256,21 @@ const MapViewer = ({
             return;
           }
           
-          // Try boundary first if city is selected
+          // PRIORITY 1: Check if neighbourhood bounds are stored
+          if (mapContainer.dataset.neighbourhoodBounds) {
+            try {
+              const boundsArray = JSON.parse(mapContainer.dataset.neighbourhoodBounds);
+              const bounds = L.latLngBounds(boundsArray);
+              if (bounds.isValid()) {
+                map.fitBounds(bounds, { padding: [50, 50], maxZoom: 15 });
+                return;
+              }
+            } catch (error) {
+              console.warn('Error parsing neighbourhood bounds:', error);
+            }
+          }
+          
+          // PRIORITY 2: Try city boundary if no neighbourhoods selected
           if (boundaryLayerRef.current) {
             try {
               const bounds = boundaryLayerRef.current.getBounds();
@@ -266,7 +283,7 @@ const MapViewer = ({
             }
           }
           
-          // Fallback: zoom to city coordinates
+          // PRIORITY 3: Fallback to city coordinates
           map.setView([cityLat, cityLng], 12);
         };
   
@@ -302,7 +319,7 @@ const MapViewer = ({
         loadFeaturesTimeoutRef.current = null;
       }
     };
-  }, []);
+  }, [selectedNeighbourhoods]);
 
   // Toggle zoom-to-boundary button visibility based on city selection
   useEffect(() => {
@@ -564,72 +581,112 @@ const MapViewer = ({
     if (showNeighbourhoods && selectedCity.neighbourhoods) {
       try {
         const neighbourhoods = JSON.parse(selectedCity.neighbourhoods);
+        const neighbourhoodNames = selectedCity.neighbourhood_names 
+          ? JSON.parse(selectedCity.neighbourhood_names)
+          : [];
         
         if (neighbourhoods && neighbourhoods.length > 0) {
           const neighbourhoodGroup = L.layerGroup();
+          const selectedBounds = [];
           
           neighbourhoods.forEach((neighbourhood, index) => {
-            try {
-              const feature = {
-                type: 'Feature',
-                geometry: neighbourhood,
-                properties: {}
-              };
-              
-              // Create GeoJSON layer with dotted boundary style
-              const geoJsonLayer = L.geoJSON(feature, {
-                style: {
-                  color: '#06b6d4',
-                  weight: 2,
-                  fillOpacity: 0,
-                  dashArray: '5, 5',
-                  interactive: false
-                },
-                pane: 'overlayPane',
-              });
-              
-              // Add to group
-              geoJsonLayer.eachLayer((layer) => {
-                neighbourhoodGroup.addLayer(layer);
-              });
-              
-            } catch (error) {
-              console.error(`Error rendering neighbourhood ${index}:`, error);
+            const name = neighbourhoodNames[index] || `Neighbourhood ${index + 1}`;
+            
+            // Only show if selected (or if selectedNeighbourhoods is empty, show all)
+            if (selectedNeighbourhoods.length === 0 || selectedNeighbourhoods.includes(name)) {
+              try {
+                const feature = {
+                  type: 'Feature',
+                  geometry: neighbourhood,
+                  properties: {}
+                };
+                
+                // Create GeoJSON layer with dotted boundary style
+                const geoJsonLayer = L.geoJSON(feature, {
+                  style: {
+                    color: '#06b6d4',
+                    weight: 2,
+                    fillOpacity: 0,
+                    dashArray: '5, 5',
+                    interactive: false
+                  },
+                  pane: 'overlayPane',
+                });
+                
+                // Add to group
+                geoJsonLayer.eachLayer((layer) => {
+                  neighbourhoodGroup.addLayer(layer);
+                  // Collect bounds for zoom
+                  if (layer.getBounds) {
+                    selectedBounds.push(layer.getBounds());
+                  }
+                });
+                
+              } catch (error) {
+                console.error(`Error rendering neighbourhood ${index}:`, error);
+              }
             }
           });
           
-          neighbourhoodGroup.addTo(mapInstanceRef.current);
-          neighbourhoodLayersRef.current = neighbourhoodGroup;
-          
-          // IMPORTANT: Bring neighbourhood layers to front after adding
-          setTimeout(() => {
-            if (neighbourhoodLayersRef.current) {
-              neighbourhoodLayersRef.current.eachLayer((layer) => {
-                if (layer.bringToFront) {
-                  layer.bringToFront();
-                }
-              });
-            }
+          if (neighbourhoodGroup.getLayers().length > 0) {
+            neighbourhoodGroup.addTo(mapInstanceRef.current);
+            neighbourhoodLayersRef.current = neighbourhoodGroup;
             
-            // Keep tile layer at back
-            if (tileLayerRef.current) {
-              tileLayerRef.current.bringToBack();
-            }
-            
-            // Keep boundary below neighbourhoods if it exists
-            if (boundaryLayerRef.current) {
-              boundaryLayerRef.current.bringToBack();
+            // IMPORTANT: Bring neighbourhood layers to front after adding
+            setTimeout(() => {
+              if (neighbourhoodLayersRef.current) {
+                neighbourhoodLayersRef.current.eachLayer((layer) => {
+                  if (layer.bringToFront) {
+                    layer.bringToFront();
+                  }
+                });
+              }
+              
+              // Keep tile layer at back
               if (tileLayerRef.current) {
                 tileLayerRef.current.bringToBack();
               }
-            }
-          }, 100);
+              
+              // Keep boundary below neighbourhoods if it exists
+              if (boundaryLayerRef.current) {
+                boundaryLayerRef.current.bringToBack();
+                if (tileLayerRef.current) {
+                  tileLayerRef.current.bringToBack();
+                }
+              }
+              
+              // MOVED: Zoom to neighbourhoods AFTER layers are added and brought to front
+              if (selectedBounds.length > 0 && selectedNeighbourhoods.length > 0) {
+                // Create a combined bounds from all selected neighbourhoods
+                const combinedBounds = selectedBounds.reduce((acc, bounds) => {
+                  if (!acc) return bounds;
+                  return acc.extend(bounds);
+                }, null);
+                
+                if (combinedBounds && combinedBounds.isValid()) {
+                  // Store neighbourhood bounds in map container for recenter button
+                  const mapContainer = mapInstanceRef.current.getContainer();
+                  mapContainer.dataset.neighbourhoodBounds = JSON.stringify([
+                    [combinedBounds.getSouth(), combinedBounds.getWest()],
+                    [combinedBounds.getNorth(), combinedBounds.getEast()]
+                  ]);
+                  
+                  // Zoom to selected neighbourhoods when selection changes
+                  mapInstanceRef.current.fitBounds(combinedBounds, { padding: [50, 50], maxZoom: 15 });
+                }
+              } else {
+                // Clear neighbourhood bounds if none selected
+                const mapContainer = mapInstanceRef.current.getContainer();
+                delete mapContainer.dataset.neighbourhoodBounds;
+              }
+            }, 100);
+          }
         }
       } catch (error) {
         console.error('Error parsing neighbourhoods:', error);
       }
     }
-  }, [showNeighbourhoods, selectedCity]);
+  }, [showNeighbourhoods, selectedCity, selectedNeighbourhoods]);
 
   useEffect(() => {
     displayCityMarkers();
@@ -681,6 +738,10 @@ const MapViewer = ({
 
   const loadLayerIncremental = useCallback(async (layerName) => {
     if (!selectedCity || loadedLayersRef.current.has(layerName) || !loadCityFeatures) {
+      return;
+    }
+
+    if (!activeLayers[layerName]) {
       return;
     }
     
@@ -969,9 +1030,25 @@ const MapViewer = ({
             
             // Get neighbourhood for this point
             const neighbourhoodName = parsedNeighbourhoods 
-              ? getNeighbourhoodForPoint(lat, lon, parsedNeighbourhoods, parsedNeighbourhoodNames)
-              : null;
-            
+            ? getNeighbourhoodForPoint(lat, lon, parsedNeighbourhoods, parsedNeighbourhoodNames)
+            : null;
+
+            // Skip this marker if neighbourhood filtering is active
+            if (showNeighbourhoods && parsedNeighbourhoods) {
+              // If no neighbourhoods are selected, don't show any markers
+              if (selectedNeighbourhoods.length === 0) {
+                continue;
+              }
+              // If neighbourhoods are selected but this point isn't in any selected neighbourhood, skip it
+              if (neighbourhoodName && !selectedNeighbourhoods.includes(neighbourhoodName)) {
+                continue;
+              }
+              // If this point has no neighbourhood assignment, skip it
+              if (!neighbourhoodName) {
+                continue;
+              }
+            }
+
             const marker = L.marker([lat, lon], {
               icon: customIcon,
               zIndexOffset: 1000,
@@ -1023,8 +1100,24 @@ const MapViewer = ({
               
               // Get neighbourhood for this centroid
               const neighbourhoodName = parsedNeighbourhoods 
-                ? getNeighbourhoodForPoint(centroid.lat, centroid.lng, parsedNeighbourhoods, parsedNeighbourhoodNames)
-                : null;
+              ? getNeighbourhoodForPoint(centroid.lat, centroid.lng, parsedNeighbourhoods, parsedNeighbourhoodNames)
+              : null;
+
+              // Skip this marker if neighbourhood filtering is active
+              if (showNeighbourhoods && parsedNeighbourhoods) {
+                // If no neighbourhoods are selected, don't show any markers
+                if (selectedNeighbourhoods.length === 0) {
+                  continue;
+                }
+                // If neighbourhoods are selected but this centroid isn't in any selected neighbourhood, skip it
+                if (neighbourhoodName && !selectedNeighbourhoods.includes(neighbourhoodName)) {
+                  continue;
+                }
+                // If this centroid has no neighbourhood assignment, skip it
+                if (!neighbourhoodName) {
+                  continue;
+                }
+              }
               
               const centroidMarker = L.marker([centroid.lat, centroid.lng], {
                 icon: L.divIcon({
@@ -1174,6 +1267,17 @@ const MapViewer = ({
       
       // Add markers in chunks with delays to keep UI responsive
       for (let i = 0; i < markersToAdd.length; i += CHUNK_SIZE) {
+        // Check if loading was cancelled
+        if (cancelLoadingRef.current) {
+          console.log(`Loading cancelled for ${layerName}`);
+          return;
+        }
+        
+        // Check if layer was turned off
+        if (!activeLayers[layerName]) {
+          return;
+        }
+
         const chunk = markersToAdd.slice(i, i + CHUNK_SIZE);
         
         // Add chunk to cluster
@@ -1200,7 +1304,7 @@ const MapViewer = ({
     } catch (error) {
       console.error(`Error loading layer ${layerName}:`, error);
     }
-  }, [selectedCity, loadCityFeatures, domainColors, availableLayers, markLayerAsLoaded, showNeighbourhoods]);
+  }, [selectedCity, loadCityFeatures, domainColors, availableLayers, markLayerAsLoaded, showNeighbourhoods, selectedNeighbourhoods, activeLayers]);
 
   const removeLayerIncremental = useCallback((layerName) => {
     const globalClusterGroup = clusterGroupsRef.current['__global__'];
@@ -1234,11 +1338,86 @@ const MapViewer = ({
       newSet.delete(layerName);
       loadedLayersRef.current = newSet;
     }
-  }, []);
+
+    if (globalClusterGroup.getLayers().length === 0) {
+      setFeatureCount(0);
+    }
+  }, [])
+
+  // Handle neighbourhood selection changes - reload all active layers
+  useEffect(() => {
+    if (!selectedCity || !mapInstanceRef.current) return;
+    if (!showNeighbourhoods) return;
+    
+    // Don't reload on initial mount
+    if (activeLayerNames.length === 0) return;
+    
+    // Set flag to cancel any ongoing loading - ADD THIS
+    cancelLoadingRef.current = true;
+    
+    // Set flag to prevent duplicate loading
+    neighbourhoodChangeInProgressRef.current = true;
+    
+    // Clear all existing markers from global cluster
+    const globalClusterGroup = clusterGroupsRef.current['__global__'];
+    if (globalClusterGroup) {
+      globalClusterGroup.clearLayers();
+    }
+    
+    // Clear displayed geometries
+    displayedGeometriesRef.current.forEach((geomInfo) => {
+      if (geomInfo.layer && mapInstanceRef.current.hasLayer(geomInfo.layer)) {
+        mapInstanceRef.current.removeLayer(geomInfo.layer);
+      }
+      if (geomInfo.marker) {
+        geomInfo.marker.geometryLayer = null;
+      }
+    });
+    displayedGeometriesRef.current.clear();
+    
+    // Reset feature count immediately
+    setFeatureCount(0);
+    
+    // Mark all layers as not loaded so they reload with new filter
+    loadedLayersRef.current = new Set();
+    
+    // Reload all active layers with new neighbourhood filter
+    setIsLoadingData(true);
+    
+    const timeoutId = setTimeout(async () => {
+      // Reset the cancel flag before starting new loads - ADD THIS
+      cancelLoadingRef.current = false;
+      
+      try {        
+        const loadPromises = activeLayerNames.map((layerName, index) => {
+          return new Promise(resolve => {
+            setTimeout(async () => {
+              await loadLayerIncremental(layerName);
+              resolve();
+            }, index * 50);
+          });
+        });
+        
+        await Promise.all(loadPromises);
+      } finally {
+        setIsLoadingData(false);
+        neighbourhoodChangeInProgressRef.current = false;
+      }
+    }, 100);
+    
+    return () => {
+      clearTimeout(timeoutId);
+      setIsLoadingData(false);
+      neighbourhoodChangeInProgressRef.current = false;
+    };
+  }, [selectedNeighbourhoods, showNeighbourhoods, selectedCity, activeLayerNames, loadLayerIncremental]);
 
   // Load all active layers when city is selected
   useEffect(() => {
     if (!selectedCity || !mapInstanceRef.current) return;
+    
+    // Skip if neighbourhood change is handling the reload
+    if (neighbourhoodChangeInProgressRef.current) return;
     
     // Clear previous layers
     loadedLayersRef.current = new Set();
@@ -1279,6 +1458,9 @@ const MapViewer = ({
   // Monitor layer changes and load/remove incrementally
   useEffect(() => {
     if (!selectedCity || !mapInstanceRef.current) return;
+    
+    // Skip if neighbourhood change is handling the reload
+    if (neighbourhoodChangeInProgressRef.current) return;
     
     const currentActive = new Set(activeLayerNames);
     const previousActive = previousActiveLayersRef.current;
@@ -1334,6 +1516,8 @@ const MapViewer = ({
         }
         clusterGroupsRef.current['__global__'] = null;
       }
+
+      setFeatureCount(0);
       
       // Explicitly clear boundary when no city selected
       if (boundaryLayerRef.current) {
@@ -1357,6 +1541,7 @@ const MapViewer = ({
       const mapContainer = mapInstanceRef.current.getContainer();
       delete mapContainer.dataset.cityLat;
       delete mapContainer.dataset.cityLng;
+      delete mapContainer.dataset.neighbourhoodBounds;
       
       setTimeout(() => {
         displayCityMarkers();
