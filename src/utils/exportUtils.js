@@ -32,6 +32,14 @@ const formatLayerName = (layerName) => {
     .join('_');
 };
 
+// Helper to format file names
+const createSafeFilename = (name) => {
+  return name
+    .replace(/\s+/g, '_')
+    // eslint-disable-next-line no-control-regex
+    .replace(/[<>:"/\\|?*\x00-\x1F]/g, '');
+};
+
 // Helper to convert stream to ArrayBuffer
 const streamToArrayBuffer = async (stream) => {
   const reader = stream.getReader();
@@ -469,7 +477,7 @@ export const exportAllLayers = async (cityData, availableLayersByDomain, format 
             for (let i = 0; i < neighbourhoodFeatures.length; i++) {
               const geometry = neighbourhoodFeatures[i];
               const neighbourhoodName = neighbourhoodNames[i] || `neighbourhood_${i + 1}`;
-              const safeName = neighbourhoodName.replace(/[^a-zA-Z0-9_-]/g, '_');
+              const safeName = createSafeFilename(neighbourhoodName);
               
               for (const exportFormat of formatsToExport) {
                 if (exportFormat === 'geojson') {

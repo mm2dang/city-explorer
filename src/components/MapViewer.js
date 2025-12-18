@@ -107,6 +107,43 @@ const calculateCentroid = (geometry) => {
   }
 };
 
+const getNeighbourhoodForPoint = (lat, lng, neighbourhoods, neighbourhoodNames) => {
+  if (!neighbourhoods || !Array.isArray(neighbourhoods)) {
+    return null;
+  }
+  
+  try {
+    const point = turf.point([lng, lat]);
+    const matchingNeighbourhoods = [];
+    
+    for (let i = 0; i < neighbourhoods.length; i++) {
+      const neighbourhood = neighbourhoods[i];
+      const neighbourhoodFeature = {
+        type: 'Feature',
+        geometry: neighbourhood,
+        properties: {}
+      };
+      
+      // Check if point is within this neighbourhood
+      if (turf.booleanPointInPolygon(point, neighbourhoodFeature)) {
+        matchingNeighbourhoods.push(neighbourhoodNames[i] || `Neighbourhood ${i + 1}`);
+      }
+    }
+    
+    // Return all matching neighbourhoods, or null if none found
+    if (matchingNeighbourhoods.length === 0) {
+      return null;
+    } else if (matchingNeighbourhoods.length === 1) {
+      return matchingNeighbourhoods[0];
+    } else {
+      return matchingNeighbourhoods.join(', ');
+    }
+  } catch (error) {
+    console.warn('Error checking neighbourhood:', error);
+    return null;
+  }
+};
+
 const MapViewer = ({
   selectedCity,
   activeLayers = {},
@@ -455,6 +492,19 @@ const MapViewer = ({
         // Add hover effect
         if (!isProcessing) {
           marker.on('mouseover', function(e) {
+            mapInstanceRef.current.eachLayer((mapLayer) => {
+              if (mapLayer.getTooltip && mapLayer.getTooltip() && mapLayer.isTooltipOpen()) {
+                mapLayer.closeTooltip();
+              }
+              if (mapLayer.getAllChildMarkers) {
+                mapLayer.getAllChildMarkers().forEach((m) => {
+                  if (m.getTooltip && m.getTooltip() && m.isTooltipOpen()) {
+                    m.closeTooltip();
+                  }
+                });
+              }
+            });
+            
             const innerDiv = this._icon?.querySelector('.city-icon-wrapper');
             if (innerDiv) {
               innerDiv.style.transform = 'scale(1.15)';
@@ -514,9 +564,6 @@ const MapViewer = ({
     if (showNeighbourhoods && selectedCity.neighbourhoods) {
       try {
         const neighbourhoods = JSON.parse(selectedCity.neighbourhoods);
-        const neighbourhoodNames = selectedCity.neighbourhood_names 
-          ? JSON.parse(selectedCity.neighbourhood_names)
-          : [];
         
         if (neighbourhoods && neighbourhoods.length > 0) {
           const neighbourhoodGroup = L.layerGroup();
@@ -535,70 +582,16 @@ const MapViewer = ({
                   color: '#06b6d4',
                   weight: 2,
                   fillOpacity: 0,
-                  dashArray: '5, 5'
-                }
+                  dashArray: '5, 5',
+                  interactive: false
+                },
+                pane: 'overlayPane',
               });
               
               // Add to group
               geoJsonLayer.eachLayer((layer) => {
                 neighbourhoodGroup.addLayer(layer);
               });
-              
-              // Add centroid marker
-              const turfFeature = {
-                type: 'Feature',
-                geometry: neighbourhood,
-                properties: {}
-              };
-              
-              const centroid = turf.centroid(turfFeature);
-              const [lon, lat] = centroid.geometry.coordinates;
-              
-              const neighbourhoodName = neighbourhoodNames[index] || `Neighbourhood ${index + 1}`;
-              
-              const centroidMarker = L.marker([lat, lon], {
-                icon: L.divIcon({
-                  className: 'custom-marker-icon',
-                  html: `<div style="
-                    background-color: #06b6d4;
-                    width: 28px;
-                    height: 28px;
-                    border-radius: 50%;
-                    border: 2px solid white;
-                    box-shadow: 0 2px 4px rgba(0,0,0,0.3);
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    color: white;
-                    font-size: 12px;
-                    z-index: 1000;
-                  ">
-                    <i class="fas fa-map-marked-alt"></i>
-                  </div>`,
-                  iconSize: [28, 28],
-                  iconAnchor: [14, 14]
-                }),
-                zIndexOffset: 2000
-              });
-              
-              centroidMarker.bindTooltip(`
-                <div style="font-family: Inter, sans-serif;">
-                  <h4 style="margin: 0 0 4px 0; color: #1a202c; font-size: 14px;">
-                    ${neighbourhoodName}
-                  </h4>
-                  <p style="margin: 0; color: #64748b; font-size: 12px;">
-                    Neighbourhood ${index + 1}
-                  </p>
-                </div>
-              `, {
-                permanent: false,
-                direction: 'top',
-                offset: [0, -20],
-                opacity: 0.95,
-                className: 'feature-marker-tooltip'
-              });
-              
-              neighbourhoodGroup.addLayer(centroidMarker);
               
             } catch (error) {
               console.error(`Error rendering neighbourhood ${index}:`, error);
@@ -608,10 +601,29 @@ const MapViewer = ({
           neighbourhoodGroup.addTo(mapInstanceRef.current);
           neighbourhoodLayersRef.current = neighbourhoodGroup;
           
-          // Bring tile layer to back
-          if (tileLayerRef.current) {
-            tileLayerRef.current.bringToBack();
-          }
+          // IMPORTANT: Bring neighbourhood layers to front after adding
+          setTimeout(() => {
+            if (neighbourhoodLayersRef.current) {
+              neighbourhoodLayersRef.current.eachLayer((layer) => {
+                if (layer.bringToFront) {
+                  layer.bringToFront();
+                }
+              });
+            }
+            
+            // Keep tile layer at back
+            if (tileLayerRef.current) {
+              tileLayerRef.current.bringToBack();
+            }
+            
+            // Keep boundary below neighbourhoods if it exists
+            if (boundaryLayerRef.current) {
+              boundaryLayerRef.current.bringToBack();
+              if (tileLayerRef.current) {
+                tileLayerRef.current.bringToBack();
+              }
+            }
+          }, 100);
         }
       } catch (error) {
         console.error('Error parsing neighbourhoods:', error);
@@ -681,6 +693,21 @@ const MapViewer = ({
         return;
       }
       
+      // Parse neighbourhoods if showNeighbourhoods is enabled
+      let parsedNeighbourhoods = null;
+      let parsedNeighbourhoodNames = null;
+  
+      if (showNeighbourhoods && selectedCity?.neighbourhoods) {
+        try {
+          parsedNeighbourhoods = JSON.parse(selectedCity.neighbourhoods);
+          parsedNeighbourhoodNames = selectedCity.neighbourhood_names 
+            ? JSON.parse(selectedCity.neighbourhood_names)
+            : [];
+        } catch (error) {
+          console.warn('Error parsing neighbourhoods:', error);
+        }
+      }
+      
       // Create global cluster group if it doesn't exist
       if (!clusterGroupsRef.current['__global__']) {        
         const globalClusterGroup = L.markerClusterGroup({
@@ -693,12 +720,17 @@ const MapViewer = ({
             const count = cluster.getChildCount();
             const markers = cluster.getAllChildMarkers();
             
-            // Count domains in this cluster
+            // Count domains and neighbourhoods in this cluster
             const domainCounts = {};
+            const neighbourhoodSet = new Set();
             markers.forEach(marker => {
               const domain = marker.options.domainName;
+              const neighbourhood = marker.options.neighbourhoodName;
               if (domain) {
                 domainCounts[domain] = (domainCounts[domain] || 0) + 1;
+              }
+              if (neighbourhood) {
+                neighbourhoodSet.add(neighbourhood);
               }
             });
             
@@ -774,25 +806,46 @@ const MapViewer = ({
             cluster._icon.style.transition = 'opacity 0.3s';
           }
         });
-  
+
         globalClusterGroup.on('unspiderfied', function(e) {
           const cluster = e.cluster;
           if (cluster._icon) {
             cluster._icon.style.opacity = '1';
           }
         });
-  
+
         globalClusterGroup.on('clustermouseover', function(e) {
+          // Close ALL tooltips on the map
+          mapInstanceRef.current.eachLayer((mapLayer) => {
+            if (mapLayer.getTooltip && mapLayer.getTooltip() && mapLayer.isTooltipOpen()) {
+              mapLayer.closeTooltip();
+            }
+            if (mapLayer.getAllChildMarkers) {
+              mapLayer.getAllChildMarkers().forEach((m) => {
+                if (m.getTooltip && m.getTooltip() && m.isTooltipOpen()) {
+                  m.closeTooltip();
+                }
+              });
+            }
+          });
+          
           const cluster = e.layer;
           const markers = cluster.getAllChildMarkers();
           
           const domainCounts = {};
+          const neighbourhoodSet = new Set();
           markers.forEach(marker => {
             const domain = marker.options.domainName;
+            const neighbourhood = marker.options.neighbourhoodName;
             if (domain) {
               domainCounts[domain] = (domainCounts[domain] || 0) + 1;
             }
+            if (neighbourhood) {
+              neighbourhoodSet.add(neighbourhood);
+            }
           });
+          
+          const neighbourhoods = Array.from(neighbourhoodSet);
           
           let tooltipContent = `<strong>${markers.length} features</strong>`;
           
@@ -813,6 +866,34 @@ const MapViewer = ({
             tooltipContent += '</div>';
           }
           
+          // Show neighbourhood(s) if available
+          if (neighbourhoods.length > 0) {
+            tooltipContent += `<div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid #e2e8f0;">`;
+            tooltipContent += `<strong style="color: #0891b2; font-size: 12px; display: block; margin-bottom: 4px;">Neighbourhood${neighbourhoods.length > 1 ? 's' : ''} (${neighbourhoods.length}):</strong>`;
+            
+            // Crop neighbourhood list to approximately 2 lines
+            const neighbourhoodText = neighbourhoods.join(', ');
+            const maxLength = 30; // Approximate character limit for 2 lines
+            
+            let displayText;
+            if (neighbourhoodText.length <= maxLength) {
+              displayText = neighbourhoodText;
+            } else {
+              // Crop at the last complete neighbourhood name before the limit
+              const croppedText = neighbourhoodText.substring(0, maxLength);
+              const lastCommaIndex = croppedText.lastIndexOf(',');
+              
+              if (lastCommaIndex > 0) {
+                displayText = croppedText.substring(0, lastCommaIndex) + ', etc.';
+              } else {
+                displayText = croppedText + '...';
+              }
+            }
+            
+            tooltipContent += `<span style="font-size: 12px; display: block; word-wrap: break-word; white-space: normal; line-height: 1.4;">${displayText}</span>`;
+            tooltipContent += `</div>`;
+          }
+          
           cluster.bindTooltip(tooltipContent, {
             permanent: false,
             direction: 'top',
@@ -821,7 +902,7 @@ const MapViewer = ({
             className: 'cluster-tooltip'
           }).openTooltip();
         });
-  
+
         globalClusterGroup.on('clustermouseout', function(e) {
           e.layer.closeTooltip();
         });
@@ -886,11 +967,33 @@ const MapViewer = ({
               domainColor: domainColor
             });
             
+            // Get neighbourhood for this point
+            const neighbourhoodName = parsedNeighbourhoods 
+              ? getNeighbourhoodForPoint(lat, lon, parsedNeighbourhoods, parsedNeighbourhoodNames)
+              : null;
+            
             const marker = L.marker([lat, lon], {
               icon: customIcon,
               zIndexOffset: 1000,
               domainName: domain_name,
-              layerName: layerName
+              layerName: layerName,
+              neighbourhoodName: neighbourhoodName
+            });
+            
+            marker.on('mouseover', function(e) {
+              // Close ALL tooltips on the map
+              mapInstanceRef.current.eachLayer((mapLayer) => {
+                if (mapLayer.getTooltip && mapLayer.getTooltip() && mapLayer.isTooltipOpen()) {
+                  mapLayer.closeTooltip();
+                }
+                if (mapLayer.getAllChildMarkers) {
+                  mapLayer.getAllChildMarkers().forEach((m) => {
+                    if (m.getTooltip && m.getTooltip() && m.isTooltipOpen()) {
+                      m.closeTooltip();
+                    }
+                  });
+                }
+              });
             });
             
             marker.bindTooltip(`
@@ -901,6 +1004,7 @@ const MapViewer = ({
                 <p style="margin: 0; color: #64748b; font-size: 12px;">
                   <strong>Layer:</strong> ${layerName}<br>
                   <strong>Domain:</strong> ${domain_name}
+                  ${neighbourhoodName ? `<br><strong>Neighbourhood:</strong> ${neighbourhoodName}` : ''}
                 </p>
               </div>
             `, {
@@ -916,6 +1020,11 @@ const MapViewer = ({
             // Handle non-point geometries
             try {
               const centroid = calculateCentroid(feature.geometry);
+              
+              // Get neighbourhood for this centroid
+              const neighbourhoodName = parsedNeighbourhoods 
+                ? getNeighbourhoodForPoint(centroid.lat, centroid.lng, parsedNeighbourhoods, parsedNeighbourhoodNames)
+                : null;
               
               const centroidMarker = L.marker([centroid.lat, centroid.lng], {
                 icon: L.divIcon({
@@ -944,7 +1053,8 @@ const MapViewer = ({
                 }),
                 zIndexOffset: 1000,
                 domainName: domain_name,
-                layerName: layerName
+                layerName: layerName,
+                neighbourhoodName: neighbourhoodName
               });
               
               centroidMarker.featureGeometry = feature.geometry;
@@ -958,6 +1068,22 @@ const MapViewer = ({
                   mapInstanceRef.current.removeLayer(this.geometryLayer);
                   this.geometryLayer = null;
                   displayedGeometriesRef.current.delete(markerId);
+                  
+                  // Update tooltip to show "view geometry"
+                  this.setTooltipContent(`
+                    <div style="font-family: Inter, sans-serif;">
+                      <h4 style="margin: 0 0 8px 0; color: #1a202c; font-size: 14px;">
+                        ${feature_name || 'Unnamed Feature'}
+                      </h4>
+                      <p style="margin: 0; color: #64748b; font-size: 12px;">
+                        <strong>Layer:</strong> ${layerName}<br>
+                        <strong>Domain:</strong> ${domain_name}<br>
+                        <strong>Type:</strong> ${feature.geometry.type}
+                        ${neighbourhoodName ? `<br><strong>Neighbourhood:</strong> ${neighbourhoodName}` : ''}
+                        <br><em style="color: #0891b2; font-size: 11px;">Click marker to view geometry</em>
+                      </p>
+                    </div>
+                  `);
                 } else {
                   this.geometryLayer = L.geoJSON(this.featureGeometry, {
                     style: {
@@ -980,7 +1106,39 @@ const MapViewer = ({
                     marker: this,
                     layerName: layerName
                   });
+                  
+                  // Update tooltip to show "hide geometry"
+                  this.setTooltipContent(`
+                    <div style="font-family: Inter, sans-serif;">
+                      <h4 style="margin: 0 0 8px 0; color: #1a202c; font-size: 14px;">
+                        ${feature_name || 'Unnamed Feature'}
+                      </h4>
+                      <p style="margin: 0; color: #64748b; font-size: 12px;">
+                        <strong>Layer:</strong> ${layerName}<br>
+                        <strong>Domain:</strong> ${domain_name}<br>
+                        <strong>Type:</strong> ${feature.geometry.type}
+                        ${neighbourhoodName ? `<br><strong>Neighbourhood:</strong> ${neighbourhoodName}` : ''}
+                        <br><em style="color: #0891b2; font-size: 11px;">Click marker to hide geometry</em>
+                      </p>
+                    </div>
+                  `);
                 }
+              });
+              
+              centroidMarker.on('mouseover', function(e) {
+                // Close ALL tooltips on the map
+                mapInstanceRef.current.eachLayer((mapLayer) => {
+                  if (mapLayer.getTooltip && mapLayer.getTooltip() && mapLayer.isTooltipOpen()) {
+                    mapLayer.closeTooltip();
+                  }
+                  if (mapLayer.getAllChildMarkers) {
+                    mapLayer.getAllChildMarkers().forEach((m) => {
+                      if (m.getTooltip && m.getTooltip() && m.isTooltipOpen()) {
+                        m.closeTooltip();
+                      }
+                    });
+                  }
+                });
               });
               
               centroidMarker.bindTooltip(`
@@ -991,8 +1149,9 @@ const MapViewer = ({
                   <p style="margin: 0; color: #64748b; font-size: 12px;">
                     <strong>Layer:</strong> ${layerName}<br>
                     <strong>Domain:</strong> ${domain_name}<br>
-                    <strong>Type:</strong> ${feature.geometry.type}<br>
-                    <em style="color: #0891b2; font-size: 11px;">Click marker to view geometry</em>
+                    <strong>Type:</strong> ${feature.geometry.type}
+                    ${neighbourhoodName ? `<br><strong>Neighbourhood:</strong> ${neighbourhoodName}` : ''}
+                    <br><em style="color: #0891b2; font-size: 11px;">Click marker to view geometry</em>
                   </p>
                 </div>
               `, {
@@ -1041,7 +1200,7 @@ const MapViewer = ({
     } catch (error) {
       console.error(`Error loading layer ${layerName}:`, error);
     }
-  }, [selectedCity, loadCityFeatures, domainColors, availableLayers, markLayerAsLoaded]);
+  }, [selectedCity, loadCityFeatures, domainColors, availableLayers, markLayerAsLoaded, showNeighbourhoods]);
 
   const removeLayerIncremental = useCallback((layerName) => {
     const globalClusterGroup = clusterGroupsRef.current['__global__'];

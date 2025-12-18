@@ -313,6 +313,11 @@
   max-width: 200px;
 }
 
+.cluster-tooltip .leaflet-tooltip-content {
+  white-space: normal;
+  word-wrap: break-word;
+}
+
 .cluster-tooltip strong {
   color: #1a202c;
   font-weight: 600;
@@ -507,7 +512,8 @@
   font-size: 13px !important;
   line-height: 1.5 !important;
   color: #374151 !important;
-  max-width: 250px;
+  max-width: 350px;
+  min-width: 200px;
   white-space: normal;
 }
 

@@ -23,7 +23,7 @@ const CalculateIndicatorsModal = ({ cities, selectedCity, dataSource, onCancel, 
   const [cityStatusMap, setCityStatusMap] = useState(new Map());
   const [loadingStatus, setLoadingStatus] = useState(false);
 
-  const [sortBy, setSortBy] = useState('selected');
+  const [sortBy, setSortBy] = useState('status');
   const [sortOrder, setSortOrder] = useState('asc');
   const hasSetInitialCity = useRef(false);
 
