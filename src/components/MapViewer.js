@@ -509,13 +509,15 @@ const MapViewer = ({
         // Add hover effect
         if (!isProcessing) {
           marker.on('mouseover', function(e) {
+            // Close tooltips from OTHER markers, but not this one
+            const currentMarker = this;
             mapInstanceRef.current.eachLayer((mapLayer) => {
-              if (mapLayer.getTooltip && mapLayer.getTooltip() && mapLayer.isTooltipOpen()) {
+              if (mapLayer !== currentMarker && mapLayer.getTooltip && mapLayer.getTooltip() && mapLayer.isTooltipOpen()) {
                 mapLayer.closeTooltip();
               }
               if (mapLayer.getAllChildMarkers) {
                 mapLayer.getAllChildMarkers().forEach((m) => {
-                  if (m.getTooltip && m.getTooltip() && m.isTooltipOpen()) {
+                  if (m !== currentMarker && m.getTooltip && m.getTooltip() && m.isTooltipOpen()) {
                     m.closeTooltip();
                   }
                 });
@@ -632,8 +634,12 @@ const MapViewer = ({
             neighbourhoodGroup.addTo(mapInstanceRef.current);
             neighbourhoodLayersRef.current = neighbourhoodGroup;
             
-            // IMPORTANT: Bring neighbourhood layers to front after adding
+            // Bring neighbourhood layers to front after adding
             setTimeout(() => {
+              if (!mapInstanceRef.current || !neighbourhoodLayersRef.current) {
+                return;
+              }
+              
               if (neighbourhoodLayersRef.current) {
                 neighbourhoodLayersRef.current.eachLayer((layer) => {
                   if (layer.bringToFront) {
@@ -655,24 +661,28 @@ const MapViewer = ({
                 }
               }
               
-              // MOVED: Zoom to neighbourhoods AFTER layers are added and brought to front
-              if (selectedBounds.length > 0 && selectedNeighbourhoods.length > 0) {
-                // Create a combined bounds from all selected neighbourhoods
-                const combinedBounds = selectedBounds.reduce((acc, bounds) => {
-                  if (!acc) return bounds;
-                  return acc.extend(bounds);
-                }, null);
-                
-                if (combinedBounds && combinedBounds.isValid()) {
-                  // Store neighbourhood bounds in map container for recenter button
-                  const mapContainer = mapInstanceRef.current.getContainer();
-                  mapContainer.dataset.neighbourhoodBounds = JSON.stringify([
-                    [combinedBounds.getSouth(), combinedBounds.getWest()],
-                    [combinedBounds.getNorth(), combinedBounds.getEast()]
-                  ]);
+              // Zoom to neighbourhoods after layers are added and brought to front
+              if (selectedBounds.length > 0 && selectedNeighbourhoods.length > 0 && mapInstanceRef.current) {
+                try {
+                  // Create a combined bounds from all selected neighbourhoods
+                  const combinedBounds = selectedBounds.reduce((acc, bounds) => {
+                    if (!acc) return bounds;
+                    return acc.extend(bounds);
+                  }, null);
                   
-                  // Zoom to selected neighbourhoods when selection changes
-                  mapInstanceRef.current.fitBounds(combinedBounds, { padding: [50, 50], maxZoom: 15 });
+                  if (combinedBounds && combinedBounds.isValid()) {
+                    // Store neighbourhood bounds in map container for recenter button
+                    const mapContainer = mapInstanceRef.current.getContainer();
+                    mapContainer.dataset.neighbourhoodBounds = JSON.stringify([
+                      [combinedBounds.getSouth(), combinedBounds.getWest()],
+                      [combinedBounds.getNorth(), combinedBounds.getEast()]
+                    ]);
+                    
+                    // Zoom to selected neighbourhoods when selection changes
+                    mapInstanceRef.current.fitBounds(combinedBounds, { padding: [50, 50], maxZoom: 15 });
+                  } 
+                } catch (error) {
+                  console.warn('Error zooming to neighbourhoods:', error);
                 }
               } else {
                 // Clear neighbourhood bounds if none selected

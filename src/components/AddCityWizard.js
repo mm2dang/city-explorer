@@ -470,7 +470,7 @@ const NeighbourhoodMapSync = ({
                   font-size: 12px;
                   z-index: 1000;
                 ">
-                  <i class="fas fa-map-marked-alt"></i>
+                  <i class="fas fa-map-marker-alt"></i>
                 </div>`,
                 iconSize: [28, 28],
                 iconAnchor: [14, 14]
@@ -1728,7 +1728,7 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel, dataSource = 'city',
                   font-size: 12px;
                   z-index: 1000;
                 ">
-                  <i class="fas fa-map-marked-alt"></i>
+                  <i class="fas fa-map-marker-alt"></i>
                 </div>`,
                 iconSize: [28, 28],
                 iconAnchor: [14, 14]
@@ -1890,7 +1890,7 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel, dataSource = 'city',
                 font-size: 12px;
                 z-index: 1000;
               ">
-                <i class="fas fa-map-marked-alt"></i>
+                <i class="fas fa-map-marker-alt"></i>
               </div>`,
               iconSize: [28, 28],
               iconAnchor: [14, 14]
@@ -2483,7 +2483,7 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel, dataSource = 'city',
                 font-size: 12px;
                 z-index: 1000;
               ">
-                <i class="fas fa-map-marked-alt"></i>
+                <i class="fas fa-map-marker-alt"></i>
               </div>`,
               iconSize: [28, 28],
               iconAnchor: [14, 14]
@@ -2921,7 +2921,7 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel, dataSource = 'city',
                     className="osm-link"
                     onClick={(e) => e.stopPropagation()}
                   >
-                    <i className="fas fa-map-marked-alt"></i>
+                    <i className="fas fa-map-marker-alt"></i>
                     View on OpenStreetMap
                     <i className="fas fa-external-link-alt"></i>
                   </a>
@@ -3289,7 +3289,7 @@ const AddCityWizard = ({ editingCity, onComplete, onCancel, dataSource = 'city',
                   onMouseOver={(e) => e.currentTarget.style.textDecoration = 'underline'}
                   onMouseOut={(e) => e.currentTarget.style.textDecoration = 'none'}
                 >
-                  <i className="fas fa-map-marked-alt"></i>
+                  <i className="fas fa-map-marker-alt"></i>
                   View boundary on OpenStreetMap
                   <i className="fas fa-external-link-alt" style={{ fontSize: '12px' }}></i>
                 </a>

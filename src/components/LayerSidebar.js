@@ -39,7 +39,6 @@ const LayerSidebar = ({
   const [showExportAllMenu, setShowExportAllMenu] = useState(false);
   const [exportingDomain, setExportingDomain] = useState(null);
   const [showDomainExportMenu, setShowDomainExportMenu] = useState(null);
-  const [openLayerExport, setOpenLayerExport] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [importingCities, setImportingCities] = useState(new Set());
   const [dropdownPositions, setDropdownPositions] = useState({});
@@ -1132,7 +1131,7 @@ const LayerSidebar = ({
                   style={{ backgroundColor: showNeighbourhoods ? '#06b6d415' : '#f1f5f9' }}
                 >
                   <i
-                    className="fas fa-map-marked-alt"
+                    className="fas fa-map-marker-alt"
                     style={{ color: showNeighbourhoods ? '#06b6d4' : '#94a3b8' }}
                   />
                 </div>
@@ -1152,23 +1151,13 @@ const LayerSidebar = ({
                   onClick={() => handleToggleDomainLayers(domain, layers)}
                   whileHover={{ scale: 1.1 }}
                   whileTap={{ scale: 0.95 }}
+                  style={{
+                    '--domain-color': domainColors[domain],
+                    '--domain-color-bg': `${domainColors[domain]}15`
+                  }}
                 >
-                  <div
-                    className="collapsed-icon-wrapper"
-                    style={{ 
-                      backgroundColor: (allActive || someActive) 
-                        ? `${domainColors[domain]}15` 
-                        : '#f1f5f9' 
-                    }}
-                  >
-                    <i
-                      className={domainIcons[domain]}
-                      style={{ 
-                        color: (allActive || someActive) 
-                          ? domainColors[domain] 
-                          : '#94a3b8' 
-                      }}
-                    />
+                  <div className="collapsed-icon-wrapper">
+                    <i className={domainIcons[domain]} />
                   </div>
                   <span className="collapsed-count">{layers.length}</span>
                 </motion.div>
@@ -1283,258 +1272,117 @@ const LayerSidebar = ({
                   </div>
                 </div>
                 {selectedCity && selectedCity.neighbourhoods && selectedCity.neighbourhoods !== 'null' && (
-                  <div style={{
-                    padding: '12px 16px',
-                    borderBottom: '1px solid #e5e7eb',
-                    backgroundColor: '#f8fafc'
-                  }}>
-                    <label style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '10px',
-                      cursor: 'pointer',
-                      fontSize: '14px',
-                      fontWeight: '500',
-                      color: '#374151',
-                      marginBottom: '8px'
-                    }}>
-                      <input
-                        type="checkbox"
-                        checked={showNeighbourhoods}
-                        onChange={(e) => onToggleNeighbourhoods(e.target.checked)}
-                        style={{
-                          width: '16px',
-                          height: '16px',
-                          cursor: 'pointer'
-                        }}
-                      />
-                      <div style={{
-                        width: '28px',
-                        height: '28px',
-                        borderRadius: '6px',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        backgroundColor: showNeighbourhoods ? '#06b6d415' : '#f1f5f9'
-                      }}>
-                        <i 
-                          className="fas fa-map-marked-alt" 
-                          style={{ 
-                            color: showNeighbourhoods ? '#06b6d4' : '#94a3b8',
-                            fontSize: '14px'
-                          }}
-                        />
-                      </div>
-                      Show Neighbourhoods
-                    </label>
-                    
-                    {showNeighbourhoods && neighbourhoodNames.length > 0 && (
-                      <div style={{ marginTop: '8px' }}>
-                        <div
-                          style={{
-                            position: 'relative',
-                            border: '1px solid #d1d5db',
-                            borderRadius: '6px',
-                            backgroundColor: 'white',
-                            cursor: 'pointer'
-                          }}
-                        >
-                          <div
-                            onClick={() => {
-                              setIsNeighbourhoodDropdownOpen(!isNeighbourhoodDropdownOpen);
-                              if (isNeighbourhoodDropdownOpen) {
-                                // Clear search when closing
-                                setNeighbourhoodSearchQuery('');
-                              }
-                            }}
-                            style={{
-                              padding: '8px 12px',
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'space-between',
-                              fontSize: '13px'
-                            }}
-                          >
-                            <span style={{ color: '#64748b' }}>
-                              {selectedNeighbourhoods.length === neighbourhoodNames.length
-                                ? `All neighbourhoods selected (${neighbourhoodNames.length})`
-                                : `${selectedNeighbourhoods.length} of ${neighbourhoodNames.length} selected`}
-                            </span>
-                            <i className={`fas fa-chevron-${isNeighbourhoodDropdownOpen ? 'up' : 'down'}`} style={{ fontSize: '12px', color: '#64748b' }}></i>
-                          </div>
-                          
-                          {isNeighbourhoodDropdownOpen && (
-                            <div style={{
-                              position: 'absolute',
-                              top: '100%',
-                              left: 0,
-                              right: 0,
-                              marginTop: '4px',
-                              backgroundColor: 'white',
-                              border: '1px solid #d1d5db',
-                              borderRadius: '6px',
-                              boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)',
-                              maxHeight: '250px',
-                              overflowY: 'auto',
-                              zIndex: 1000
-                            }}>
-                              {/* Search Input */}
-                              <div style={{
-                                padding: '8px',
-                                borderBottom: '1px solid #e5e7eb',
-                                position: 'sticky',
-                                top: 0,
-                                backgroundColor: 'white',
-                                zIndex: 1
-                              }}>
-                                <div style={{
-                                  position: 'relative',
-                                  display: 'flex',
-                                  alignItems: 'center'
-                                }}>
-                                  <i className="fas fa-search" style={{
-                                    position: 'absolute',
-                                    left: '10px',
-                                    color: '#94a3b8',
-                                    fontSize: '12px',
-                                    pointerEvents: 'none'
-                                  }}></i>
-                                  <input
-                                    type="text"
-                                    placeholder="Search neighbourhoods..."
-                                    value={neighbourhoodSearchQuery}
-                                    onChange={(e) => setNeighbourhoodSearchQuery(e.target.value)}
-                                    onClick={(e) => e.stopPropagation()}
-                                    style={{
-                                      width: '100%',
-                                      padding: '6px 10px 6px 30px',
-                                      border: '1px solid #d1d5db',
-                                      borderRadius: '4px',
-                                      fontSize: '13px',
-                                      outline: 'none',
-                                      transition: 'border-color 0.2s'
-                                    }}
-                                    onFocus={(e) => {
-                                      e.target.style.borderColor = '#0891b2';
-                                    }}
-                                    onBlur={(e) => {
-                                      e.target.style.borderColor = '#d1d5db';
-                                    }}
-                                  />
-                                  {neighbourhoodSearchQuery && (
-                                    <button
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        setNeighbourhoodSearchQuery('');
-                                      }}
-                                      style={{
-                                        position: 'absolute',
-                                        right: '8px',
-                                        background: 'none',
-                                        border: 'none',
-                                        color: '#94a3b8',
-                                        cursor: 'pointer',
-                                        padding: '4px',
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        justifyContent: 'center'
-                                      }}
-                                    >
-                                      <i className="fas fa-times" style={{ fontSize: '12px' }}></i>
-                                    </button>
-                                  )}
-                                </div>
-                              </div>
-
-                              {/* Select All */}
-                              <label style={{
-                                display: 'flex',
-                                alignItems: 'center',
-                                padding: '8px 12px',
-                                cursor: 'pointer',
-                                fontSize: '13px',
-                                fontWeight: '600',
-                                borderBottom: '1px solid #e5e7eb',
-                                backgroundColor: '#f9fafb',
-                                color: '#64748b'
-                              }}>
-                                <input
-                                  type="checkbox"
-                                  checked={selectedNeighbourhoods.length === neighbourhoodNames.length}
-                                  onChange={(e) => handleToggleAllNeighbourhoods(e.target.checked)}
-                                  style={{ marginRight: '8px', cursor: 'pointer' }}
-                                />
-                                Select All
-                              </label>
-                              
-                              {/* Neighbourhood List */}
-                              {filteredNeighbourhoodNames.length > 0 ? (
-                                filteredNeighbourhoodNames.map((name, index) => (
-                                  <label
-                                    key={name}
-                                    style={{
-                                      display: 'flex',
-                                      alignItems: 'center',
-                                      justifyContent: 'space-between',
-                                      padding: '8px 12px',
-                                      cursor: 'pointer',
-                                      fontSize: '13px',
-                                      borderBottom: index < filteredNeighbourhoodNames.length - 1 ? '1px solid #f3f4f6' : 'none',
-                                      backgroundColor: selectedNeighbourhoods.includes(name) ? '#f0f9ff' : 'white',
-                                      color: '#64748b'
-                                    }}
-                                    onMouseEnter={(e) => {
-                                      if (!selectedNeighbourhoods.includes(name)) {
-                                        e.currentTarget.style.backgroundColor = '#f9fafb';
-                                      }
-                                    }}
-                                    onMouseLeave={(e) => {
-                                      if (!selectedNeighbourhoods.includes(name)) {
-                                        e.currentTarget.style.backgroundColor = 'white';
-                                      }
-                                    }}
-                                  >
-                                    <div style={{ display: 'flex', alignItems: 'center' }}>
-                                      <input
-                                        type="checkbox"
-                                        checked={selectedNeighbourhoods.includes(name)}
-                                        onChange={() => handleToggleNeighbourhood(name)}
-                                        style={{ marginRight: '8px', cursor: 'pointer' }}
-                                      />
-                                      {name}
-                                    </div>
-                                    <span style={{
-                                      fontSize: '11px',
-                                      color: '#94a3b8',
-                                      backgroundColor: '#f1f5f9',
-                                      padding: '2px 6px',
-                                      borderRadius: '10px',
-                                      fontWeight: '500'
-                                    }}>
-                                      {isLoadingNeighbourhoodCounts ? (
-                                        <i className="fas fa-spinner fa-spin" style={{ fontSize: '10px' }}></i>
-                                      ) : (
-                                        neighbourhoodFeatureCounts[name] || 0
-                                      )}
-                                    </span>
-                                  </label>
-                                ))
-                              ) : (
-                                <div style={{
-                                  padding: '16px',
-                                  textAlign: 'center',
-                                  color: '#94a3b8',
-                                  fontSize: '13px'
-                                }}>
-                                  <i className="fas fa-search" style={{ marginBottom: '8px', fontSize: '24px', display: 'block' }}></i>
-                                  No neighbourhoods match "{neighbourhoodSearchQuery}"
-                                </div>
-                              )}
-                            </div>
-                          )}
+                  <div className="neighbourhood-toggle-section">
+                    <div className="neighbourhood-selector">
+                      <div className="neighbourhood-header-row">
+                        <div className="neighbourhood-toggle-label">
+                          <span>Show Neighbourhoods</span>
                         </div>
+                        <button
+                          className={`neighbourhood-checkbox ${showNeighbourhoods ? 'checked' : ''}`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onToggleNeighbourhoods(!showNeighbourhoods);
+                          }}
+                          title={showNeighbourhoods ? "Hide neighbourhoods" : "Show neighbourhoods"}
+                        >
+                          {showNeighbourhoods && (
+                            <i className="fas fa-check"></i>
+                          )}
+                        </button>
                       </div>
-                    )}
+                      
+                      {showNeighbourhoods && neighbourhoodNames.length > 0 && (
+                        <div className="neighbourhood-dropdown-wrapper">
+                          <div className="neighbourhood-dropdown-container">
+                            <div
+                              onClick={() => {
+                                setIsNeighbourhoodDropdownOpen(!isNeighbourhoodDropdownOpen);
+                                if (isNeighbourhoodDropdownOpen) {
+                                  setNeighbourhoodSearchQuery('');
+                                }
+                              }}
+                              className="neighbourhood-dropdown-button"
+                            >
+                              <span className="neighbourhood-dropdown-text">
+                                {selectedNeighbourhoods.length === neighbourhoodNames.length
+                                  ? `All neighbourhoods selected (${neighbourhoodNames.length})`
+                                  : `${selectedNeighbourhoods.length} of ${neighbourhoodNames.length} selected`}
+                              </span>
+                              <i className={`fas fa-chevron-down neighbourhood-dropdown-chevron ${isNeighbourhoodDropdownOpen ? 'open' : ''}`}></i>
+                            </div>
+                            
+                            {isNeighbourhoodDropdownOpen && (
+                              <div className="neighbourhood-dropdown-menu">
+                                <div className="neighbourhood-search-container">
+                                  <div className="neighbourhood-search-wrapper">
+                                    <i className="fas fa-search neighbourhood-search-icon"></i>
+                                    <input
+                                      type="text"
+                                      placeholder="Search neighbourhoods..."
+                                      value={neighbourhoodSearchQuery}
+                                      onChange={(e) => setNeighbourhoodSearchQuery(e.target.value)}
+                                      onClick={(e) => e.stopPropagation()}
+                                      className="neighbourhood-search-input"
+                                    />
+                                    {neighbourhoodSearchQuery && (
+                                      <button
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          setNeighbourhoodSearchQuery('');
+                                        }}
+                                        className="neighbourhood-search-clear"
+                                      >
+                                        <i className="fas fa-times"></i>
+                                      </button>
+                                    )}
+                                  </div>
+                                </div>
+
+                                <label className="neighbourhood-select-all">
+                                  <input
+                                    type="checkbox"
+                                    checked={selectedNeighbourhoods.length === neighbourhoodNames.length}
+                                    onChange={(e) => handleToggleAllNeighbourhoods(e.target.checked)}
+                                  />
+                                  Select All
+                                </label>
+                                
+                                {filteredNeighbourhoodNames.length > 0 ? (
+                                  filteredNeighbourhoodNames.map((name) => (
+                                    <label
+                                      key={name}
+                                      className={`neighbourhood-item ${selectedNeighbourhoods.includes(name) ? 'selected' : ''}`}
+                                    >
+                                      <div className="neighbourhood-item-content">
+                                        <input
+                                          type="checkbox"
+                                          checked={selectedNeighbourhoods.includes(name)}
+                                          onChange={() => handleToggleNeighbourhood(name)}
+                                        />
+                                        {name}
+                                      </div>
+                                      <span className="neighbourhood-feature-count">
+                                        {isLoadingNeighbourhoodCounts ? (
+                                          <i className="fas fa-spinner fa-spin neighbourhood-loading-spinner"></i>
+                                        ) : (
+                                          neighbourhoodFeatureCounts[name] || 0
+                                        )}
+                                      </span>
+                                    </label>
+                                  ))
+                                ) : (
+                                  <div className="neighbourhood-no-results">
+                                    <i className="fas fa-search"></i>
+                                    No neighbourhoods match "{neighbourhoodSearchQuery}"
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 )}
                 <div className="search-section">
@@ -1583,16 +1431,18 @@ const LayerSidebar = ({
                         return (
                           <div 
                             key={domain} 
-                            className={`domain-section ${openLayerExport && openLayerExport.startsWith(domain) && layers[0].name === openLayerExport.split('-')[1] ? 'first-layer-export-open' : ''}`}
+                            className={`domain-section ${isExpanded ? 'expanded' : ''} ${allActive || someActive ? 'has-active-layers' : ''}`}
+                            style={{
+                              '--domain-color': domainColors[domain]
+                            }}
                           >
                             <motion.div
                               className={`domain-header ${isExpanded ? 'expanded' : ''} ${allActive ? 'all-active' : someActive ? 'some-active' : ''}`}
                               style={{
-                                backgroundColor: allActive 
-                                  ? `${domainColors[domain]}10` 
-                                  : someActive 
-                                  ? `${domainColors[domain]}05` 
-                                  : 'transparent'
+                                '--domain-color': domainColors[domain],
+                                '--domain-color-light': `${domainColors[domain]}10`,
+                                '--domain-color-very-light': `${domainColors[domain]}05`,
+                                '--domain-color-bg': `${domainColors[domain]}15`
                               }}
                             >
                               <div 
@@ -1616,23 +1466,9 @@ const LayerSidebar = ({
                                 </motion.button>
                                 
                                 <div className="domain-info">
-                                <div
-                                  className="domain-icon-wrapper"
-                                  style={{ 
-                                    backgroundColor: (allActive || someActive) 
-                                      ? `${domainColors[domain]}15` 
-                                      : '#f1f5f9' 
-                                  }}
-                                >
-                                  <i
-                                    className={domainIcons[domain]}
-                                    style={{ 
-                                      color: (allActive || someActive) 
-                                        ? domainColors[domain] 
-                                        : '#94a3b8' 
-                                    }}
-                                  />
-                                </div>
+                                  <div className={`domain-icon-wrapper ${allActive || someActive ? 'active' : ''}`}>
+                                    <i className={domainIcons[domain]} />
+                                  </div>
                                   <span className="domain-name">{formatDomainName(domain)}</span>
                                   <span className="layer-count">{layers.length}</span>
                                 </div>
@@ -1763,8 +1599,6 @@ const LayerSidebar = ({
                                       onDelete={() => handleDeleteLayer(domain, layer.name)}
                                       onExport={(format) => handleExportLayer(domain, layer.name, format)}
                                       isExporting={exportingLayer === layer.name}
-                                      onExportMenuOpen={() => setOpenLayerExport(`${domain}-${layer.name}`)}
-                                      onExportMenuClose={() => setOpenLayerExport(null)}
                                       dropdownPositions={dropdownPositions}
                                       setDropdownPositions={setDropdownPositions}
                                     />

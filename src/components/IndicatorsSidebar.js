@@ -37,12 +37,14 @@ const IndicatorsSidebar = ({
   const [jobId, setJobId] = useState(null);
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
-  const [expandedIndicator, setExpandedIndicator] = useState(null);
+  const [expandedIndicators, setExpandedIndicators] = useState(new Set());
   const [timeSeriesData, setTimeSeriesData] = useState({});
   const [loadingTimeSeries, setLoadingTimeSeries] = useState({});
   const [dateRangeStats, setDateRangeStats] = useState({});
   const [showDateRangeDropdown, setShowDateRangeDropdown] = useState(false);
   const [showDateRangeStats, setShowDateRangeStats] = useState(true);
+  const [hasScrolled, setHasScrolled] = useState(false);
+  const [isScrolledToEnd, setIsScrolledToEnd] = useState(false);
 
   // Indicator definitions with labels and descriptions
   const indicators = useMemo(() => ({
@@ -259,7 +261,7 @@ const IndicatorsSidebar = ({
   useEffect(() => {
     setTimeSeriesData({});
     setLoadingTimeSeries({});
-    setExpandedIndicator(null);
+    setExpandedIndicators(new Set());
   }, [selectedCity]);
 
   // Poll for job status when calculating
@@ -506,62 +508,6 @@ const IndicatorsSidebar = ({
     }
   };
 
-  // Render collapsed view when sidebar is collapsed and city is selected
-  const renderCollapsedView = () => {
-    if (!selectedCityData) {
-      return (
-        <div className="collapsed-indicators-view">
-          <div className="no-data-icon">
-            <i className="fas fa-chart-line"></i>
-          </div>
-        </div>
-      );
-    }
-    
-    // Filter to only show indicators with available data
-    const availableIndicators = Object.entries(indicators).filter(([key]) => {
-      const value = selectedCityData[key];
-      return value != null && !isNaN(value);
-    });
-    
-    if (availableIndicators.length === 0) {
-      return (
-        <div className="collapsed-indicators-view">
-          <div className="no-data-icon">
-            <i className="fas fa-chart-line"></i>
-          </div>
-        </div>
-      );
-    }
-    
-    return (
-      <div className="collapsed-indicators-view">
-        {availableIndicators.map(([key, info]) => {
-          const value = selectedCityData[key];
-          return (
-            <motion.div
-              key={key}
-              className="collapsed-indicator-item"
-              title={`${info.label}: ${Number(value).toFixed(2)} ${info.unit}`}
-              whileHover={{ scale: 1.05 }}
-              whileTap={{ scale: 0.95 }}
-            >
-              <div
-                className="collapsed-indicator-icon"
-                style={{ background: info.color }}
-              >
-                <i className={`fas ${info.icon}`}></i>
-              </div>
-              <span className="collapsed-indicator-value" style={{ color: info.color }}>
-                {Number(value).toFixed(1)}
-              </span>
-            </motion.div>
-          );
-        })}
-      </div>
-    );
-  };
-
   const renderIndicatorCards = () => {
     if (!selectedCityData) {
       return (
@@ -594,7 +540,7 @@ const IndicatorsSidebar = ({
         {availableIndicators.map(([key, info], index) => {
           const value = selectedCityData[key];
           const hasValue = value != null && !isNaN(value);
-          const isExpanded = expandedIndicator === key;
+          const isExpanded = expandedIndicators.has(key);
           const isLoading = loadingTimeSeries[key];
           const chartData = timeSeriesData[key] || [];
           
@@ -724,6 +670,15 @@ const IndicatorsSidebar = ({
   };
 
   const renderSummaryTable = () => {
+    const handleScroll = (e) => {
+      const element = e.target;
+      const scrolled = element.scrollLeft > 0;
+      const isAtEnd = element.scrollLeft + element.clientWidth >= element.scrollWidth - 1;
+      
+      setHasScrolled(scrolled);
+      setIsScrolledToEnd(isAtEnd);
+    };
+  
     if (summaryData.length === 0) {
       return (
         <div className="no-data-message">
@@ -749,6 +704,22 @@ const IndicatorsSidebar = ({
             placeholder="Search any field..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
+            onMouseEnter={() => {
+              const table = document.querySelector('.table-scroll-wrapper');
+              if (table) table.classList.add('highlight-from-search');
+            }}
+            onMouseLeave={() => {
+              const table = document.querySelector('.table-scroll-wrapper');
+              if (table) table.classList.remove('highlight-from-search');
+            }}
+            onFocus={() => {
+              const table = document.querySelector('.table-scroll-wrapper');
+              if (table) table.classList.add('highlight-from-search');
+            }}
+            onBlur={() => {
+              const table = document.querySelector('.table-scroll-wrapper');
+              if (table) table.classList.remove('highlight-from-search');
+            }}
           />
           {searchQuery && (
             <button
@@ -760,7 +731,31 @@ const IndicatorsSidebar = ({
             </button>
           )}
         </div>
-        <div className="table-scroll-wrapper">
+        <div className="table-hint">
+          <i className="fas fa-arrows-alt-h"></i>
+          <span>Scroll horizontally to view all indicators</span>
+        </div>
+        <div 
+          className={`table-scroll-wrapper ${hasScrolled ? 'scrolled' : ''} ${isScrolledToEnd ? 'scrolled-to-end' : ''}`}
+          onScroll={handleScroll}
+          onMouseEnter={() => {
+            const calculateBtn = document.querySelector('.calculate-btn');
+            const exportBtn = document.querySelector('.export-btn');
+            if (calculateBtn) calculateBtn.classList.add('highlight-from-table');
+            if (exportBtn) exportBtn.classList.add('highlight-from-table');
+          }}
+          onMouseLeave={() => {
+            const calculateBtn = document.querySelector('.calculate-btn');
+            const exportBtn = document.querySelector('.export-btn');
+            if (calculateBtn) calculateBtn.classList.remove('highlight-from-table');
+            if (exportBtn) exportBtn.classList.remove('highlight-from-table');
+          }}
+        >
+          {!hasScrolled && !isScrolledToEnd && (
+            <div className="scroll-indicator">
+              <i className="fas fa-chevron-right"></i>
+            </div>
+          )}
           <table className="summary-table">
             <thead>
               <tr>
@@ -781,18 +776,43 @@ const IndicatorsSidebar = ({
               </tr>
             </thead>
             <tbody>
-              {filteredAndSortedData.map((row, index) => (
-                <tr key={index}>
-                  <td className="city-cell">{row.city}</td>
-                  <td>{row.province || '-'}</td>
-                  <td>{row.country}</td>
-                  {visibleIndicators.map(indicator => (
-                    <td key={indicator} className="number-cell">
-                      {row[indicator] != null ? Number(row[indicator]).toFixed(2) : '-'}
-                    </td>
-                  ))}
-                </tr>
-              ))}
+              {filteredAndSortedData.map((row, index) => {
+                const hasMobilePing = (
+                  (row.out_at_night != null && !isNaN(row.out_at_night)) || 
+                  (row.leisure_dwell_time != null && !isNaN(row.leisure_dwell_time)) || 
+                  (row.cultural_visits != null && !isNaN(row.cultural_visits))
+                );
+                
+                const hasConnectivity = (
+                  (row.speed != null && !isNaN(row.speed)) || 
+                  (row.latency != null && !isNaN(row.latency)) ||
+                  (row.coverage != null && !isNaN(row.coverage))
+                );
+                
+                let rowClass = '';
+                if (hasMobilePing && hasConnectivity) {
+                  rowClass = 'fully-calculated';
+                } else if (hasConnectivity) {
+                  rowClass = 'connectivity-only';
+                } else if (hasMobilePing) {
+                  rowClass = 'mobile-only';
+                } else {
+                  rowClass = 'not-calculated';
+                }
+                
+                return (
+                  <tr key={index} className={rowClass}>
+                    <td className="city-cell">{row.city}</td>
+                    <td>{row.province || '-'}</td>
+                    <td>{row.country}</td>
+                    {visibleIndicators.map(indicator => (
+                      <td key={indicator} className="number-cell">
+                        {row[indicator] != null ? Number(row[indicator]).toFixed(2) : '-'}
+                      </td>
+                    ))}
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -861,13 +881,21 @@ const IndicatorsSidebar = ({
   const handleIndicatorClick = async (indicatorKey) => {
     if (!selectedCity || !selectedDateRange) return;
     
-    // Toggle collapse if already expanded
-    if (expandedIndicator === indicatorKey) {
-      setExpandedIndicator(null);
+    // Toggle expansion
+    setExpandedIndicators(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(indicatorKey)) {
+        newSet.delete(indicatorKey);
+      } else {
+        newSet.add(indicatorKey);
+      }
+      return newSet;
+    });
+    
+    // If collapsing, no need to load data
+    if (expandedIndicators.has(indicatorKey)) {
       return;
     }
-    
-    setExpandedIndicator(indicatorKey);
     
     // Check if data already loaded
     if (timeSeriesData[indicatorKey]) return;
@@ -922,7 +950,15 @@ const IndicatorsSidebar = ({
           <div className="header-content">
             <div className="header-text">
               <h2>Indicators</h2>
-              {selectedCity && <span className="data-source-badge">{dataSource.toUpperCase()}</span>}
+              <span 
+                className="data-source-badge"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  alert('Switch the data source through the settings in the header.');
+                }}
+              >
+                {dataSource === 'city' ? 'UPLOADED' : 'OSM'}
+              </span>
             </div>
           </div>
         )}
@@ -938,33 +974,100 @@ const IndicatorsSidebar = ({
       </div>
       {isCollapsed ? (
         selectedCity ? (
-          renderCollapsedView()
+          selectedCityData && Object.entries(indicators).some(([key]) => {
+            const value = selectedCityData[key];
+            return value != null && !isNaN(value);
+          }) ? (
+            // City with data - show indicators
+            <div className="collapsed-indicators-view">
+              {Object.entries(indicators).filter(([key]) => {
+                const value = selectedCityData[key];
+                return value != null && !isNaN(value);
+              }).map(([key, info]) => {
+                const value = selectedCityData[key];
+                return (
+                  <motion.div
+                    key={key}
+                    className="collapsed-indicator-item"
+                    style={{ '--card-color': info.color }}
+                    title={`${info.label}: ${Number(value).toFixed(2)} ${info.unit}`}
+                    whileHover={{ scale: 1.05 }}
+                    whileTap={{ scale: 0.95 }}
+                  >
+                    <div
+                      className="collapsed-indicator-icon"
+                      style={{ background: info.color }}
+                    >
+                      <i className={`fas ${info.icon}`}></i>
+                    </div>
+                    <span className="collapsed-indicator-value" style={{ color: info.color }}>
+                      {Number(value).toFixed(1)}
+                    </span>
+                  </motion.div>
+                );
+              })}
+            </div>
+          ) : (
+            // City with no data - show buttons
+            <div className="collapsed-indicators-view">
+              <div className="collapsed-actions">
+                <motion.button
+                  className="collapsed-action-btn calculate"
+                  onClick={() => onCalculateIndicators()}
+                  disabled={isCalculating || isCalculatingConnectivity}
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.95 }}
+                  title="Calculate Indicators"
+                >
+                  <i className={`fas ${(isCalculating || isCalculatingConnectivity) ? 'fa-spinner fa-spin' : 'fa-calculator'}`}></i>
+                </motion.button>
+              </div>
+            </div>
+          )
         ) : (
+          // Global view - show stats and buttons
           <div className="collapsed-indicators-view">
+            <div className="collapsed-actions">
+              <motion.button
+                className="collapsed-action-btn calculate"
+                onClick={() => onCalculateIndicators()}
+                disabled={isCalculating || isCalculatingConnectivity}
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
+                title="Calculate Indicators"
+              >
+                <i className={`fas ${(isCalculating || isCalculatingConnectivity) ? 'fa-spinner fa-spin' : 'fa-calculator'}`}></i>
+              </motion.button>
+              {canExport && (
+                <motion.button
+                  className="collapsed-action-btn export"
+                  onClick={() => setShowExportMenu(!showExportMenu)}
+                  disabled={isExporting}
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.95 }}
+                  title="Export"
+                >
+                  <i className={`fas ${isExporting ? 'fa-spinner fa-spin' : 'fa-download'}`}></i>
+                </motion.button>
+              )}
+            </div>
+
+            <div className="collapsed-divider"></div>
+
             <div className="collapsed-stat-item">
-              <div className="collapsed-stat-icon" style={{ color: '#06b6d4' }}>
-                <i className="fas fa-database"></i>
+              <div className="collapsed-stat-icon">
+                <i className="fas fa-calendar-alt"></i>
               </div>
               <div className="collapsed-stat-value">{availableDateRanges.length}</div>
-              <div className="collapsed-stat-label">Periods</div>
+              <div className="collapsed-stat-label">Date Ranges</div>
             </div>
             
             <div className="collapsed-stat-item">
-              <div className="collapsed-stat-icon" style={{ color: '#06b6d4' }}>
+              <div className="collapsed-stat-icon">
                 <i className="fas fa-city"></i>
               </div>
               <div className="collapsed-stat-value">{summaryData.length}</div>
               <div className="collapsed-stat-label">Cities</div>
-            </div>
-            
-            <div className="collapsed-stat-item">
-              <div className="collapsed-stat-icon" style={{ color: '#06b6d4' }}>
-                <i className="fas fa-chart-line"></i>
-              </div>
-              <div className="collapsed-stat-value">
-                {Object.keys(indicators).length}
-              </div>
-              <div className="collapsed-stat-label">Metrics</div>
             </div>
           </div>
         )
@@ -973,16 +1076,34 @@ const IndicatorsSidebar = ({
           <div className="indicators-scroll-content">
             <div className="controls-section">
               <div className="controls-buttons">
-                <button
-                  className="calculate-btn"
-                  onClick={() => onCalculateIndicators()}
-                  disabled={isCalculating || isCalculatingConnectivity}
-                >
-                  <i className={`fas ${(isCalculating || isCalculatingConnectivity) ? 'fa-spinner fa-spin' : 'fa-calculator'}`}></i>
-                  {(isCalculating || isCalculatingConnectivity) ? 'Calculating...' : 'Calculate Indicators'}
-                </button>
+              <button
+                className="calculate-btn"
+                onClick={() => onCalculateIndicators()}
+                disabled={isCalculating || isCalculatingConnectivity}
+                onMouseEnter={() => {
+                  const table = document.querySelector('.table-scroll-wrapper');
+                  if (table) table.classList.add('highlight-from-button');
+                }}
+                onMouseLeave={() => {
+                  const table = document.querySelector('.table-scroll-wrapper');
+                  if (table) table.classList.remove('highlight-from-button');
+                }}
+              >
+                <i className={`fas ${(isCalculating || isCalculatingConnectivity) ? 'fa-spinner fa-spin' : 'fa-calculator'}`}></i>
+                {(isCalculating || isCalculatingConnectivity) ? 'Calculating...' : 'Calculate Indicators'}
+              </button>
                 {canExport && (
-                  <div className="export-menu-wrapper">
+                  <div 
+                    className="export-menu-wrapper"
+                    onMouseEnter={() => {
+                      const table = document.querySelector('.table-scroll-wrapper');
+                      if (table) table.classList.add('highlight-from-button');
+                    }}
+                    onMouseLeave={() => {
+                      const table = document.querySelector('.table-scroll-wrapper');
+                      if (table) table.classList.remove('highlight-from-button');
+                    }}
+                  >
                     <button
                       className="export-btn"
                       onClick={() => setShowExportMenu(!showExportMenu)}
@@ -1071,82 +1192,116 @@ const IndicatorsSidebar = ({
                 </div>
               )}
               
-              <div className="date-range-selector">
-                <div className="date-range-header">
-                  <label>Date Range</label>
-                  {!selectedCity && selectedDateRange && dateRangeStats[selectedDateRange] && (
-                    <button
-                      className="toggle-stats-btn"
-                      onClick={() => setShowDateRangeStats(!showDateRangeStats)}
-                      title={showDateRangeStats ? "Hide statistics" : "Show statistics"}
-                    >
-                      <i className={`fas fa-chevron-${showDateRangeStats ? 'up' : 'down'}`}></i>
-                    </button>
-                  )}
-                </div>
-                
-                <div className="date-range-dropdown-wrapper">
-                  <button
-                    className="date-range-selector-btn"
-                    onClick={() => setShowDateRangeDropdown(!showDateRangeDropdown)}
-                    disabled={isLoading || availableDateRanges.length === 0}
-                  >
-                    <span>
-                      {selectedDateRange 
-                        ? selectedDateRange.replace('_to_', ' to ')
-                        : availableDateRanges.length === 0 
-                          ? 'No date ranges available' 
-                          : 'Select date range'}
-                    </span>
-                    <i className={`fas fa-chevron-${showDateRangeDropdown ? 'up' : 'down'}`}></i>
-                  </button>
-                  
-                  {showDateRangeDropdown && availableDateRanges.length > 0 && (
-                    <motion.div
-                      className="date-range-dropdown"
-                      initial={{ opacity: 0, y: -10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, y: -10 }}
-                    >
-                      {availableDateRanges.map(range => (
-                        <div
-                          key={range}
-                          className={`date-range-option ${selectedDateRange === range ? 'selected' : ''}`}
-                          onClick={() => {
-                            setSelectedDateRange(range);
-                            setShowDateRangeDropdown(false);
-                          }}
-                        >
-                          <span className="range-text">{range.replace('_to_', ' to ')}</span>
-                          {selectedDateRange === range && (
-                            <i className="fas fa-check"></i>
-                          )}
-                        </div>
-                      ))}
-                    </motion.div>
-                  )}
-                </div>
-                
-                {!selectedCity && selectedDateRange && dateRangeStats[selectedDateRange] && showDateRangeStats && (
-                  <div className="date-range-stats">
-                    <div className="stat-item stat-calculated">
-                      <i className="fas fa-check-circle"></i>
-                      <span>{dateRangeStats[selectedDateRange].calculated} Calculated</span>
-                    </div>
-                    <div className="stat-item stat-pending">
-                      <i className="fas fa-clock"></i>
-                      <span>{dateRangeStats[selectedDateRange].notCalculated} Pending</span>
-                    </div>
-                    <div className="stat-item stat-connectivity">
-                      <i className="fas fa-signal"></i>
-                      <span>{dateRangeStats[selectedDateRange].connectivityOnly} Connectivity Only</span>
-                    </div>
-                    <div className="stat-item stat-mobile">
-                      <i className="fas fa-mobile-alt"></i>
-                      <span>{dateRangeStats[selectedDateRange].mobilePingOnly} Mobile Ping Only</span>
-                    </div>
+              <div className="date-range-selector-wrapper">
+                <div className="date-range-selector">
+                  <div className="date-range-header">
+                    <label>Date Range</label>
+                    {!selectedCity && selectedDateRange && dateRangeStats[selectedDateRange] && (
+                      <button
+                        className="toggle-stats-btn"
+                        onClick={() => setShowDateRangeStats(!showDateRangeStats)}
+                        title={showDateRangeStats ? "Hide statistics" : "Show statistics"}
+                      >
+                        <i className={`fas fa-chevron-${showDateRangeStats ? 'up' : 'down'}`}></i>
+                      </button>
+                    )}
                   </div>
-                )}
+                  
+                  <div className="date-range-dropdown-wrapper">
+                    <button
+                      className="date-range-selector-btn"
+                      onClick={() => setShowDateRangeDropdown(!showDateRangeDropdown)}
+                      disabled={isLoading || availableDateRanges.length === 0}
+                    >
+                      <span>
+                        {selectedDateRange 
+                          ? selectedDateRange.replace('_to_', ' to ')
+                          : availableDateRanges.length === 0 
+                            ? 'No date ranges available' 
+                            : 'Select date range'}
+                      </span>
+                      <i className={`fas fa-chevron-${showDateRangeDropdown ? 'up' : 'down'}`}></i>
+                    </button>
+
+                    {showDateRangeDropdown && availableDateRanges.length > 0 && (
+                      <motion.div
+                        className="date-range-dropdown"
+                        initial={{ opacity: 0, y: -10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -10 }}
+                      >
+                        {availableDateRanges.map(range => (
+                          <div
+                            key={range}
+                            className={`date-range-option ${selectedDateRange === range ? 'selected' : ''}`}
+                            onClick={() => {
+                              setSelectedDateRange(range);
+                              setShowDateRangeDropdown(false);
+                            }}
+                          >
+                            <span className="range-text">{range.replace('_to_', ' to ')}</span>
+                            {selectedDateRange === range && (
+                              <i className="fas fa-check"></i>
+                            )}
+                          </div>
+                        ))}
+                      </motion.div>
+                    )}
+                  </div>
+                  
+                  {!selectedCity && selectedDateRange && dateRangeStats[selectedDateRange] && showDateRangeStats && (
+                    <div className="date-range-stats">
+                      <div className="stat-item stat-calculated"
+                        onMouseEnter={() => {
+                          document.querySelectorAll('.summary-table tbody tr.fully-calculated').forEach(row => {
+                            row.classList.add('highlight-calculated');
+                          });
+                        }}
+                        onMouseLeave={() => {
+                          document.querySelectorAll('.summary-table tbody tr.fully-calculated').forEach(row => {
+                            row.classList.remove('highlight-calculated');
+                          });
+                        }}
+                      >
+                        <i className="fas fa-check-circle"></i>
+                        <span>{dateRangeStats[selectedDateRange].calculated} Calculated</span>
+                      </div>
+                      <div className="stat-item stat-pending"
+                        onMouseEnter={() => {
+                          document.querySelectorAll('.summary-table tbody tr.not-calculated').forEach(row => {
+                            row.classList.add('highlight-pending');
+                          });
+                          // Highlight the calculate button
+                          const calculateBtn = document.querySelector('.calculate-btn');
+                          if (calculateBtn) {
+                            calculateBtn.classList.add('highlight-from-pending');
+                          }
+                        }}
+                        onMouseLeave={() => {
+                          document.querySelectorAll('.summary-table tbody tr.not-calculated').forEach(row => {
+                            row.classList.remove('highlight-pending');
+                          });
+                          // Remove highlight from calculate button
+                          const calculateBtn = document.querySelector('.calculate-btn');
+                          if (calculateBtn) {
+                            calculateBtn.classList.remove('highlight-from-pending');
+                          }
+                        }}
+                      >
+                        <i className="fas fa-clock"></i>
+                        <span>{dateRangeStats[selectedDateRange].notCalculated} Pending</span>
+                      </div>
+                      <div className="stat-item stat-connectivity">
+                        <i className="fas fa-signal"></i>
+                        <span>{dateRangeStats[selectedDateRange].connectivityOnly} Connectivity Only</span>
+                      </div>
+                      <div className="stat-item stat-mobile">
+                        <i className="fas fa-mobile-alt"></i>
+                        <span>{dateRangeStats[selectedDateRange].mobilePingOnly} Mobile Ping Only</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
             
@@ -1166,7 +1321,29 @@ const IndicatorsSidebar = ({
               <>
                 <div className="section-header">
                   <h3>All Cities Summary</h3>
-                  <span className="result-count">{filteredAndSortedData.length} cities</span>
+                  <span 
+                    className="result-count"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      alert('Click on the add cities button in the header to add more cities, and click on the calculate indicators button to calculate indicators for more cities.');
+                    }}
+                    onMouseEnter={() => {
+                      // Highlight the calculate button
+                      const calculateBtn = document.querySelector('.calculate-btn');
+                      if (calculateBtn) {
+                        calculateBtn.classList.add('highlight-from-count');
+                      }
+                    }}
+                    onMouseLeave={() => {
+                      // Remove highlight from calculate button
+                      const calculateBtn = document.querySelector('.calculate-btn');
+                      if (calculateBtn) {
+                        calculateBtn.classList.remove('highlight-from-count');
+                      }
+                    }}
+                  >
+                    {filteredAndSortedData.length} cities
+                  </span>
                 </div>
                 {renderSummaryTable()}
               </>

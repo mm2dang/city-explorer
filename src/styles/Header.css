@@ -64,6 +64,7 @@
 
 .city-selector {
   position: relative;
+  z-index: 10001;
 }
 
 .city-selector-btn {
@@ -102,7 +103,7 @@
   border: 1px solid #e2e8f0;
   max-height: 500px;
   overflow-y: auto;
-  z-index: 1000;
+  z-index: 99999;
 }
 
 .dropdown-item.loading,

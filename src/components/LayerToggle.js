@@ -75,8 +75,11 @@ const LayerToggle = ({
 
   return (
     <motion.div
-      className="layer-item-inline"
+      className={`layer-item-inline ${isActive ? 'active' : ''}`}
       whileHover={{ x: 2 }}
+      style={{
+        '--domain-color': domainColor
+      }}
     >
       <div className="layer-main-inline" onClick={() => onToggle(!isActive)}>
         <motion.button
@@ -93,18 +96,8 @@ const LayerToggle = ({
           )}
         </motion.button>
         
-        <div 
-          className="layer-icon-inline"
-          style={{
-            backgroundColor: isActive ? `${domainColor}15` : '#f1f5f9',
-          }}
-        >
-          <i 
-            className={layer.icon} 
-            style={{ 
-              color: isActive ? domainColor : '#94a3b8' 
-            }}
-          />
+        <div className="layer-icon-inline">
+          <i className={layer.icon} />
         </div>
         
         <span className="layer-name-inline">{formatLayerName(layer.name)}</span>
